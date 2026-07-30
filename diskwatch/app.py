@@ -1,0 +1,235 @@
+"""应用装配：托盘、悬浮组件、详情面板、监控线程的生命周期管理。"""
+
+from __future__ import annotations
+
+import sys
+
+from PySide6.QtCore import QSharedMemory, QTimer
+from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
+
+from . import APP_NAME, APP_TITLE, VERSION
+from .config import Config, DB_PATH
+from .storage import Storage, human_size, today_str
+from .ui.ball import MiniBall
+from .ui.panel import DetailPanel
+from .ui.settings import SettingsDialog
+from .ui.style import app_icon, apply_dark_theme
+from .ui.widget import FloatingWidget
+from .watcher import FileMonitor
+
+PURGE_INTERVAL_MS = 60 * 60 * 1000  # 每小时清一次过期数据
+
+
+class DiskWatchApp:
+    def __init__(self, qt_app: QApplication) -> None:
+        self.qt_app = qt_app
+        self.config = Config()
+        self.storage = Storage(DB_PATH)
+        self.monitor = FileMonitor(self.config, self.storage)
+
+        self.widget = FloatingWidget(self.storage, self.monitor, self.config)
+        self.ball = MiniBall(self.storage, self.monitor, self.config)
+        self.panel = DetailPanel(self.storage)
+        self.tray = QSystemTrayIcon(app_icon(), qt_app)
+
+        self._wire()
+        self._build_tray()
+
+        self.monitor.start()
+        self._purge()
+
+        self._purge_timer = QTimer(qt_app)
+        self._purge_timer.timeout.connect(self._purge)
+        self._purge_timer.start(PURGE_INTERVAL_MS)
+
+        self._tip_signature: tuple | None = None
+        self._tip_timer = QTimer(qt_app)
+        self._tip_timer.timeout.connect(self._update_tooltip)
+        self._tip_timer.start(5000)
+        self._update_tooltip()
+
+        self.widget.hide()
+        self.ball.hide()
+        if not (
+            self.config.get("start_minimized")
+            or not self.config.get("widget_visible", True)
+        ):
+            self._show_surface()
+
+        if self.monitor.errors:
+            self.tray.showMessage(
+                APP_TITLE,
+                "部分位置监控失败：\n" + "\n".join(self.monitor.errors[:3]),
+                QSystemTrayIcon.Warning,
+                5000,
+            )
+
+    # ---------- 装配 ----------
+
+    def _wire(self) -> None:
+        for surface in (self.widget, self.ball):
+            surface.open_panel.connect(self.show_panel)
+            surface.open_settings.connect(self.show_settings)
+            surface.request_quit.connect(self.quit)
+        self.widget.hidden_by_user.connect(self._sync_tray_actions)
+        self.widget.collapse_requested.connect(self.collapse)
+        self.ball.expand_requested.connect(self.expand)
+
+    def _build_tray(self) -> None:
+        menu = QMenu()
+        self.act_widget = menu.addAction("显示悬浮组件")
+        self.act_widget.setCheckable(True)
+        self.act_widget.triggered.connect(self._toggle_widget)
+        self.act_ball = menu.addAction("迷你球模式")
+        self.act_ball.setCheckable(True)
+        self.act_ball.triggered.connect(
+            lambda checked: self.collapse() if checked else self.expand()
+        )
+        menu.addAction("详情面板…", self.show_panel)
+        menu.addSeparator()
+        menu.addAction("设置…", self.show_settings)
+        menu.addAction("重新开始监控", self._restart_monitor)
+        menu.addSeparator()
+        menu.addAction(f"关于 {APP_NAME} {VERSION}", self._about)
+        menu.addAction("退出", self.quit)
+
+        self.tray.setContextMenu(menu)
+        self.tray.setToolTip(APP_TITLE)
+        self.tray.activated.connect(self._on_tray_activated)
+        self.tray.show()
+        self._sync_tray_actions()
+
+    # ---------- 动作 ----------
+
+    def _on_tray_activated(self, reason) -> None:
+        if reason == QSystemTrayIcon.Trigger:
+            self._toggle_widget(not self._surface_visible())
+        elif reason == QSystemTrayIcon.DoubleClick:
+            self.show_panel()
+
+    def _collapsed(self) -> bool:
+        return bool(self.config.get("collapsed", False))
+
+    def _surface_visible(self) -> bool:
+        return self.widget.isVisible() or self.ball.isVisible()
+
+    def _show_surface(self) -> None:
+        """按当前模式显示卡片或迷你球，另一个确保隐藏。"""
+        if self._collapsed():
+            self.widget.hide()
+            self.ball.refresh()
+            self.ball.show()
+            self.ball.raise_()
+        else:
+            self.ball.hide()
+            self.widget.refresh()
+            self.widget.show()
+            self.widget.raise_()
+        self.config.set("widget_visible", True)
+        self.config.save()
+        self._sync_tray_actions()
+
+    def collapse(self) -> None:
+        if self._collapsed() and self.ball.isVisible():
+            return
+        was_visible = self.widget.isVisible()
+        self.config.set("collapsed", True)
+        if was_visible:
+            # 让球出现在卡片原来的位置附近，收起时视觉上有连续感
+            self.ball.place_near(self.widget.frameGeometry())
+        self._show_surface()
+
+    def expand(self) -> None:
+        self.config.set("collapsed", False)
+        self._show_surface()
+
+    def _toggle_widget(self, checked: bool) -> None:
+        if checked:
+            self._show_surface()
+        else:
+            self.widget.hide()
+            self.ball.hide()
+            self.config.set("widget_visible", False)
+            self.config.save()
+        self._sync_tray_actions()
+
+    def _sync_tray_actions(self) -> None:
+        self.act_widget.setChecked(self._surface_visible())
+        self.act_ball.setChecked(self._collapsed())
+
+    def show_panel(self) -> None:
+        self.panel.show()
+        self.panel.raise_()
+        self.panel.activateWindow()
+
+    def show_settings(self) -> None:
+        dlg = SettingsDialog(self.config, self.storage, self.panel)
+        if dlg.exec():
+            self.config.update(dlg.result_values())
+            self.config.save()
+            self.widget.apply_appearance()
+            self.ball.apply_appearance()
+            self._restart_monitor()
+            self.panel.reload(keep_day=True)
+
+    def _restart_monitor(self) -> None:
+        self.monitor.restart()
+        self.widget.refresh()
+        self.ball.refresh()
+
+    def _purge(self) -> None:
+        days = int(self.config.get("retention_days", 90))
+        if days > 0:
+            self.storage.purge_older_than(days)
+
+    def _update_tooltip(self) -> None:
+        count, size = self.storage.day_stats(today_str())
+        if (count, size) == self._tip_signature:
+            return
+        self._tip_signature = (count, size)
+        self.tray.setToolTip(
+            f"{APP_TITLE}\n今日新增 {count:,} 个文件 · {human_size(size)}"
+        )
+
+    def _about(self) -> None:
+        QMessageBox.information(
+            self.panel,
+            f"关于 {APP_NAME}",
+            f"{APP_TITLE} v{VERSION}\n\n"
+            "实时记录硬盘上每天新增了哪些文件。\n"
+            f"数据库：{DB_PATH}\n\n"
+            "左键点击托盘图标可显示/隐藏悬浮组件，双击打开详情面板。\n"
+            "点卡片上的「－」收成迷你球，单击球可再展开。",
+        )
+
+    def quit(self) -> None:
+        self.config.save()
+        self.monitor.stop()
+        self.storage.close()
+        self.tray.hide()
+        self.qt_app.quit()
+
+
+def main() -> int:
+    qt_app = QApplication(sys.argv)
+    qt_app.setApplicationName(APP_NAME)
+    qt_app.setQuitOnLastWindowClosed(False)
+    qt_app.setWindowIcon(app_icon())
+    apply_dark_theme(qt_app)
+
+    # 单实例：重复启动时直接退出，避免两个监控互相打架
+    lock = QSharedMemory(f"{APP_NAME}-single-instance")
+    if not lock.create(1):
+        QMessageBox.information(None, APP_TITLE, f"{APP_NAME} 已经在运行了（见系统托盘）。")
+        return 0
+
+    if not QSystemTrayIcon.isSystemTrayAvailable():
+        QMessageBox.critical(None, APP_TITLE, "当前系统没有可用的托盘区，无法运行。")
+        return 1
+
+    app = DiskWatchApp(qt_app)
+    try:
+        return qt_app.exec()
+    finally:
+        app.monitor.stop()
+        lock.detach()
