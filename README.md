@@ -19,9 +19,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.0.0/DiskWatch-1.0.0-src.zip"><strong>⬇ Download v1.0.0</strong></a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.0/DiskWatch-1.1.0-src.zip"><strong>⬇ Download v1.1.0</strong></a>
   ·
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/tag/v1.0.0">Release notes</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/tag/v1.1.0">Release notes</a>
   ·
   <a href="#-quick-start--快速开始">Quick start</a>
 </p>
@@ -63,8 +63,10 @@ DiskWatch does one job well:
 - **Mini ball** — 66px orb showing **today’s total size** + ring vs 7-day peak
 - **Detail panel** — by day / search / sort / export CSV / jump to Explorer
 - **Smart filters** — skips `Windows`, `Program Files`, `AppData`, caches, `.git` / `.venv`…
+- **Custom data paths** — put `config.json` / `diskwatch.db` on any drive (Settings → Data)
+- **Dark UI** — Fusion dark theme + native Windows dark title bar
 - **Tray + autostart** — single instance, stays out of the way
-- **Privacy** — SQLite under `%APPDATA%\DiskWatch\`, no network
+- **Privacy** — SQLite under `%APPDATA%\DiskWatch\` by default, no network
 
 <details>
 <summary>More screenshots · 更多截图</summary>
@@ -126,15 +128,16 @@ Otherwise one installer floods the log with tens of thousands of junk rows.
 Need those paths? **Settings → Filters**, delete the matching lines, save.  
 Only future events are affected.
 
-Data lives at:
+Data lives at (default):
 
 ```
 %APPDATA%\DiskWatch\
   config.json
   diskwatch.db
+  location.json   # only if you moved paths elsewhere
 ```
 
-Default retention: **90 days**.
+You can change both paths in **Settings → Data**. A tiny `location.json` stays in AppData so the app can find your custom files on next launch. Default retention: **90 days**.
 
 ---
 

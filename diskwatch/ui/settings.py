@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QMessageBox,
     QPlainTextEdit,
@@ -23,10 +24,10 @@ from PySide6.QtWidgets import (
 )
 
 from ..autostart import is_enabled as autostart_enabled, set_enabled as set_autostart
-from ..config import Config
+from ..config import Config, default_home, paths
 from ..storage import Storage
 from ..watcher import list_drives
-from .style import PANEL_QSS, app_icon
+from .style import PANEL_QSS, app_icon, enable_dark_titlebar
 
 
 class SettingsDialog(QDialog):
@@ -34,12 +35,20 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self._config = config
         self._storage = storage
+        # 路径变更在 accept 时应用；需要重启时由调用方处理
+        self.paths_changed = False
+        self._pending_config_path = ""
+        self._pending_db_path = ""
         self.setWindowTitle("设置")
         self.setWindowIcon(app_icon())
         self.setStyleSheet(PANEL_QSS)
-        self.setMinimumSize(620, 560)
+        self.setMinimumSize(640, 600)
         self._build()
         self._load()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        enable_dark_titlebar(self)
 
     def _build(self) -> None:
         root = QVBoxLayout(self)
@@ -179,14 +188,43 @@ class SettingsDialog(QDialog):
         btn_clear.clicked.connect(self._clear_data)
         lay.addWidget(btn_clear, alignment=Qt.AlignLeft)
 
-        from ..config import CONFIG_PATH, DB_PATH
+        lay.addWidget(QLabel("文件位置（可改到其他盘；保存后需重启生效）", objectName="dim"))
 
-        info = QLabel(
-            f"配置文件：{CONFIG_PATH}\n数据库：{DB_PATH}", objectName="dim"
+        self.edit_config = QLineEdit()
+        self.edit_config.setPlaceholderText("配置文件路径（.json）")
+        btn_cfg = QPushButton("浏览…")
+        btn_cfg.clicked.connect(self._browse_config)
+        row_cfg = QHBoxLayout()
+        row_cfg.addWidget(self.edit_config, 1)
+        row_cfg.addWidget(btn_cfg)
+        lay.addWidget(QLabel("配置文件", objectName="dim"))
+        lay.addLayout(row_cfg)
+
+        self.edit_db = QLineEdit()
+        self.edit_db.setPlaceholderText("数据库路径（.db）")
+        btn_db = QPushButton("浏览…")
+        btn_db.clicked.connect(self._browse_db)
+        row_db = QHBoxLayout()
+        row_db.addWidget(self.edit_db, 1)
+        row_db.addWidget(btn_db)
+        lay.addWidget(QLabel("数据库", objectName="dim"))
+        lay.addLayout(row_db)
+
+        row_reset = QHBoxLayout()
+        btn_default = QPushButton("恢复默认位置")
+        btn_default.setToolTip(f"默认目录：{default_home()}")
+        btn_default.clicked.connect(self._reset_paths)
+        row_reset.addWidget(btn_default)
+        row_reset.addStretch(1)
+        lay.addLayout(row_reset)
+
+        tip = QLabel(
+            "引导文件始终留在 AppData\\DiskWatch\\location.json，"
+            "用来记住你自定义的路径。改位置时会自动拷贝现有文件。",
+            objectName="dim",
         )
-        info.setWordWrap(True)
-        info.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        lay.addWidget(info)
+        tip.setWordWrap(True)
+        lay.addWidget(tip)
         lay.addStretch(1)
         return w
 
@@ -225,6 +263,10 @@ class SettingsDialog(QDialog):
 
         self.spin_retention.setValue(int(cfg.get("retention_days", 90)))
         self.lbl_total.setText(f"当前已记录 {self._storage.total_count():,} 条文件记录")
+        self.edit_config.setText(str(paths.config))
+        self.edit_db.setText(str(paths.db))
+        self._orig_config = str(paths.config)
+        self._orig_db = str(paths.db)
 
     def result_values(self) -> dict:
         excluded = []
@@ -257,10 +299,72 @@ class SettingsDialog(QDialog):
         if self.chk_folders_only.isChecked() and self.folder_list.count() == 0:
             QMessageBox.warning(self, "还没选文件夹", "选择了只监控文件夹，但列表是空的。")
             return
+
+        new_cfg = self.edit_config.text().strip()
+        new_db = self.edit_db.text().strip()
+        if not new_cfg or not new_db:
+            QMessageBox.warning(self, "路径为空", "配置文件和数据库路径都不能为空。")
+            return
+
         set_autostart(self.chk_autostart.isChecked())
+
+        if new_cfg != self._orig_config or new_db != self._orig_db:
+            reply = QMessageBox.question(
+                self,
+                "更改文件位置",
+                "将把现有配置/数据库复制到新位置，并在下次启动时使用新路径。\n"
+                "应用需要重启才能生效，是否继续？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if reply != QMessageBox.Yes:
+                return
+            try:
+                # 先把当前界面里的设置写进内存，迁移动作由调用方在关闭存储后执行
+                self._pending_config_path = new_cfg
+                self._pending_db_path = new_db
+                self.paths_changed = True
+            except OSError as exc:
+                QMessageBox.warning(self, "无法更改位置", str(exc))
+                return
+
         super().accept()
 
     # ---------- 动作 ----------
+
+    def _browse_config(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "选择配置文件位置",
+            self.edit_config.text() or str(default_home() / "config.json"),
+            "JSON (*.json)",
+        )
+        if path:
+            if not path.lower().endswith(".json"):
+                path += ".json"
+            self.edit_config.setText(path)
+
+    def _browse_db(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "选择数据库位置",
+            self.edit_db.text() or str(default_home() / "diskwatch.db"),
+            "SQLite (*.db)",
+        )
+        if path:
+            if not path.lower().endswith(".db"):
+                path += ".db"
+            self.edit_db.setText(path)
+
+    def _reset_paths(self) -> None:
+        home = default_home()
+        self.edit_config.setText(str(home / "config.json"))
+        self.edit_db.setText(str(home / "diskwatch.db"))
+
+    def pending_paths(self) -> tuple[str, str] | None:
+        if not self.paths_changed:
+            return None
+        return self._pending_config_path, self._pending_db_path
 
     def _add_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "选择要监控的文件夹")

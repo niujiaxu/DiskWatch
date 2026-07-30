@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+import ctypes
+import sys
+
+from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -13,6 +16,7 @@ from PySide6.QtGui import (
     QPalette,
     QPixmap,
 )
+from PySide6.QtWidgets import QWidget
 
 BG_TOP = QColor(30, 32, 44, 235)
 BG_BOTTOM = QColor(20, 21, 30, 238)
@@ -137,6 +141,49 @@ QToolTip {{
 """
 
 
+def enable_dark_titlebar(widget: QWidget) -> None:
+    """让 Windows 原生标题栏跟深色主题走，去掉刺眼的白条。
+
+    Win10 1903+ / Win11 通过 DWMWA_USE_IMMERSIVE_DARK_MODE 生效。
+    """
+    if sys.platform != "win32" or widget is None:
+        return
+    try:
+        hwnd = int(widget.winId())
+    except Exception:
+        return
+    if not hwnd:
+        return
+    value = ctypes.c_int(1)
+    dwm = ctypes.windll.dwmapi
+    # 20 = 新常量；19 = 旧预览版常量。两个都试，兼容不同系统版本。
+    for attr in (20, 19):
+        try:
+            dwm.DwmSetWindowAttribute(
+                hwnd, attr, ctypes.byref(value), ctypes.sizeof(value)
+            )
+        except Exception:
+            pass
+
+
+class _DarkTitleBarFilter(QObject):
+    """顶层窗口一显示就刷深色标题栏（含设置、详情、消息框）。"""
+
+    _instance: "_DarkTitleBarFilter | None" = None
+
+    @classmethod
+    def instance(cls) -> "_DarkTitleBarFilter":
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if event.type() in (QEvent.Show, QEvent.WinIdChange) and isinstance(obj, QWidget):
+            if obj.isWindow() and not obj.windowFlags() & Qt.FramelessWindowHint:
+                enable_dark_titlebar(obj)
+        return False
+
+
 def apply_dark_theme(app) -> None:
     """统一深色调色板。
 
@@ -144,6 +191,12 @@ def apply_dark_theme(app) -> None:
     不设的话在浅色系统主题下会出现浅字压浅底。
     """
     app.setStyle("Fusion")
+    # Qt 6.5+：告诉系统本应用偏好深色，部分原生控件/标题栏会跟着变
+    try:
+        app.styleHints().setColorScheme(Qt.ColorScheme.Dark)
+    except Exception:
+        pass
+
     pal = QPalette()
     text = QColor(TEXT)
     pal.setColor(QPalette.Window, QColor(SURFACE))
@@ -163,6 +216,13 @@ def apply_dark_theme(app) -> None:
     for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
         pal.setColor(QPalette.Disabled, role, disabled)
     app.setPalette(pal)
+
+    filt = _DarkTitleBarFilter.instance()
+    app.installEventFilter(filt)
+    # 已经创建的顶层窗口也补刷一次
+    for w in app.topLevelWidgets():
+        if w.isWindow():
+            enable_dark_titlebar(w)
 
 
 def app_icon(size: int = 64) -> QIcon:

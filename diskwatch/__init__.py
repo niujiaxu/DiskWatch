@@ -2,4 +2,4 @@
 
 APP_NAME = "DiskWatch"
 APP_TITLE = "硬盘新增文件监控"
-VERSION = "1.0.0"
+VERSION = "1.1.0"

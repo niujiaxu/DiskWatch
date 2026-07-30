@@ -1,25 +1,195 @@
-"""配置读写：存放在 %APPDATA%\\DiskWatch\\config.json。"""
+"""配置读写与数据路径。
+
+默认位置：%APPDATA%\\DiskWatch\\
+自定义位置记在同目录的 location.json（体积很小，始终留在 AppData），
+这样即使把 config / 数据库挪到别的盘，下次启动仍找得到。
+"""
 
 from __future__ import annotations
 
 import copy
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
 from . import APP_NAME
 
 
-def data_dir() -> Path:
+def default_home() -> Path:
     base = os.environ.get("APPDATA") or str(Path.home())
     d = Path(base) / APP_NAME
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-CONFIG_PATH = data_dir() / "config.json"
-DB_PATH = data_dir() / "diskwatch.db"
+def location_file() -> Path:
+    return default_home() / "location.json"
+
+
+def _read_location() -> dict[str, str]:
+    lf = location_file()
+    if not lf.exists():
+        return {}
+    try:
+        data = json.loads(lf.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _write_location(config_path: Path | None, db_path: Path | None) -> None:
+    """写入引导文件。若两者都回到默认，则删掉 location.json。"""
+    home = default_home()
+    default_cfg = home / "config.json"
+    default_db = home / "diskwatch.db"
+    payload: dict[str, str] = {}
+    if config_path is not None and config_path.resolve() != default_cfg.resolve():
+        payload["config_path"] = str(config_path)
+    if db_path is not None and db_path.resolve() != default_db.resolve():
+        payload["db_path"] = str(db_path)
+
+    lf = location_file()
+    if not payload:
+        if lf.exists():
+            try:
+                lf.unlink()
+            except OSError:
+                pass
+        return
+    lf.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+class Paths:
+    """运行时解析出的配置 / 数据库路径，可在设置里改完后 reload。"""
+
+    def __init__(self) -> None:
+        self.config: Path
+        self.db: Path
+        self.reload()
+
+    def reload(self) -> None:
+        home = default_home()
+        loc = _read_location()
+        cfg = Path(loc["config_path"]) if loc.get("config_path") else home / "config.json"
+        db = Path(loc["db_path"]) if loc.get("db_path") else home / "diskwatch.db"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        db.parent.mkdir(parents=True, exist_ok=True)
+        self.config = cfg
+        self.db = db
+
+    @property
+    def using_custom_config(self) -> bool:
+        return self.config.resolve() != (default_home() / "config.json").resolve()
+
+    @property
+    def using_custom_db(self) -> bool:
+        return self.db.resolve() != (default_home() / "diskwatch.db").resolve()
+
+
+paths = Paths()
+
+
+# 兼容旧代码里的名字
+def get_config_path() -> Path:
+    return paths.config
+
+
+def get_db_path() -> Path:
+    return paths.db
+
+
+# 许多地方写 CONFIG_PATH / DB_PATH：做成动态查找的薄封装
+class _PathProxy:
+    def __init__(self, getter) -> None:
+        self._getter = getter
+
+    def __fspath__(self) -> str:
+        return str(self._getter())
+
+    def __str__(self) -> str:
+        return str(self._getter())
+
+    def __repr__(self) -> str:
+        return repr(self._getter())
+
+    def __getattr__(self, name: str):
+        return getattr(self._getter(), name)
+
+    def __eq__(self, other: object) -> bool:
+        return self._getter() == other
+
+    def __truediv__(self, other):
+        return self._getter() / other
+
+
+CONFIG_PATH = _PathProxy(get_config_path)
+DB_PATH = _PathProxy(get_db_path)
+
+
+def data_dir() -> Path:
+    """历史兼容：返回默认 AppData 主目录。"""
+    return default_home()
+
+
+def migrate_file(src: Path, dst: Path) -> None:
+    """复制文件到新位置（若目标已存在则覆盖）。数据库会连同 WAL/SHM 一起搬。"""
+    dst = Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    src = Path(src)
+    if not src.exists():
+        return
+    shutil.copy2(src, dst)
+    # SQLite WAL 旁路文件
+    for suffix in ("-wal", "-shm", "-journal"):
+        side = Path(str(src) + suffix)
+        if side.exists():
+            shutil.copy2(side, Path(str(dst) + suffix))
+
+
+def apply_paths(
+    config_path: Path | None,
+    db_path: Path | None,
+    *,
+    migrate: bool = True,
+    current_config: Path | None = None,
+    current_db: Path | None = None,
+) -> tuple[Path, Path]:
+    """写入 location.json，可选把现有文件迁过去。返回最终路径。"""
+    cur_cfg = Path(current_config or paths.config)
+    cur_db = Path(current_db or paths.db)
+    new_cfg = Path(config_path) if config_path else cur_cfg
+    new_db = Path(db_path) if db_path else cur_db
+
+    if not str(new_cfg).lower().endswith(".json"):
+        new_cfg = new_cfg / "config.json" if new_cfg.suffix == "" else new_cfg
+    if not str(new_db).lower().endswith(".db"):
+        new_db = new_db / "diskwatch.db" if new_db.suffix == "" else new_db
+
+    new_cfg.parent.mkdir(parents=True, exist_ok=True)
+    new_db.parent.mkdir(parents=True, exist_ok=True)
+
+    if migrate:
+        if new_cfg.resolve() != cur_cfg.resolve():
+            migrate_file(cur_cfg, new_cfg)
+        if new_db.resolve() != cur_db.resolve():
+            migrate_file(cur_db, new_db)
+
+    _write_location(new_cfg, new_db)
+    paths.reload()
+    return paths.config, paths.db
+
+
+def reset_paths_to_default(*, migrate: bool = True) -> tuple[Path, Path]:
+    home = default_home()
+    return apply_paths(
+        home / "config.json",
+        home / "diskwatch.db",
+        migrate=migrate,
+        current_config=paths.config,
+        current_db=paths.db,
+    )
 
 
 # 过滤规则的版本号。升级默认规则时 +1，老配置会被自动刷新一次。
@@ -140,10 +310,11 @@ class Config:
         self.load()
 
     def load(self) -> None:
-        if not CONFIG_PATH.exists():
+        path = paths.config
+        if not path.exists():
             return
         try:
-            saved = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            saved = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return
         if not isinstance(saved, dict):
@@ -156,7 +327,9 @@ class Config:
 
     def save(self) -> None:
         try:
-            CONFIG_PATH.write_text(
+            path = paths.config
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
                 json.dumps(self._data, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )

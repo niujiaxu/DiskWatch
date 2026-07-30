@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from ..storage import Storage, human_size, today_str
 from ..watcher import open_in_explorer
-from .style import PANEL_QSS, app_icon
+from .style import PANEL_QSS, app_icon, enable_dark_titlebar
 
 AUTO_REFRESH_MS = 5000
 
@@ -244,6 +244,7 @@ class DetailPanel(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        enable_dark_titlebar(self)
         self.reload(keep_day=True)
 
 

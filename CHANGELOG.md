@@ -2,6 +2,15 @@
 
 All notable changes to DiskWatch are documented in this file.
 
+## [1.1.0] - 2026-07-30
+
+### Added
+- Custom config / database file locations in **Settings → Data** (with migrate + restart)
+- Windows dark title bar for settings, detail panel, and message boxes
+
+### Changed
+- Mini-ball preview and docs reflect total size display (not file count)
+
 ## [1.0.0] - 2026-07-30
 
 ### Added
