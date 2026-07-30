@@ -7,7 +7,7 @@ import sys
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QSharedMemory, QTimer
+from PySide6.QtCore import QSharedMemory, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from . import APP_NAME, APP_TITLE, VERSION
@@ -170,15 +170,31 @@ class DiskWatchApp:
         self.panel.raise_()
 
     def show_settings(self) -> None:
-        dlg = SettingsDialog(self.config, self.storage, self.panel)
-        if not dlg.exec():
+        # Qt.Tool 悬浮窗不被模态对话框挡住，会盖住设置标题栏的 ✕
+        widget_vis = self.widget.isVisible()
+        ball_vis = self.ball.isVisible()
+        self.widget.hide()
+        self.ball.hide()
+        try:
+            dlg = SettingsDialog(self.config, self.storage, self.panel)
+            dlg.setWindowModality(Qt.ApplicationModal)
+            accepted = dlg.exec()
+        finally:
+            if widget_vis:
+                self.widget.show()
+                self.widget.raise_()
+            elif ball_vis:
+                self.ball.show()
+                self.ball.raise_()
+        if not accepted:
             return
         self.config.update(dlg.result_values())
         self.config.save()
         self.widget.apply_appearance()
         self.ball.apply_appearance()
         self._restart_monitor()
-        self.panel.reload(keep_day=True)
+        if self.panel.isVisible():
+            self.panel.reload(keep_day=True)
 
         pending = dlg.pending_paths()
         if pending:

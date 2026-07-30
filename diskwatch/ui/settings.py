@@ -40,10 +40,13 @@ class SettingsDialog(QDialog):
         self._pending_config_path = ""
         self._pending_db_path = ""
         self.setWindowTitle("设置")
-        # 独立顶层窗，避免任务栏仍挂 python 默认图标
+        # 明确带上关闭按钮；勿用裸 Qt.Window，否则标题栏 ✕ 可能丢失
         self.setWindowFlags(
-            (self.windowFlags() | Qt.Window | Qt.WindowStaysOnTopHint)
-            & ~Qt.WindowContextHelpButtonHint
+            Qt.Dialog
+            | Qt.WindowTitleHint
+            | Qt.WindowSystemMenuHint
+            | Qt.WindowCloseButtonHint
+            | Qt.WindowStaysOnTopHint
         )
         apply_window_icon(self)
         self.setStyleSheet(PANEL_QSS)
