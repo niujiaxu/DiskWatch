@@ -9,6 +9,7 @@ from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt
 from PySide6.QtGui import (
     QColor,
     QFont,
+    QFontDatabase,
     QIcon,
     QLinearGradient,
     QPainter,
@@ -184,6 +185,24 @@ class _DarkTitleBarFilter(QObject):
         return False
 
 
+def prefer_ui_font(app) -> None:
+    """优先选用带中文的系统字体，避免默认西文字体把汉字渲成方框。"""
+    available = set(QFontDatabase.families())
+    for name in (
+        "Microsoft YaHei UI",
+        "Microsoft YaHei",
+        "Segoe UI",
+        "PingFang SC",
+        "Noto Sans CJK SC",
+        "Source Han Sans SC",
+        "SimHei",
+    ):
+        if name in available:
+            font = QFont(name, 10)
+            app.setFont(font)
+            return
+
+
 def apply_dark_theme(app) -> None:
     """统一深色调色板。
 
@@ -191,6 +210,7 @@ def apply_dark_theme(app) -> None:
     不设的话在浅色系统主题下会出现浅字压浅底。
     """
     app.setStyle("Fusion")
+    prefer_ui_font(app)
     # Qt 6.5+：告诉系统本应用偏好深色，部分原生控件/标题栏会跟着变
     try:
         app.styleHints().setColorScheme(Qt.ColorScheme.Dark)

@@ -156,8 +156,9 @@ class MiniBall(QWidget):
             p.drawArc(outer, 90 * 16, -int(360 * 16 * self._ratio))
 
         # 中间显示今日总大小（压缩成 2.7M / 128K 这类，66px 里才放得下）
+        # 继承应用字体（含中文），只改字号/粗细，避免默认西文字体缺字
         p.setPen(QColor(TEXT))
-        f = QFont()
+        f = QFont(self.font())
         f.setBold(True)
         text = _compact_size(self._size_total)
         f.setPointSizeF(13.0 if len(text) <= 4 else 10.5)
@@ -165,7 +166,7 @@ class MiniBall(QWidget):
         p.drawText(outer.adjusted(0, -5, 0, -5), Qt.AlignCenter, text)
 
         p.setPen(QColor(TEXT_DIM))
-        small = QFont()
+        small = QFont(self.font())
         small.setPointSizeF(7.0)
         p.setFont(small)
         p.drawText(outer.adjusted(0, 17, 0, 17), Qt.AlignCenter, "今日")

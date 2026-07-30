@@ -88,7 +88,7 @@ DiskWatch does one job well:
 ### Portable (recommended · 推荐)
 
 1. Download [`DiskWatch-1.1.0-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.0/DiskWatch-1.1.0-win64-portable.zip)
-2. Unzip anywhere → run **`DiskWatch.exe`**
+2. Unzip anywhere → run **`DiskWatch.exe`** (or `Start DiskWatch.bat`)
 3. No Python install required. Config/DB still live under `%APPDATA%\DiskWatch\` by default.
 
 ### From source · 源码运行

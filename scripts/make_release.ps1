@@ -6,7 +6,8 @@ $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $Root
 
 $Version = "1.0.0"
-$init = Get-Content (Join-Path $Root "diskwatch\__init__.py") -Raw
+$initPath = Join-Path $Root "diskwatch\__init__.py"
+$init = [System.IO.File]::ReadAllText($initPath, [System.Text.Encoding]::UTF8)
 if ($init -match 'VERSION\s*=\s*"([^"]+)"') {
     $Version = $Matches[1]
 }
