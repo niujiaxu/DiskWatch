@@ -2,6 +2,17 @@
 
 All notable changes to DiskWatch are documented in this file.
 
+## [Unreleased]
+
+### Added
+- Detail panel: click **大小** header to sort by real byte size (asc/desc), same UX as **时间**
+
+### Fixed
+- UI freezes when clicking during heavy ingest (SQLite read/write connections split; purge off UI thread)
+- Detail panel search no longer rebuilds the whole table on every keystroke (debounce + row cap)
+- Dragging the card/ball no longer writes `config.json` on every mouse release (debounced save)
+- Opening Explorer no longer does sync `is_file()` probes that can hang on slow paths
+
 ## [1.1.0] - 2026-07-30
 
 ### Added

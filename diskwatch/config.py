@@ -11,6 +11,7 @@ import copy
 import json
 import os
 import shutil
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -307,6 +308,8 @@ DEFAULTS: dict[str, Any] = {
 class Config:
     def __init__(self) -> None:
         self._data = copy.deepcopy(DEFAULTS)
+        self._save_timer: threading.Timer | None = None
+        self._save_lock = threading.Lock()
         self.load()
 
     def load(self) -> None:
@@ -326,13 +329,37 @@ class Config:
             self.save()
 
     def save(self) -> None:
+        """立刻落盘（设置保存 / 退出时用）。"""
+        self._cancel_save_timer()
+        self._write_now()
+
+    def save_soon(self, delay: float = 0.45) -> None:
+        """拖动位置等高频改动：合并写入，避免每次松手都卡 UI。"""
+        with self._save_lock:
+            if self._save_timer is not None:
+                self._save_timer.cancel()
+            timer = threading.Timer(delay, self._write_now)
+            timer.daemon = True
+            self._save_timer = timer
+            timer.start()
+
+    def _cancel_save_timer(self) -> None:
+        with self._save_lock:
+            if self._save_timer is not None:
+                self._save_timer.cancel()
+                self._save_timer = None
+
+    def _write_now(self) -> None:
+        with self._save_lock:
+            self._save_timer = None
         try:
             path = paths.config
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps(self._data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            # 先写临时文件再替换，避免写到一半进程退出把配置截断
+            payload = json.dumps(self._data, ensure_ascii=False, indent=2)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(payload, encoding="utf-8")
+            tmp.replace(path)
         except OSError:
             pass
 

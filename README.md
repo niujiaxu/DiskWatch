@@ -61,7 +61,8 @@ DiskWatch does one job well:
 - **Real-time** — Windows directory notifications via `watchdog` (no full-disk scan)
 - **Floating card** — frameless, translucent, draggable, always-on-top
 - **Mini ball** — 66px orb showing **today’s total size** + ring vs 7-day peak
-- **Detail panel** — by day / search / sort / export CSV / jump to Explorer
+- **Detail panel** — by day / debounced search / **sort by time or size** (click column headers) / export CSV / jump to Explorer
+- **Responsive UI** — SQLite read/write split so background ingest doesn’t freeze clicks; config saves are debounced
 - **Smart filters** — skips `Windows`, `Program Files`, `AppData`, caches, `.git` / `.venv`…
 - **Custom data paths** — put `config.json` / `diskwatch.db` on any drive (Settings → Data)
 - **Dark UI** — Fusion dark theme + native Windows dark title bar
@@ -130,6 +131,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_portable.ps1
 | Card **－** | Collapse to mini ball |
 | Card **✕** | Hide (tray can restore) |
 | Click ball | Expand card |
+| Detail panel column header | Sort asc/desc (time & size use real values, not display text) |
 | Double-click a file row | Reveal in Explorer |
 | Tray left-click | Show / hide (remembers card vs ball) |
 | Tray double-click | Open detail panel |

@@ -120,12 +120,12 @@ class FileMonitor:
         if self._observer is not None:
             try:
                 self._observer.stop()
-                self._observer.join(timeout=3)
+                self._observer.join(timeout=1.2)
             except RuntimeError:
                 pass
             self._observer = None
         for t in self._threads:
-            t.join(timeout=2)
+            t.join(timeout=0.8)
         self._threads = []
 
     def restart(self) -> None:
@@ -282,25 +282,24 @@ class FileMonitor:
 
 
 def open_in_explorer(path: str) -> None:
-    """在资源管理器里定位到该文件；文件已不存在时退回打开所在目录。
+    """在资源管理器里定位到该文件。
 
-    不能用 os.system：它会先弹一个 cmd 黑框，再等 explorer 返回，又闪又慢。
-    用 ShellExecute 直接调 explorer，无控制台、立刻返回。
+    不先做 is_file()/exists()：网络盘或被锁文件上同步探测会把 UI 卡死。
+    直接 ShellExecute；文件已删时资源管理器自己处理。
     """
     p = Path(path)
     try:
-        if p.is_file() or p.is_dir():
-            # /select,"完整路径" —— 逗号后带引号，路径有空格也能正确定位
-            ctypes.windll.shell32.ShellExecuteW(
-                None,
-                "open",
-                "explorer.exe",
-                f'/select,"{p}"',
-                None,
-                1,  # SW_SHOWNORMAL
-            )
-        elif p.parent.exists():
-            # 文件已删：至少打开它所在的目录
-            os.startfile(str(p.parent))
+        ctypes.windll.shell32.ShellExecuteW(
+            None,
+            "open",
+            "explorer.exe",
+            f'/select,"{p}"',
+            None,
+            1,  # SW_SHOWNORMAL
+        )
     except OSError:
-        pass
+        try:
+            if p.parent.exists():
+                os.startfile(str(p.parent))
+        except OSError:
+            pass

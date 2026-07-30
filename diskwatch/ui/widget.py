@@ -241,7 +241,7 @@ class FloatingWidget(QWidget):
         if self._drag_offset is not None:
             self._drag_offset = None
             self._config.set("widget_pos", [self.x(), self.y()])
-            self._config.save()
+            self._config.save_soon()
 
     def contextMenuEvent(self, event) -> None:
         from PySide6.QtWidgets import QMenu
@@ -258,14 +258,14 @@ class FloatingWidget(QWidget):
     def _hide_self(self) -> None:
         self.hide()
         self._config.set("widget_visible", False)
-        self._config.save()
+        self._config.save_soon()
         self.hidden_by_user.emit()
 
     def show_widget(self) -> None:
         self.show()
         self.raise_()
         self._config.set("widget_visible", True)
-        self._config.save()
+        self._config.save_soon()
 
     def apply_appearance(self) -> None:
         self.setWindowOpacity(float(self._config.get("widget_opacity", 0.95)))

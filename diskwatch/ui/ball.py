@@ -222,7 +222,7 @@ class MiniBall(QWidget):
 
     def _save_pos(self) -> None:
         self._config.set("ball_pos", [self.x(), self.y()])
-        self._config.save()
+        self._config.save_soon()
 
     def place_near(self, rect) -> None:
         """从卡片收起时，让球出现在卡片右上角附近，视觉上有连续感。"""

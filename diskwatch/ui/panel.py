@@ -29,6 +29,11 @@ from ..watcher import open_in_explorer
 from .style import PANEL_QSS, app_icon, enable_dark_titlebar
 
 AUTO_REFRESH_MS = 5000
+SEARCH_DEBOUNCE_MS = 280
+# 一次往 QTableWidget 塞太多行会明显卡 UI；超出部分只在状态栏提示
+MAX_TABLE_ROWS = 2500
+# 文件完整路径（勿占用 UserRole：时间/大小列的 UserRole 留给数值排序）
+PATH_ROLE = Qt.UserRole + 1
 
 
 class StatCard(QFrame):
@@ -54,11 +59,15 @@ class DetailPanel(QWidget):
         self.setWindowIcon(app_icon())
         self.setStyleSheet(PANEL_QSS)
         self.resize(1000, 640)
+        self._load_signature: tuple | None = None
         self._build()
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._auto_refresh)
-        self._timer.start(AUTO_REFRESH_MS)
+
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.timeout.connect(self._apply_filter)
 
     # ---------- 构建 ----------
 
@@ -81,7 +90,9 @@ class DetailPanel(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("按文件名或目录筛选…")
         self.search.setMinimumWidth(220)
-        self.search.textChanged.connect(self._apply_filter)
+        self.search.textChanged.connect(
+            lambda: self._search_timer.start(SEARCH_DEBOUNCE_MS)
+        )
         head.addWidget(self.search)
 
         btn_export = QPushButton("导出 CSV")
@@ -109,7 +120,13 @@ class DetailPanel(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.setSortingEnabled(True)
+        self._sort_col = 0
+        self._sort_order = Qt.DescendingOrder
         hh = self.table.horizontalHeader()
+        hh.setSectionsClickable(True)
+        hh.setSortIndicatorShown(True)
+        hh.setSortIndicator(self._sort_col, self._sort_order)
+        hh.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
         hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(1, QHeaderView.Interactive)
         hh.setSectionResizeMode(2, QHeaderView.ResizeToContents)
@@ -160,44 +177,87 @@ class DetailPanel(QWidget):
 
     def _load_day(self, day: str) -> None:
         keyword = self.search.text().strip()
-        records = self._storage.files_for_day(day, keyword)
+        # 多取 1 条用来判断是否截断，避免把上万行一次性塞进表格
+        records = self._storage.files_for_day(
+            day, keyword, limit=MAX_TABLE_ROWS + 1
+        )
+        truncated = len(records) > MAX_TABLE_ROWS
+        if truncated:
+            records = records[:MAX_TABLE_ROWS]
         count, size = self._storage.day_stats(day)
+        folders = self._storage.top_folders(day, 1)
+        exts = self._storage.top_extensions(day, 1)
+        folder_key = folders[0] if folders else None
+        ext_key = exts[0] if exts else None
+
+        signature = (
+            day,
+            keyword,
+            count,
+            size,
+            folder_key,
+            ext_key,
+            truncated,
+            tuple((r.path, r.size, r.added_at) for r in records[:40]),
+            len(records),
+        )
+        if signature == self._load_signature:
+            return
+        self._load_signature = signature
+
         self.card_count.set_value(f"{count:,}")
         self.card_size.set_value(human_size(size))
-
-        folders = self._storage.top_folders(day, 1)
         self.card_folder.set_value(
             _shorten(folders[0][0], 26) + f"  ({folders[0][1]})" if folders else "—"
         )
-        exts = self._storage.top_extensions(day, 1)
         self.card_ext.set_value(
             f"{exts[0][0]}  ({exts[0][1]})" if exts else "—"
         )
 
         self.table.setSortingEnabled(False)
-        self.table.setRowCount(len(records))
-        for row, rec in enumerate(records):
-            when = datetime.fromtimestamp(rec.added_at).strftime("%H:%M:%S")
-            items = [
-                QTableWidgetItem(when),
-                QTableWidgetItem(rec.name),
-                _size_item(rec.size),
-                QTableWidgetItem(rec.ext or "—"),
-                QTableWidgetItem(rec.folder),
-            ]
-            items[1].setData(Qt.UserRole, rec.path)
-            items[1].setToolTip(rec.path)
-            if rec.size == 0:
-                for it in items:
-                    it.setForeground(QColor("#8b8f9f"))
-            for col, item in enumerate(items):
-                self.table.setItem(row, col, item)
-        self.table.setSortingEnabled(True)
+        self.table.setUpdatesEnabled(False)
+        try:
+            self.table.setRowCount(len(records))
+            for row, rec in enumerate(records):
+                when = datetime.fromtimestamp(rec.added_at).strftime("%H:%M:%S")
+                items = [
+                    _numeric_item(when, rec.added_at),
+                    QTableWidgetItem(rec.name),
+                    _numeric_item(human_size(rec.size), rec.size, align_right=True),
+                    QTableWidgetItem(rec.ext or "—"),
+                    QTableWidgetItem(rec.folder),
+                ]
+                items[1].setData(PATH_ROLE, rec.path)
+                items[1].setToolTip(rec.path)
+                if rec.size == 0:
+                    for it in items:
+                        it.setForeground(QColor("#8b8f9f"))
+                for col, item in enumerate(items):
+                    self.table.setItem(row, col, item)
+        finally:
+            self.table.setUpdatesEnabled(True)
+            self.table.setSortingEnabled(True)
+            # 刷新后恢复用户选的列/升降序（含按字节排序的「大小」）
+            self.table.sortItems(self._sort_col, self._sort_order)
+            self.table.horizontalHeader().setSortIndicator(
+                self._sort_col, self._sort_order
+            )
 
         shown = len(records)
-        self.count_label.setText(
-            f"显示 {shown:,} 条" + (f" / 共 {count:,} 条" if keyword else "")
-        )
+        if truncated:
+            self.count_label.setText(
+                f"显示前 {shown:,} 条 / 共 {count:,} 条（请用搜索缩小范围）"
+            )
+        else:
+            self.count_label.setText(
+                f"显示 {shown:,} 条" + (f" / 共 {count:,} 条" if keyword else "")
+            )
+
+    def _on_sort_indicator_changed(self, logical_index: int, order: Qt.SortOrder) -> None:
+        if logical_index < 0:
+            return
+        self._sort_col = logical_index
+        self._sort_order = order
 
     def _apply_filter(self) -> None:
         day = self.day_box.currentData()
@@ -212,7 +272,7 @@ class DetailPanel(QWidget):
             return
         item = self.table.item(row, 1)
         if item:
-            path = item.data(Qt.UserRole)
+            path = item.data(PATH_ROLE)
             if path:
                 open_in_explorer(path)
 
@@ -245,18 +305,33 @@ class DetailPanel(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         enable_dark_titlebar(self)
+        self._load_signature = None
         self.reload(keep_day=True)
+        self._timer.start(AUTO_REFRESH_MS)
+
+    def hideEvent(self, event) -> None:
+        super().hideEvent(event)
+        self._timer.stop()
+        self._search_timer.stop()
 
 
-class _SortableItem(QTableWidgetItem):
+class _NumericItem(QTableWidgetItem):
+    """显示可读文案，按 UserRole 中的数值比较（时间戳 / 字节数）。"""
+
     def __lt__(self, other: QTableWidgetItem) -> bool:  # type: ignore[override]
-        return float(self.data(Qt.UserRole) or 0) < float(other.data(Qt.UserRole) or 0)
+        try:
+            return float(self.data(Qt.UserRole) or 0) < float(other.data(Qt.UserRole) or 0)
+        except (TypeError, ValueError):
+            return super().__lt__(other)
 
 
-def _size_item(size: int) -> QTableWidgetItem:
-    item = _SortableItem(human_size(size))
-    item.setData(Qt.UserRole, size)
-    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+def _numeric_item(
+    text: str, value: float, *, align_right: bool = False
+) -> QTableWidgetItem:
+    item = _NumericItem(text)
+    item.setData(Qt.UserRole, float(value))
+    if align_right:
+        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
     return item
 
 

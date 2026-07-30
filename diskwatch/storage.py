@@ -1,4 +1,7 @@
-"""SQLite 持久化：记录新增文件、按日汇总、清理过期数据。"""
+"""SQLite 持久化：记录新增文件、按日汇总、清理过期数据。
+
+读写分连接：WAL 下写库不堵 UI 读；后台写线程独占 write 连接。
+"""
 
 from __future__ import annotations
 
@@ -76,22 +79,41 @@ def make_record(path: str, size: int, added_at: float | None = None) -> FileReco
 
 
 class Storage:
-    """线程安全的轻量封装。写入集中在后台线程，读取来自 UI 线程。"""
+    """写走后台连接；读走独立连接，避免 UI 被批量入库卡住。"""
 
     def __init__(self, db_path: Path) -> None:
         self._path = db_path
-        self._lock = threading.Lock()
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        with self._lock:
-            self._conn.executescript(SCHEMA)
-            self._conn.commit()
+        self._write_lock = threading.Lock()
+        self._write = self._connect()
+        self._write.execute("PRAGMA journal_mode=WAL")
+        self._write.execute("PRAGMA synchronous=NORMAL")
+        self._write.execute("PRAGMA busy_timeout=5000")
+        with self._write_lock:
+            self._write.executescript(SCHEMA)
+            self._write.commit()
+        # 仅供 Qt 主线程读：不与 write 抢同一把 Python 锁
+        self._read = self._connect()
+        self._read.execute("PRAGMA busy_timeout=5000")
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(
+            str(self._path),
+            check_same_thread=False,
+            timeout=5.0,
+        )
+        conn.row_factory = sqlite3.Row
+        return conn
 
     def close(self) -> None:
-        with self._lock:
-            self._conn.close()
+        with self._write_lock:
+            try:
+                self._write.close()
+            except sqlite3.Error:
+                pass
+        try:
+            self._read.close()
+        except sqlite3.Error:
+            pass
 
     # ---------- 写 ----------
 
@@ -112,8 +134,8 @@ class Storage:
             )
             for r in records
         ]
-        with self._lock:
-            cur = self._conn.executemany(
+        with self._write_lock:
+            cur = self._write.executemany(
                 """
                 INSERT INTO files (path, name, ext, drive, folder, size, added_at, day, size_final, deleted)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
@@ -126,40 +148,40 @@ class Storage:
                 """,
                 rows,
             )
-            self._conn.commit()
+            self._write.commit()
             return cur.rowcount
 
     def mark_deleted(self, paths: list[str]) -> None:
         if not paths:
             return
-        with self._lock:
-            self._conn.executemany(
+        with self._write_lock:
+            self._write.executemany(
                 "UPDATE files SET deleted = 1 WHERE path = ?", [(p,) for p in paths]
             )
-            self._conn.commit()
+            self._write.commit()
 
     def delete_paths(self, paths: list[str]) -> None:
         if not paths:
             return
-        with self._lock:
-            self._conn.executemany(
+        with self._write_lock:
+            self._write.executemany(
                 "DELETE FROM files WHERE path = ?", [(p,) for p in paths]
             )
-            self._conn.commit()
+            self._write.commit()
 
     def rename(self, src: str, dst: str) -> None:
-        with self._lock:
-            self._conn.execute("DELETE FROM files WHERE path = ?", (dst,))
-            self._conn.execute(
+        with self._write_lock:
+            self._write.execute("DELETE FROM files WHERE path = ?", (dst,))
+            self._write.execute(
                 "UPDATE files SET path = ?, name = ?, folder = ?, ext = ? WHERE path = ?",
                 (dst, Path(dst).name, str(Path(dst).parent), Path(dst).suffix.lower(), src),
             )
-            self._conn.commit()
+            self._write.commit()
 
     def pending_size_rows(self, older_than: float, limit: int = 500) -> list[str]:
         """刚创建的文件往往还是 0 字节，稍后再回来补真实体积。"""
-        with self._lock:
-            cur = self._conn.execute(
+        with self._write_lock:
+            cur = self._write.execute(
                 "SELECT path FROM files WHERE size_final = 0 AND deleted = 0 "
                 "AND added_at < ? ORDER BY added_at LIMIT ?",
                 (older_than, limit),
@@ -167,45 +189,44 @@ class Storage:
             return [r["path"] for r in cur.fetchall()]
 
     def update_sizes(self, sizes: dict[str, int], missing: list[str]) -> None:
-        with self._lock:
+        with self._write_lock:
             if sizes:
-                self._conn.executemany(
+                self._write.executemany(
                     "UPDATE files SET size = ?, size_final = 1 WHERE path = ?",
                     [(v, k) for k, v in sizes.items()],
                 )
             if missing:
-                self._conn.executemany(
+                self._write.executemany(
                     "UPDATE files SET deleted = 1, size_final = 1 WHERE path = ?",
                     [(p,) for p in missing],
                 )
-            self._conn.commit()
+            self._write.commit()
 
     def purge_older_than(self, days: int) -> int:
         if days <= 0:
             return 0
         cutoff = (date.today() - timedelta(days=days)).isoformat()
-        with self._lock:
-            cur = self._conn.execute("DELETE FROM files WHERE day < ?", (cutoff,))
-            self._conn.commit()
+        with self._write_lock:
+            cur = self._write.execute("DELETE FROM files WHERE day < ?", (cutoff,))
+            self._write.commit()
             return cur.rowcount
 
     def clear_all(self) -> None:
-        with self._lock:
-            self._conn.execute("DELETE FROM files")
-            self._conn.commit()
-            self._conn.execute("VACUUM")
+        with self._write_lock:
+            self._write.execute("DELETE FROM files")
+            self._write.commit()
+            # 不做 VACUUM：会长时间锁库，点「清空」时容易把界面卡死
 
-    # ---------- 读 ----------
+    # ---------- 读（UI 主线程，不抢 write 锁）----------
 
     def day_stats(self, day: str) -> tuple[int, int]:
-        with self._lock:
-            cur = self._conn.execute(
-                "SELECT COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
-                "WHERE day = ? AND deleted = 0",
-                (day,),
-            )
-            row = cur.fetchone()
-            return int(row["c"]), int(row["s"])
+        cur = self._read.execute(
+            "SELECT COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
+            "WHERE day = ? AND deleted = 0",
+            (day,),
+        )
+        row = cur.fetchone()
+        return int(row["c"]), int(row["s"])
 
     def recent_files(self, day: str | None = None, limit: int = 8) -> list[FileRecord]:
         sql = "SELECT * FROM files WHERE deleted = 0"
@@ -215,12 +236,15 @@ class Storage:
             args.append(day)
         sql += " ORDER BY added_at DESC LIMIT ?"
         args.append(limit)
-        with self._lock:
-            cur = self._conn.execute(sql, args)
-            return [_row_to_record(r) for r in cur.fetchall()]
+        cur = self._read.execute(sql, args)
+        return [_row_to_record(r) for r in cur.fetchall()]
 
     def files_for_day(
-        self, day: str, keyword: str = "", include_deleted: bool = False
+        self,
+        day: str,
+        keyword: str = "",
+        include_deleted: bool = False,
+        limit: int | None = None,
     ) -> list[FileRecord]:
         sql = "SELECT * FROM files WHERE day = ?"
         args: list = [day]
@@ -231,76 +255,72 @@ class Storage:
             like = f"%{keyword.lower()}%"
             args += [like, like]
         sql += " ORDER BY added_at DESC"
-        with self._lock:
-            cur = self._conn.execute(sql, args)
-            return [_row_to_record(r) for r in cur.fetchall()]
+        if limit is not None:
+            sql += " LIMIT ?"
+            args.append(limit)
+        cur = self._read.execute(sql, args)
+        return [_row_to_record(r) for r in cur.fetchall()]
 
     def days_with_data(self, limit: int = 60) -> list[DaySummary]:
-        with self._lock:
-            cur = self._conn.execute(
-                "SELECT day, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
-                "WHERE deleted = 0 GROUP BY day ORDER BY day DESC LIMIT ?",
-                (limit,),
-            )
-            return [
-                DaySummary(r["day"], int(r["c"]), int(r["s"])) for r in cur.fetchall()
-            ]
+        cur = self._read.execute(
+            "SELECT day, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
+            "WHERE deleted = 0 GROUP BY day ORDER BY day DESC LIMIT ?",
+            (limit,),
+        )
+        return [
+            DaySummary(r["day"], int(r["c"]), int(r["s"])) for r in cur.fetchall()
+        ]
 
     def top_folders(self, day: str, limit: int = 5) -> list[tuple[str, int, int]]:
-        with self._lock:
-            cur = self._conn.execute(
-                "SELECT folder, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
-                "WHERE day = ? AND deleted = 0 GROUP BY folder "
-                "ORDER BY c DESC, s DESC LIMIT ?",
-                (day, limit),
-            )
-            return [(r["folder"], int(r["c"]), int(r["s"])) for r in cur.fetchall()]
+        cur = self._read.execute(
+            "SELECT folder, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
+            "WHERE day = ? AND deleted = 0 GROUP BY folder "
+            "ORDER BY c DESC, s DESC LIMIT ?",
+            (day, limit),
+        )
+        return [(r["folder"], int(r["c"]), int(r["s"])) for r in cur.fetchall()]
 
     def top_extensions(self, day: str, limit: int = 8) -> list[tuple[str, int, int]]:
-        with self._lock:
-            cur = self._conn.execute(
-                "SELECT ext, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
-                "WHERE day = ? AND deleted = 0 GROUP BY ext "
-                "ORDER BY c DESC LIMIT ?",
-                (day, limit),
-            )
-            return [
-                (r["ext"] or "(无扩展名)", int(r["c"]), int(r["s"]))
-                for r in cur.fetchall()
-            ]
+        cur = self._read.execute(
+            "SELECT ext, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
+            "WHERE day = ? AND deleted = 0 GROUP BY ext "
+            "ORDER BY c DESC LIMIT ?",
+            (day, limit),
+        )
+        return [
+            (r["ext"] or "(无扩展名)", int(r["c"]), int(r["s"]))
+            for r in cur.fetchall()
+        ]
 
     def max_day_count(self, days: int = 7) -> int:
         """近 N 天里单日新增最多是多少，用于给悬浮球的进度环定标。"""
         cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
-        with self._lock:
-            cur = self._conn.execute(
-                "SELECT MAX(c) m FROM ("
-                "  SELECT COUNT(*) c FROM files WHERE day >= ? AND deleted = 0"
-                "  GROUP BY day"
-                ")",
-                (cutoff,),
-            )
-            row = cur.fetchone()
-            return int(row["m"] or 0)
+        cur = self._read.execute(
+            "SELECT MAX(c) m FROM ("
+            "  SELECT COUNT(*) c FROM files WHERE day >= ? AND deleted = 0"
+            "  GROUP BY day"
+            ")",
+            (cutoff,),
+        )
+        row = cur.fetchone()
+        return int(row["m"] or 0)
 
     def max_day_size(self, days: int = 7) -> int:
         """近 N 天里单日新增体积峰值（字节），用于迷你球进度环。"""
         cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
-        with self._lock:
-            cur = self._conn.execute(
-                "SELECT MAX(s) m FROM ("
-                "  SELECT COALESCE(SUM(size), 0) s FROM files"
-                "  WHERE day >= ? AND deleted = 0 GROUP BY day"
-                ")",
-                (cutoff,),
-            )
-            row = cur.fetchone()
-            return int(row["m"] or 0)
+        cur = self._read.execute(
+            "SELECT MAX(s) m FROM ("
+            "  SELECT COALESCE(SUM(size), 0) s FROM files"
+            "  WHERE day >= ? AND deleted = 0 GROUP BY day"
+            ")",
+            (cutoff,),
+        )
+        row = cur.fetchone()
+        return int(row["m"] or 0)
 
     def total_count(self) -> int:
-        with self._lock:
-            cur = self._conn.execute("SELECT COUNT(*) c FROM files")
-            return int(cur.fetchone()["c"])
+        cur = self._read.execute("SELECT COUNT(*) c FROM files")
+        return int(cur.fetchone()["c"])
 
 
 def _row_to_record(row: sqlite3.Row) -> FileRecord:

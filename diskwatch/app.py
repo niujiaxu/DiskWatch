@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import QSharedMemory, QTimer
@@ -129,7 +130,7 @@ class DiskWatchApp:
             self.widget.show()
             self.widget.raise_()
         self.config.set("widget_visible", True)
-        self.config.save()
+        self.config.save_soon()
         self._sync_tray_actions()
 
     def collapse(self) -> None:
@@ -153,7 +154,7 @@ class DiskWatchApp:
             self.widget.hide()
             self.ball.hide()
             self.config.set("widget_visible", False)
-            self.config.save()
+            self.config.save_soon()
         self._sync_tray_actions()
 
     def _sync_tray_actions(self) -> None:
@@ -232,7 +233,15 @@ class DiskWatchApp:
     def _purge(self) -> None:
         days = int(self.config.get("retention_days", 90))
         if days > 0:
-            self.storage.purge_older_than(days)
+            storage = self.storage
+
+            def _run() -> None:
+                try:
+                    storage.purge_older_than(days)
+                except Exception:
+                    pass
+
+            threading.Thread(target=_run, name="dw-purge", daemon=True).start()
 
     def _update_tooltip(self) -> None:
         count, size = self.storage.day_stats(today_str())
