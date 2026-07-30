@@ -40,14 +40,10 @@ class SettingsDialog(QDialog):
         self._pending_config_path = ""
         self._pending_db_path = ""
         self.setWindowTitle("设置")
-        # 明确带上关闭按钮；勿用裸 Qt.Window，否则标题栏 ✕ 可能丢失
-        self.setWindowFlags(
-            Qt.Dialog
-            | Qt.WindowTitleHint
-            | Qt.WindowSystemMenuHint
-            | Qt.WindowCloseButtonHint
-            | Qt.WindowStaysOnTopHint
-        )
+        # 只关帮助按钮。切勿写 `& ~Qt.WindowContextHelpButtonHint`：
+        # PySide6 里对 WindowType 做 ~ 得到的是残缺掩码（约 0x1feffff），
+        # 会顺带清掉 WindowCloseButtonHint，标题栏 ✕ 看起来在但点不了。
+        self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
         apply_window_icon(self)
         self.setStyleSheet(PANEL_QSS)
         self.setMinimumSize(640, 600)
