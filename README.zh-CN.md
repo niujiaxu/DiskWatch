@@ -1,4 +1,4 @@
-# DiskWatch
+﻿# DiskWatch
 
 <p align="center">
   <a href="README.md">English</a> · <strong>中文</strong>
@@ -22,11 +22,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.1/DiskWatch-1.1.1-win64-portable.zip"><strong>⬇ 便携版 .exe（Windows x64）</strong></a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.2/DiskWatch-1.1.2-win64-portable.zip"><strong>⬇ 便携版 .exe（Windows x64）</strong></a>
   ·
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.1/DiskWatch-1.1.1-src.zip">源码包</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.2/DiskWatch-1.1.2-src.zip">源码包</a>
   ·
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/tag/v1.1.1">发布说明</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/tag/v1.1.2">发布说明</a>
 </p>
 
 <p align="center">
@@ -91,7 +91,7 @@ DiskWatch 只做一件事：
 
 ### 便携版（推荐）
 
-1. 下载 [`DiskWatch-1.1.1-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.1/DiskWatch-1.1.1-win64-portable.zip)
+1. 下载 [`DiskWatch-1.1.2-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.2/DiskWatch-1.1.2-win64-portable.zip)
 2. 解压到任意目录 → 运行 **`DiskWatch.exe`**（或 `Start DiskWatch.bat`）
 3. 无需安装 Python。配置 / 数据库默认仍在 `%APPDATA%\DiskWatch\`。
 

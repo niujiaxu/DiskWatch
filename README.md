@@ -1,4 +1,4 @@
-# DiskWatch
+﻿# DiskWatch
 
 <p align="center">
   <strong>English</strong> · <a href="README.zh-CN.md">中文</a>
@@ -18,11 +18,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.1/DiskWatch-1.1.1-win64-portable.zip"><strong>⬇ Portable .exe (Windows x64)</strong></a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.2/DiskWatch-1.1.2-win64-portable.zip"><strong>⬇ Portable .exe (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.1/DiskWatch-1.1.1-src.zip">Source zip</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.2/DiskWatch-1.1.2-src.zip">Source zip</a>
   ·
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/tag/v1.1.1">Release notes</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/tag/v1.1.2">Release notes</a>
 </p>
 
 <p align="center">
@@ -85,7 +85,7 @@ DiskWatch does one job well:
 
 ### Portable (recommended)
 
-1. Download [`DiskWatch-1.1.1-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.1/DiskWatch-1.1.1-win64-portable.zip)
+1. Download [`DiskWatch-1.1.2-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.2/DiskWatch-1.1.2-win64-portable.zip)
 2. Unzip anywhere → run **`DiskWatch.exe`** (or `Start DiskWatch.bat`)
 3. No Python install required. Config/DB still live under `%APPDATA%\DiskWatch\` by default.
 

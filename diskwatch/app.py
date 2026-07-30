@@ -163,7 +163,8 @@ class DiskWatchApp:
         self.act_ball.setChecked(self._collapsed())
 
     def show_panel(self) -> None:
-        self.panel.show()
+        # 最小化后再点「详情」，仅 show()/raise_() 不会从任务栏恢复
+        self.panel.showNormal()
         self.panel.raise_()
         self.panel.activateWindow()
         # 卡片也是置顶窗，再抬一次详情，避免挡在表上

@@ -85,16 +85,27 @@ QFrame#card {{
     background: #1e202b; border: 1px solid rgba(255,255,255,0.06);
     border-radius: 10px;
 }}
-QComboBox, QLineEdit {{
+QComboBox, QLineEdit, QPushButton#dayPicker {{
     background: #23252f; color: {TEXT};
     border: 1px solid rgba(255,255,255,0.10);
     border-radius: 6px; padding: 5px 8px; min-height: 20px;
 }}
+QPushButton#dayPicker {{
+    text-align: left; padding-right: 22px;
+}}
+QPushButton#dayPicker:hover {{ background: #2a2d3a; }}
 QComboBox::drop-down {{ border: none; width: 18px; }}
-QComboBox QAbstractItemView {{
+QComboBox QAbstractItemView, QListWidget#dayPickerPopup {{
     background: #23252f; color: {TEXT};
     selection-background-color: {ACCENT.name()};
     border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 6px; outline: none;
+}}
+QListWidget#dayPickerPopup::item {{
+    padding: 6px 10px;
+}}
+QListWidget#dayPickerPopup::item:selected {{
+    background: {ACCENT.name()};
 }}
 QPushButton {{
     background: #2a2d3a; color: {TEXT};
@@ -104,7 +115,7 @@ QPushButton {{
 QPushButton:hover {{ background: #343849; }}
 QPushButton#primary {{ background: {ACCENT.name()}; border: none; color: white; }}
 QPushButton#primary:hover {{ background: #8b7cff; }}
-QTableWidget {{
+QTableWidget, QTableView {{
     background: #1a1c25; alternate-background-color: #1e202b;
     color: {TEXT}; gridline-color: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.06); border-radius: 8px;
@@ -115,7 +126,7 @@ QHeaderView::section {{
     border: none; border-bottom: 1px solid rgba(255,255,255,0.08);
     padding: 6px; font-weight: 500;
 }}
-QTableWidget::item {{ padding: 4px 6px; }}
+QTableWidget::item, QTableView::item {{ padding: 4px 6px; }}
 QScrollBar:vertical {{ background: transparent; width: 9px; margin: 2px; }}
 QScrollBar::handle:vertical {{
     background: rgba(255,255,255,0.18); border-radius: 4px; min-height: 30px;

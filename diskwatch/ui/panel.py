@@ -1,6 +1,6 @@
 """详情面板：按天查看新增文件、汇总统计、搜索与导出。
 
-打开/刷新时后台查库，表格分批填入，避免卡住悬浮卡片和其他窗口。
+打开/刷新时后台查库；表格用 QTableView + Model 虚拟绘制，只画可见行。
 """
 
 from __future__ import annotations
@@ -9,35 +9,299 @@ import csv
 import threading
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QAbstractTableModel, QEvent, QModelIndex, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
+    QApplication,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QTableWidget,
-    QTableWidgetItem,
+    QTableView,
     QVBoxLayout,
     QWidget,
 )
 
-from ..storage import Storage, human_size, today_str
+from ..storage import FileRecord, Storage, human_size, today_str
 from ..watcher import open_in_explorer
 from .style import PANEL_QSS, apply_window_icon, enable_dark_titlebar
 
 AUTO_REFRESH_MS = 5000
 SEARCH_DEBOUNCE_MS = 280
 MAX_TABLE_ROWS = 2500
-FILL_CHUNK = 100
 PATH_ROLE = Qt.UserRole + 1
+DIM_FG = QColor("#8b8f9f")
+
+_HEADERS = ("时间", "文件名", "大小", "类型", "所在目录")
+
+
+class DayPicker(QWidget):
+    """日期选择：列表画在详情窗内部，避免置顶窗里 QComboBox 弹层错位/残影。"""
+
+    currentIndexChanged = Signal(int)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._items: list[tuple[str, object]] = []
+        self._tips: dict[int, str] = {}
+        self._index = -1
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self._btn = QPushButton("—", objectName="dayPicker")
+        self._btn.setCursor(Qt.PointingHandCursor)
+        self._btn.clicked.connect(self._toggle)
+        lay.addWidget(self._btn)
+
+        self._popup: QListWidget | None = None
+
+    def setMinimumWidth(self, w: int) -> None:  # noqa: N802
+        super().setMinimumWidth(w)
+        self._btn.setMinimumWidth(w)
+
+    def setMaximumWidth(self, w: int) -> None:  # noqa: N802
+        super().setMaximumWidth(w)
+        self._btn.setMaximumWidth(w)
+
+    def clear(self) -> None:
+        self._close_popup()
+        self._items.clear()
+        self._tips.clear()
+        self._index = -1
+        self._btn.setText("—")
+        self._btn.setToolTip("")
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def addItem(self, text: str, userData=None) -> None:  # noqa: N802
+        self._items.append((text, userData))
+        if self._index < 0:
+            self.setCurrentIndex(0)
+
+    def setItemData(self, index: int, value, role: int = Qt.UserRole) -> None:  # noqa: N802
+        if role == Qt.ToolTipRole and 0 <= index < len(self._items):
+            self._tips[index] = str(value)
+            if index == self._index:
+                self._btn.setToolTip(str(value))
+
+    def findData(self, data) -> int:  # noqa: N802
+        for i, (_t, d) in enumerate(self._items):
+            if d == data:
+                return i
+        return -1
+
+    def currentData(self, role: int = Qt.UserRole):  # noqa: N802
+        if 0 <= self._index < len(self._items):
+            return self._items[self._index][1]
+        return None
+
+    def currentIndex(self) -> int:  # noqa: N802
+        return self._index
+
+    def setCurrentIndex(self, index: int) -> None:  # noqa: N802
+        if index < 0 or index >= len(self._items):
+            return
+        changed = index != self._index
+        self._index = index
+        text, _data = self._items[index]
+        self._btn.setText(text)
+        self._btn.setToolTip(self._tips.get(index, ""))
+        if changed and not self.signalsBlocked():
+            self.currentIndexChanged.emit(index)
+
+    def _host(self) -> QWidget:
+        return self.window()
+
+    def _toggle(self) -> None:
+        if self._popup is not None and self._popup.isVisible():
+            self._close_popup()
+        else:
+            self._open_popup()
+
+    def _open_popup(self) -> None:
+        if not self._items:
+            return
+        host = self._host()
+        if self._popup is None:
+            self._popup = QListWidget(host)
+            self._popup.setObjectName("dayPickerPopup")
+            self._popup.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self._popup.itemClicked.connect(self._on_pick)
+            host.installEventFilter(self)
+            app = QApplication.instance()
+            if app is not None:
+                app.installEventFilter(self)
+        self._popup.clear()
+        for i, (text, _data) in enumerate(self._items):
+            item = QListWidgetItem(text)
+            tip = self._tips.get(i)
+            if tip:
+                item.setToolTip(tip)
+            self._popup.addItem(item)
+        if 0 <= self._index < self._popup.count():
+            self._popup.setCurrentRow(self._index)
+
+        top_left = self.mapTo(host, QPoint(0, self.height() + 2))
+        row_h = 28
+        height = min(280, max(row_h * min(len(self._items), 10) + 8, row_h + 8))
+        width = max(self.width(), 220)
+        if top_left.y() + height > host.height() - 8:
+            top_left = self.mapTo(host, QPoint(0, -2)) - QPoint(0, height)
+        self._popup.setGeometry(top_left.x(), max(8, top_left.y()), width, height)
+        self._popup.raise_()
+        self._popup.show()
+        self._popup.setFocus(Qt.PopupFocusReason)
+
+    def _close_popup(self) -> None:
+        if self._popup is not None:
+            self._popup.hide()
+
+    def _on_pick(self, item: QListWidgetItem) -> None:
+        row = self._popup.row(item) if self._popup is not None else -1
+        self._close_popup()
+        if row >= 0:
+            self.setCurrentIndex(row)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if self._popup is None or not self._popup.isVisible():
+            return super().eventFilter(obj, event)
+        et = event.type()
+        if et == QEvent.MouseButtonPress:
+            pos = event.globalPosition().toPoint()
+            over_btn = self.rect().contains(self.mapFromGlobal(pos))
+            over_list = self._popup.rect().contains(self._popup.mapFromGlobal(pos))
+            if not over_btn and not over_list:
+                self._close_popup()
+        elif et == QEvent.KeyPress and event.key() == Qt.Key_Escape:
+            self._close_popup()
+            return True
+        elif et in (QEvent.Resize, QEvent.Move) and obj is self._host():
+            self._close_popup()
+        return super().eventFilter(obj, event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._close_popup()
+        super().hideEvent(event)
+
+
+class FilesTableModel(QAbstractTableModel):
+    """只持有 FileRecord 列表，由视图按需取单元格，避免创建上万 QTableWidgetItem。"""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._records: list[FileRecord] = []
+        self._sort_col = 0
+        self._sort_order = Qt.DescendingOrder
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        return 0 if parent.isValid() else len(self._records)
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        return 0 if parent.isValid() else 5
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):  # noqa: N802
+        if not index.isValid():
+            return None
+        rec = self._records[index.row()]
+        col = index.column()
+
+        if role == Qt.DisplayRole:
+            if col == 0:
+                return datetime.fromtimestamp(rec.added_at).strftime("%H:%M:%S")
+            if col == 1:
+                return rec.name
+            if col == 2:
+                return human_size(rec.size)
+            if col == 3:
+                return rec.ext or "—"
+            if col == 4:
+                return rec.folder
+            return None
+
+        if role == Qt.TextAlignmentRole and col == 2:
+            return int(Qt.AlignRight | Qt.AlignVCenter)
+
+        if role == Qt.ForegroundRole and rec.size == 0:
+            return DIM_FG
+
+        if role == Qt.ToolTipRole and col == 1:
+            return rec.path
+
+        if role == PATH_ROLE:
+            return rec.path
+
+        if role == Qt.UserRole:
+            if col == 0:
+                return float(rec.added_at)
+            if col == 2:
+                return float(rec.size)
+            return None
+
+        return None
+
+    def headerData(  # noqa: N802
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole
+    ):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            if 0 <= section < len(_HEADERS):
+                return _HEADERS[section]
+        return None
+
+    @property
+    def sort_col(self) -> int:
+        return self._sort_col
+
+    @property
+    def sort_order(self) -> Qt.SortOrder:
+        return self._sort_order
+
+    def records(self) -> list[FileRecord]:
+        return self._records
+
+    def set_records(self, records: list[FileRecord]) -> None:
+        sorted_rows = self._sorted(records, self._sort_col, self._sort_order)
+        self.beginResetModel()
+        self._records = sorted_rows
+        self.endResetModel()
+
+    def sort_by(self, column: int, order: Qt.SortOrder) -> None:
+        if column < 0:
+            return
+        same = column == self._sort_col and order == self._sort_order
+        self._sort_col = column
+        self._sort_order = order
+        if same or not self._records:
+            return
+        sorted_rows = self._sorted(self._records, column, order)
+        self.beginResetModel()
+        self._records = sorted_rows
+        self.endResetModel()
+
+    @staticmethod
+    def _sorted(
+        records: list[FileRecord], col: int, order: Qt.SortOrder
+    ) -> list[FileRecord]:
+        reverse = order == Qt.DescendingOrder
+        if col == 0:
+            key = lambda r: r.added_at
+        elif col == 2:
+            key = lambda r: r.size
+        elif col == 1:
+            key = lambda r: r.name.lower()
+        elif col == 3:
+            key = lambda r: (r.ext or "").lower()
+        else:
+            key = lambda r: (r.folder or "").lower()
+        return sorted(records, key=key, reverse=reverse)
 
 
 class StatCard(QFrame):
@@ -74,9 +338,8 @@ class DetailPanel(QWidget):
         self._days_req = 0
         self._day_req = 0
         self._pending_keep_day: str | None = None
-        self._fill_records: list = []
-        self._fill_index = 0
         self._fill_meta: dict | None = None
+        self._model = FilesTableModel(self)
 
         self._build()
 
@@ -89,9 +352,6 @@ class DetailPanel(QWidget):
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.timeout.connect(self._apply_filter)
-
-        self._fill_timer = QTimer(self)
-        self._fill_timer.timeout.connect(self._fill_chunk)
 
     # ---------- 构建 ----------
 
@@ -117,7 +377,7 @@ class DetailPanel(QWidget):
         filter_row = QHBoxLayout()
         filter_row.setSpacing(10)
         filter_row.addWidget(QLabel("日期", objectName="dim"))
-        self.day_box = QComboBox()
+        self.day_box = DayPicker()
         self.day_box.setMinimumWidth(200)
         self.day_box.setMaximumWidth(280)
         self.day_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
@@ -144,19 +404,21 @@ class DetailPanel(QWidget):
             cards.addWidget(c)
         root.addLayout(cards)
 
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["时间", "文件名", "大小", "类型", "所在目录"])
+        self.table = QTableView()
+        self.table.setModel(self._model)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSortingEnabled(False)
         self.table.verticalHeader().setVisible(False)
-        self.table.setSortingEnabled(True)
-        self._sort_col = 0
-        self._sort_order = Qt.DescendingOrder
+        self.table.setShowGrid(True)
+        self.table.verticalHeader().setDefaultSectionSize(28)
+
         hh = self.table.horizontalHeader()
         hh.setSectionsClickable(True)
         hh.setSortIndicatorShown(True)
-        hh.setSortIndicator(self._sort_col, self._sort_order)
+        hh.setSortIndicator(0, Qt.DescendingOrder)
         hh.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
         hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(1, QHeaderView.Interactive)
@@ -185,7 +447,6 @@ class DetailPanel(QWidget):
         self._days_req += 1
         req = self._days_req
         self.count_label.setText("加载中…")
-        self._fill_timer.stop()
 
         storage = self._storage
 
@@ -242,7 +503,6 @@ class DetailPanel(QWidget):
         self._day_req += 1
         req = self._day_req
         self.count_label.setText("加载中…")
-        self._fill_timer.stop()
 
         storage = self._storage
         limit = MAX_TABLE_ROWS + 1
@@ -286,8 +546,10 @@ class DetailPanel(QWidget):
             tuple((r.path, r.size, r.added_at) for r in records[:40]),
             len(records),
         )
-        if signature == self._load_signature and self.table.rowCount() == len(records):
-            self.count_label.setText(self._status_text(len(records), count, keyword, truncated))
+        if signature == self._load_signature and self._model.rowCount() == len(records):
+            self.count_label.setText(
+                self._status_text(len(records), count, keyword, truncated)
+            )
             return
         self._load_signature = signature
 
@@ -305,96 +567,14 @@ class DetailPanel(QWidget):
             "keyword": keyword,
             "truncated": truncated,
         }
-        # 先按当前表头排好再填，避免最后 sortItems 再次卡死 UI
-        self._fill_records = self._sorted_records(records)
-        self._fill_index = 0
-
-        self.table.setSortingEnabled(False)
-        self.table.setUpdatesEnabled(False)
-        self.table.clearContents()
-        self.table.setRowCount(len(self._fill_records))
-        self.table.setUpdatesEnabled(True)
-
-        if not self._fill_records:
-            self.count_label.setText(self._status_text(0, count, keyword, False))
-            self.table.setSortingEnabled(True)
-            self.table.horizontalHeader().setSortIndicator(
-                self._sort_col, self._sort_order
-            )
-            return
-
-        # 分批填表，中间把事件循环让给悬浮窗/托盘
-        self._fill_timer.setInterval(1)
-        self._fill_timer.start()
-
-    def _sorted_records(self, records: list) -> list:
-        reverse = self._sort_order == Qt.DescendingOrder
-        col = self._sort_col
-        if col == 0:
-            key = lambda r: r.added_at
-        elif col == 2:
-            key = lambda r: r.size
-        elif col == 1:
-            key = lambda r: r.name.lower()
-        elif col == 3:
-            key = lambda r: (r.ext or "").lower()
-        else:
-            key = lambda r: (r.folder or "").lower()
-        return sorted(records, key=key, reverse=reverse)
-
-    def _fill_chunk(self) -> None:
-        records = self._fill_records
-        if self._fill_index >= len(records):
-            self._finish_fill()
-            return
-
-        end = min(self._fill_index + FILL_CHUNK, len(records))
-        self.table.setUpdatesEnabled(False)
-        try:
-            for row in range(self._fill_index, end):
-                self._write_row(row, records[row])
-        finally:
-            self.table.setUpdatesEnabled(True)
-
-        self._fill_index = end
-        total = len(records)
-        if self._fill_index < total:
-            self.count_label.setText(f"加载中… {self._fill_index:,}/{total:,}")
-        else:
-            self._finish_fill()
-
-    def _finish_fill(self) -> None:
-        self._fill_timer.stop()
-        self.table.setSortingEnabled(True)
-        self.table.horizontalHeader().setSortIndicator(
-            self._sort_col, self._sort_order
-        )
-        meta = self._fill_meta or {}
+        self._model.set_records(records)
+        hh = self.table.horizontalHeader()
+        hh.blockSignals(True)
+        hh.setSortIndicator(self._model.sort_col, self._model.sort_order)
+        hh.blockSignals(False)
         self.count_label.setText(
-            self._status_text(
-                len(self._fill_records),
-                int(meta.get("count", 0)),
-                str(meta.get("keyword", "")),
-                bool(meta.get("truncated", False)),
-            )
+            self._status_text(len(records), count, keyword, truncated)
         )
-
-    def _write_row(self, row: int, rec) -> None:
-        when = datetime.fromtimestamp(rec.added_at).strftime("%H:%M:%S")
-        items = [
-            _numeric_item(when, rec.added_at),
-            QTableWidgetItem(rec.name),
-            _numeric_item(human_size(rec.size), rec.size, align_right=True),
-            QTableWidgetItem(rec.ext or "—"),
-            QTableWidgetItem(rec.folder),
-        ]
-        items[1].setData(PATH_ROLE, rec.path)
-        items[1].setToolTip(rec.path)
-        if rec.size == 0:
-            for it in items:
-                it.setForeground(QColor("#8b8f9f"))
-        for col, item in enumerate(items):
-            self.table.setItem(row, col, item)
 
     @staticmethod
     def _status_text(shown: int, count: int, keyword: str, truncated: bool) -> str:
@@ -403,7 +583,7 @@ class DetailPanel(QWidget):
         return f"显示 {shown:,} 条" + (f" / 共 {count:,} 条" if keyword else "")
 
     def _auto_refresh(self) -> None:
-        if not self.isVisible() or self._fill_timer.isActive():
+        if not self.isVisible():
             return
         day = self.day_box.currentData()
         if day == today_str():
@@ -412,8 +592,7 @@ class DetailPanel(QWidget):
     def _on_sort_indicator_changed(self, logical_index: int, order: Qt.SortOrder) -> None:
         if logical_index < 0:
             return
-        self._sort_col = logical_index
-        self._sort_order = order
+        self._model.sort_by(logical_index, order)
 
     def _apply_filter(self) -> None:
         day = self.day_box.currentData()
@@ -422,15 +601,13 @@ class DetailPanel(QWidget):
 
     # ---------- 动作 ----------
 
-    def _open_selected(self) -> None:
-        row = self.table.currentRow()
-        if row < 0:
+    def _open_selected(self, _index: QModelIndex | None = None) -> None:
+        index = self.table.currentIndex()
+        if not index.isValid():
             return
-        item = self.table.item(row, 1)
-        if item:
-            path = item.data(PATH_ROLE)
-            if path:
-                open_in_explorer(path)
+        path = self._model.data(index.sibling(index.row(), 1), PATH_ROLE)
+        if path:
+            open_in_explorer(path)
 
     def _export_csv(self) -> None:
         day = self.day_box.currentData() or today_str()
@@ -483,7 +660,7 @@ class DetailPanel(QWidget):
                 if meta is not None:
                     self.count_label.setText(
                         self._status_text(
-                            len(self._fill_records),
+                            self._model.rowCount(),
                             int(meta.get("count", n)),
                             str(meta.get("keyword", "")),
                             bool(meta.get("truncated", False)),
@@ -508,29 +685,8 @@ class DetailPanel(QWidget):
         super().hideEvent(event)
         self._timer.stop()
         self._search_timer.stop()
-        self._fill_timer.stop()
         self._days_req += 1
         self._day_req += 1
-
-
-class _NumericItem(QTableWidgetItem):
-    """显示可读文案，按 UserRole 中的数值比较（时间戳 / 字节数）。"""
-
-    def __lt__(self, other: QTableWidgetItem) -> bool:  # type: ignore[override]
-        try:
-            return float(self.data(Qt.UserRole) or 0) < float(other.data(Qt.UserRole) or 0)
-        except (TypeError, ValueError):
-            return super().__lt__(other)
-
-
-def _numeric_item(
-    text: str, value: float, *, align_right: bool = False
-) -> QTableWidgetItem:
-    item = _NumericItem(text)
-    item.setData(Qt.UserRole, float(value))
-    if align_right:
-        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-    return item
 
 
 def _shorten(text: str, limit: int) -> str:
