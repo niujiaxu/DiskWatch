@@ -19,11 +19,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.0/DiskWatch-1.1.0-win64-portable.zip"><strong>⬇ Portable .exe (Windows x64)</strong></a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.1/DiskWatch-1.1.1-win64-portable.zip"><strong>⬇ Portable .exe (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.0/DiskWatch-1.1.0-src.zip">Source zip</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.1/DiskWatch-1.1.1-src.zip">Source zip</a>
   ·
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/tag/v1.1.0">Release notes</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/tag/v1.1.1">Release notes</a>
 </p>
 
 <p align="center">
@@ -61,12 +61,12 @@ DiskWatch does one job well:
 - **Real-time** — Windows directory notifications via `watchdog` (no full-disk scan)
 - **Floating card** — frameless, translucent, draggable, always-on-top
 - **Mini ball** — 66px orb showing **today’s total size** + ring vs 7-day peak
-- **Detail panel** — by day / debounced search / **sort by time or size** (click column headers) / export CSV / jump to Explorer
+- **Detail panel** — opens without freezing the widget; by day / debounced search / **sort by time or size** / export CSV / jump to Explorer
 - **Responsive UI** — SQLite read/write split so background ingest doesn’t freeze clicks; config saves are debounced
 - **Smart filters** — skips `Windows`, `Program Files`, `AppData`, caches, `.git` / `.venv`…
 - **Custom data paths** — put `config.json` / `diskwatch.db` on any drive (Settings → Data)
 - **Dark UI** — Fusion dark theme + native Windows dark title bar
-- **Tray + autostart** — single instance, stays out of the way
+- **Tray + autostart** — single instance; **Restart** from the tray menu; stays out of the way
 - **Privacy** — SQLite under `%APPDATA%\DiskWatch\` by default, no network
 
 <details>
@@ -88,7 +88,7 @@ DiskWatch does one job well:
 
 ### Portable (recommended · 推荐)
 
-1. Download [`DiskWatch-1.1.0-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.0/DiskWatch-1.1.0-win64-portable.zip)
+1. Download [`DiskWatch-1.1.1-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.1/DiskWatch-1.1.1-win64-portable.zip)
 2. Unzip anywhere → run **`DiskWatch.exe`** (or `Start DiskWatch.bat`)
 3. No Python install required. Config/DB still live under `%APPDATA%\DiskWatch\` by default.
 
@@ -135,6 +135,8 @@ powershell -ExecutionPolicy Bypass -File scripts\build_portable.ps1
 | Double-click a file row | Reveal in Explorer |
 | Tray left-click | Show / hide (remembers card vs ball) |
 | Tray double-click | Open detail panel |
+| Tray → **重启** | Relaunch the whole app (portable exe / source both OK) |
+| Tray → **重新开始监控** | Restart file watchers only |
 
 ### Filters matter · 过滤很重要
 

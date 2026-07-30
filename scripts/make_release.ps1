@@ -30,7 +30,10 @@ $include = @(
     "CHANGELOG.md",
     "requirements.txt",
     "run.pyw",
-    ".gitignore"
+    "run_portable.py",
+    "DiskWatch.spec",
+    ".gitignore",
+    ".gitattributes"
 )
 
 foreach ($item in $include) {

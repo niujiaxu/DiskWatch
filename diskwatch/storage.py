@@ -322,6 +322,82 @@ class Storage:
         cur = self._read.execute("SELECT COUNT(*) c FROM files")
         return int(cur.fetchone()["c"])
 
+    def fetch_days_with_data(self, limit: int = 60) -> list[DaySummary]:
+        """后台线程可用：自建短连接，不碰 UI 的 _read。"""
+        conn = self._connect()
+        conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            cur = conn.execute(
+                "SELECT day, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
+                "WHERE deleted = 0 GROUP BY day ORDER BY day DESC LIMIT ?",
+                (limit,),
+            )
+            return [
+                DaySummary(r["day"], int(r["c"]), int(r["s"])) for r in cur.fetchall()
+            ]
+        finally:
+            conn.close()
+
+    def fetch_day_view(
+        self, day: str, keyword: str = "", limit: int | None = 2501
+    ) -> dict:
+        """后台线程打包一天详情所需的全部查询结果。"""
+        conn = self._connect()
+        conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            sql = "SELECT * FROM files WHERE day = ? AND deleted = 0"
+            args: list = [day]
+            if keyword:
+                sql += " AND (LOWER(name) LIKE ? OR LOWER(folder) LIKE ?)"
+                like = f"%{keyword.lower()}%"
+                args += [like, like]
+            sql += " ORDER BY added_at DESC"
+            if limit is not None:
+                sql += " LIMIT ?"
+                args.append(limit)
+            records = [_row_to_record(r) for r in conn.execute(sql, args).fetchall()]
+            truncated = limit is not None and len(records) >= limit
+            if truncated:
+                records = records[: limit - 1]
+
+            row = conn.execute(
+                "SELECT COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
+                "WHERE day = ? AND deleted = 0",
+                (day,),
+            ).fetchone()
+            count, size = int(row["c"]), int(row["s"])
+
+            folders = [
+                (r["folder"], int(r["c"]), int(r["s"]))
+                for r in conn.execute(
+                    "SELECT folder, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
+                    "WHERE day = ? AND deleted = 0 GROUP BY folder "
+                    "ORDER BY c DESC, s DESC LIMIT 1",
+                    (day,),
+                ).fetchall()
+            ]
+            exts = [
+                (r["ext"] or "(无扩展名)", int(r["c"]), int(r["s"]))
+                for r in conn.execute(
+                    "SELECT ext, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
+                    "WHERE day = ? AND deleted = 0 GROUP BY ext "
+                    "ORDER BY c DESC LIMIT 1",
+                    (day,),
+                ).fetchall()
+            ]
+            return {
+                "day": day,
+                "keyword": keyword,
+                "records": records,
+                "truncated": truncated,
+                "count": count,
+                "size": size,
+                "folders": folders,
+                "exts": exts,
+            }
+        finally:
+            conn.close()
+
 
 def _row_to_record(row: sqlite3.Row) -> FileRecord:
     return FileRecord(

@@ -93,6 +93,7 @@ class DiskWatchApp:
         menu.addSeparator()
         menu.addAction("设置…", self.show_settings)
         menu.addAction("重新开始监控", self._restart_monitor)
+        menu.addAction("重启", self._restart_app)
         menu.addSeparator()
         menu.addAction(f"关于 {APP_NAME} {VERSION}", self._about)
         menu.addAction("退出", self.quit)
@@ -199,10 +200,25 @@ class DiskWatchApp:
                 return
             self._relaunch()
 
+    def _restart_app(self) -> None:
+        """整程序重启（托盘菜单「重启」）。"""
+        self.config.save()
+        self._relaunch()
+
     def _relaunch(self) -> None:
-        """用同一解释器重新拉起 run.pyw，然后退出当前实例。"""
-        entry = Path(__file__).resolve().parent.parent / "run.pyw"
+        """重新拉起自身，然后退出当前实例。兼容源码运行与便携版 exe。"""
         creation = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        exe = Path(sys.executable)
+        if exe.name.lower() in ("python.exe", "pythonw.exe"):
+            pythonw = exe.with_name("pythonw.exe")
+            runner = pythonw if pythonw.exists() else exe
+            entry = Path(__file__).resolve().parent.parent / "run.pyw"
+            args = [str(runner), str(entry)]
+            cwd = str(entry.parent)
+        else:
+            args = [str(exe)]
+            cwd = str(exe.parent)
+
         # 先放开单实例锁，否则新进程会以为已经在运行
         if self._instance_lock is not None:
             try:
@@ -210,18 +226,25 @@ class DiskWatchApp:
             except Exception:
                 pass
             self._instance_lock = None
+
         try:
-            subprocess.Popen(
-                [sys.executable, str(entry)],
-                cwd=str(entry.parent),
-                creationflags=creation,
-            )
+            subprocess.Popen(args, cwd=cwd, creationflags=creation)
         except OSError as exc:
             QMessageBox.warning(
                 self.panel,
                 "自动重启失败",
-                f"请手动重新运行 start.bat。\n{exc}",
+                f"请手动重新运行程序。\n{exc}",
             )
+            return
+
+        try:
+            self.monitor.stop()
+        except Exception:
+            pass
+        try:
+            self.storage.close()
+        except Exception:
+            pass
         self.tray.hide()
         self.qt_app.quit()
 
