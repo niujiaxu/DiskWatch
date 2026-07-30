@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -63,8 +64,10 @@ class DetailPanel(QWidget):
         self._storage = storage
         self.setWindowTitle("硬盘新增文件 · 详情")
         self.setWindowIcon(app_icon())
+        # 与悬浮卡片同级置顶，避免卡片挡在详情表上面
+        self.setWindowFlags(self.windowFlags() | Qt.Window | Qt.WindowStaysOnTopHint)
         self.setStyleSheet(PANEL_QSS)
-        self.resize(1000, 640)
+        self.resize(1040, 680)
 
         self._load_signature: tuple | None = None
         self._days_req = 0
@@ -96,32 +99,39 @@ class DetailPanel(QWidget):
         root.setContentsMargins(18, 16, 18, 16)
         root.setSpacing(12)
 
-        head = QHBoxLayout()
-        head.setSpacing(10)
-        head.addWidget(QLabel("新增文件明细", objectName="h1"))
-        head.addStretch(1)
-
-        self.day_box = QComboBox()
-        self.day_box.setMinimumWidth(190)
-        self.day_box.currentIndexChanged.connect(self._on_day_changed)
-        head.addWidget(QLabel("日期", objectName="dim"))
-        head.addWidget(self.day_box)
-
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("按文件名或目录筛选…")
-        self.search.setMinimumWidth(220)
-        self.search.textChanged.connect(
-            lambda: self._search_timer.start(SEARCH_DEBOUNCE_MS)
-        )
-        head.addWidget(self.search)
-
+        # 第一行：标题 + 操作按钮（避免和日期/搜索挤在同一行互相遮挡）
+        title_row = QHBoxLayout()
+        title_row.setSpacing(10)
+        title_row.addWidget(QLabel("新增文件明细", objectName="h1"))
+        title_row.addStretch(1)
         btn_export = QPushButton("导出 CSV")
         btn_export.clicked.connect(self._export_csv)
         btn_refresh = QPushButton("刷新", objectName="primary")
         btn_refresh.clicked.connect(lambda: self.reload(keep_day=True))
-        head.addWidget(btn_export)
-        head.addWidget(btn_refresh)
-        root.addLayout(head)
+        title_row.addWidget(btn_export)
+        title_row.addWidget(btn_refresh)
+        root.addLayout(title_row)
+
+        # 第二行：日期 + 可伸展的搜索框
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(10)
+        filter_row.addWidget(QLabel("日期", objectName="dim"))
+        self.day_box = QComboBox()
+        self.day_box.setMinimumWidth(200)
+        self.day_box.setMaximumWidth(280)
+        self.day_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.day_box.currentIndexChanged.connect(self._on_day_changed)
+        filter_row.addWidget(self.day_box)
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("按文件名或目录筛选…")
+        self.search.setMinimumWidth(180)
+        self.search.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.search.textChanged.connect(
+            lambda: self._search_timer.start(SEARCH_DEBOUNCE_MS)
+        )
+        filter_row.addWidget(self.search, 1)
+        root.addLayout(filter_row)
 
         cards = QHBoxLayout()
         cards.setSpacing(10)
@@ -202,10 +212,16 @@ class DetailPanel(QWidget):
         self.day_box.blockSignals(True)
         self.day_box.clear()
         for d in days:
-            label = f"{d.day}   ({d.count} 个 · {human_size(d.total_size)})"
             if d.day == today:
-                label = f"今天 {label}"
+                label = f"今天 · {d.count} 个 · {human_size(d.total_size)}"
+            else:
+                label = f"{d.day} · {d.count} 个 · {human_size(d.total_size)}"
             self.day_box.addItem(label, d.day)
+            self.day_box.setItemData(
+                self.day_box.count() - 1,
+                f"{d.day}  ·  {d.count} 个  ·  {human_size(d.total_size)}",
+                Qt.ToolTipRole,
+            )
 
         target = self._pending_keep_day or today
         idx = self.day_box.findData(target)

@@ -55,6 +55,22 @@ QPushButton#close {{
 QPushButton#close:hover {{
     color: {TEXT}; background: rgba(255,255,255,0.12);
 }}
+
+QScrollArea#recentScroll {{
+    background: transparent; border: none;
+}}
+QWidget#recentHost {{ background: transparent; }}
+QScrollBar:vertical {{
+    background: transparent; width: 6px; margin: 2px 0;
+}}
+QScrollBar::handle:vertical {{
+    background: rgba(255,255,255,0.22); border-radius: 3px; min-height: 24px;
+}}
+QScrollBar::handle:vertical:hover {{ background: rgba(255,255,255,0.35); }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0; border: none; background: none;
+}}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
 """
 
 PANEL_QSS = f"""

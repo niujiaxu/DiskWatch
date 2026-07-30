@@ -56,9 +56,9 @@ DiskWatch does one job well:
 ## Features
 
 - **Real-time** — Windows directory notifications via `watchdog` (no full-disk scan)
-- **Floating card** — frameless, translucent, draggable, always-on-top
+- **Floating card** — frameless, translucent, draggable, always-on-top; **scrollable recent list** (wheel / thin scrollbar, reused row widgets)
 - **Mini ball** — 66px orb showing **today’s total size** + ring vs 7-day peak
-- **Detail panel** — opens without freezing the widget; by day / debounced search / **sort by time or size** / export CSV / jump to Explorer
+- **Detail panel** — opens without freezing the widget; two-row toolbar (no overlap); stays above the floating card; by day / debounced search / **sort by time or size** / export CSV / jump to Explorer
 - **Responsive UI** — SQLite read/write split so background ingest doesn’t freeze clicks; config saves are debounced
 - **Smart filters** — skips `Windows`, `Program Files`, `AppData`, caches, `.git` / `.venv`…
 - **Custom data paths** — put `config.json` / `diskwatch.db` on any drive (Settings → Data)
@@ -128,6 +128,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_portable.ps1
 | Card **－** | Collapse to mini ball |
 | Card **✕** | Hide (tray can restore) |
 | Click ball | Expand card |
+| Scroll recent list on card | Browse more of today’s files (up to 24) |
 | Detail panel column header | Sort asc/desc (time & size use real values, not display text) |
 | Double-click a file row | Reveal in Explorer |
 | Tray left-click | Show / hide (remembers card vs ball) |

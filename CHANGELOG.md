@@ -2,6 +2,15 @@
 
 All notable changes to DiskWatch are documented in this file.
 
+## [Unreleased]
+
+### Added
+- Floating card: scrollable **最近** list (fixed row pool, thin scrollbar)
+
+### Fixed
+- Detail panel toolbar no longer overlaps date dropdown and search field
+- Detail panel stays above the always-on-top floating card
+
 ## [1.1.1] - 2026-07-30
 
 ### Added

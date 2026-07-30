@@ -8,9 +8,11 @@ from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -20,7 +22,11 @@ from ..watcher import FileMonitor, open_in_explorer
 from .style import BG_BOTTOM, BG_TOP, BORDER, WIDGET_QSS
 
 REFRESH_MS = 2000
-RECENT_ROWS = 5
+# 视口大约显示这么多行；超出用滚轮 / 细滚动条浏览
+RECENT_VISIBLE = 5
+# 固定控件池上限：只改文案、不反复 new，避免卡顿
+RECENT_MAX = 24
+ROW_HEIGHT = 40
 
 
 class FileRow(QWidget):
@@ -29,6 +35,7 @@ class FileRow(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self._path = ""
+        self.setFixedHeight(ROW_HEIGHT)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 2, 0, 2)
         lay.setSpacing(1)
@@ -46,11 +53,13 @@ class FileRow(QWidget):
         folder = _elide_left(rec.folder, 30)
         self.meta.setText(f"{when}  ·  {human_size(rec.size)}  ·  {folder}")
         self.setToolTip(rec.path)
-        self.show()
+        if not self.isVisible():
+            self.show()
 
     def clear(self) -> None:
         self._path = ""
-        self.hide()
+        if self.isVisible():
+            self.hide()
 
     def mouseDoubleClickEvent(self, event) -> None:
         if self._path:
@@ -78,7 +87,6 @@ class FloatingWidget(QWidget):
         self.setFixedWidth(272)
         self.setStyleSheet(WIDGET_QSS)
         self._signature: tuple | None = None
-        self._visible_rows = -1
         self._build()
         self._restore_geometry()
 
@@ -130,12 +138,29 @@ class FloatingWidget(QWidget):
         self.sep_label = QLabel("最近", objectName="title")
         root.addWidget(self.sep_label)
 
+        host = QWidget(objectName="recentHost")
+        self._list_lay = QVBoxLayout(host)
+        self._list_lay.setContentsMargins(0, 0, 0, 0)
+        self._list_lay.setSpacing(0)
+
         self.rows: list[FileRow] = []
-        for _ in range(RECENT_ROWS):
+        for _ in range(RECENT_MAX):
             row = FileRow()
             row.hide()
             self.rows.append(row)
-            root.addWidget(row)
+            self._list_lay.addWidget(row)
+        self._list_lay.addStretch(1)
+
+        self.scroll = QScrollArea(objectName="recentScroll")
+        self.scroll.setWidget(host)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll.setFocusPolicy(Qt.NoFocus)
+        # 固定视口高度：卡片尺寸稳定，滚动只发生在列表内部
+        self.scroll.setFixedHeight(RECENT_VISIBLE * ROW_HEIGHT)
+        root.addWidget(self.scroll)
 
         self.empty = QLabel("暂无记录，安静着呢", objectName="sub")
         root.addWidget(self.empty)
@@ -158,7 +183,7 @@ class FloatingWidget(QWidget):
     def refresh(self) -> None:
         day = today_str()
         count, size = self._storage.day_stats(day)
-        recent = self._storage.recent_files(day, RECENT_ROWS)
+        recent = self._storage.recent_files(day, RECENT_MAX)
         _, dropped, pending = self._monitor.stats()
         roots = len(self._monitor.roots)
 
@@ -178,14 +203,21 @@ class FloatingWidget(QWidget):
         self.count.setText(f"{count:,}")
         self.total_size.setText(human_size(size))
 
+        # 保留滚动位置，避免刷新时列表被弹回顶部
+        bar = self.scroll.verticalScrollBar()
+        scroll_pos = bar.value()
+
+        n = len(recent)
         for i, row in enumerate(self.rows):
-            if i < len(recent):
+            if i < n:
                 row.set_record(recent[i])
             else:
                 row.clear()
-        has_any = bool(recent)
+
+        has_any = n > 0
         self.empty.setVisible(not has_any)
         self.sep_label.setVisible(has_any)
+        self.scroll.setVisible(has_any)
 
         text = f"监控 {roots} 个位置"
         if pending:
@@ -196,10 +228,7 @@ class FloatingWidget(QWidget):
         self.dot.setText("●" if roots else "○")
         self.dot.setStyleSheet("color:#57d9a3;" if roots else "color:#ff7b7b;")
 
-        # 只有行数变化才需要重新算尺寸，否则白白触发一次布局
-        if len(recent) != self._visible_rows:
-            self._visible_rows = len(recent)
-            self.adjustSize()
+        bar.setValue(scroll_pos)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -227,8 +256,20 @@ class FloatingWidget(QWidget):
 
     # ---------- 交互 ----------
 
+    def _press_on_scroll(self, pos: QPoint) -> bool:
+        w = self.childAt(pos)
+        while w is not None:
+            if w is self.scroll:
+                return True
+            w = w.parentWidget()
+        return False
+
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
+            # 列表区域留给滚轮/滚动条，不开始拖窗口，避免手感打架
+            if self._press_on_scroll(event.position().toPoint()):
+                self._drag_offset = None
+                return
             self._drag_offset = (
                 event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             )

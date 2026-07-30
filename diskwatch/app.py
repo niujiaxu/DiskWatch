@@ -166,6 +166,8 @@ class DiskWatchApp:
         self.panel.show()
         self.panel.raise_()
         self.panel.activateWindow()
+        # 卡片也是置顶窗，再抬一次详情，避免挡在表上
+        self.panel.raise_()
 
     def show_settings(self) -> None:
         dlg = SettingsDialog(self.config, self.storage, self.panel)
