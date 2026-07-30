@@ -27,6 +27,7 @@ $include = @(
     "scripts",
     "LICENSE",
     "README.md",
+    "README.zh-CN.md",
     "CHANGELOG.md",
     "requirements.txt",
     "run.pyw",

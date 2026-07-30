@@ -1,13 +1,12 @@
 # DiskWatch
 
 <p align="center">
-  <strong>See what landed on your disk today.</strong><br/>
-  <sub>Windows desktop widget · real-time new-file tracker · local only</sub>
+  <strong>English</strong> · <a href="README.zh-CN.md">中文</a>
 </p>
 
 <p align="center">
-  今天硬盘上<strong>新长了哪些文件、一共多大</strong>？<br/>
-  一张悬浮卡片 / 一颗迷你球，实时告诉你——数据只存在本机，不联网。
+  <strong>See what landed on your disk today.</strong><br/>
+  <sub>Windows desktop widget · real-time new-file tracker · local only</sub>
 </p>
 
 <p align="center">
@@ -52,11 +51,9 @@ DiskWatch does one job well:
 | Local SQLite history + CSV export | ❌ | ❌ | ✅ |
 | Moves your files around | ❌ | ✅ | ❌ never |
 
-中文一句话：**不是装完软件的流水账，也不是桌面整理器——是「今日新增文件」的桌面看板。**
-
 ---
 
-## Features · 功能
+## Features
 
 - **Real-time** — Windows directory notifications via `watchdog` (no full-disk scan)
 - **Floating card** — frameless, translucent, draggable, always-on-top
@@ -66,11 +63,11 @@ DiskWatch does one job well:
 - **Smart filters** — skips `Windows`, `Program Files`, `AppData`, caches, `.git` / `.venv`…
 - **Custom data paths** — put `config.json` / `diskwatch.db` on any drive (Settings → Data)
 - **Dark UI** — Fusion dark theme + native Windows dark title bar
-- **Tray + autostart** — single instance; **Restart** from the tray menu; stays out of the way
+- **Tray + autostart** — single instance; **Restart** from the tray menu
 - **Privacy** — SQLite under `%APPDATA%\DiskWatch\` by default, no network
 
 <details>
-<summary>More screenshots · 更多截图</summary>
+<summary>More screenshots</summary>
 
 **Settings**
 
@@ -84,15 +81,15 @@ DiskWatch does one job well:
 
 ---
 
-## 🚀 Quick start · 快速开始
+## Quick start
 
-### Portable (recommended · 推荐)
+### Portable (recommended)
 
 1. Download [`DiskWatch-1.1.1-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.1/DiskWatch-1.1.1-win64-portable.zip)
 2. Unzip anywhere → run **`DiskWatch.exe`** (or `Start DiskWatch.bat`)
 3. No Python install required. Config/DB still live under `%APPDATA%\DiskWatch\` by default.
 
-### From source · 源码运行
+### From source
 
 **Requirements:** Windows 10/11 · Python 3.10+ (tick *Add to PATH*)
 
@@ -123,7 +120,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_portable.ps1
 
 ---
 
-## Usage · 使用
+## Usage
 
 | Action | Result |
 |--------|--------|
@@ -135,10 +132,10 @@ powershell -ExecutionPolicy Bypass -File scripts\build_portable.ps1
 | Double-click a file row | Reveal in Explorer |
 | Tray left-click | Show / hide (remembers card vs ball) |
 | Tray double-click | Open detail panel |
-| Tray → **重启** | Relaunch the whole app (portable exe / source both OK) |
-| Tray → **重新开始监控** | Restart file watchers only |
+| Tray → **Restart** (`重启`) | Relaunch the whole app (portable exe / source both OK) |
+| Tray → **Restart monitoring** (`重新开始监控`) | Restart file watchers only |
 
-### Filters matter · 过滤很重要
+### Filters matter
 
 By default you **won’t** see writes under `Program Files`, `AppData`, or common caches — on purpose.  
 Otherwise one installer floods the log with tens of thousands of junk rows.
@@ -159,7 +156,7 @@ You can change both paths in **Settings → Data**. A tiny `location.json` stays
 
 ---
 
-## Footprint · 占用（实测）
+## Footprint (measured)
 
 Whole C: drive, ~20 min steady:
 
@@ -184,6 +181,8 @@ DiskWatch/
 ├── diskwatch/          # app
 ├── docs/               # screenshots
 ├── tests/              # smoke / UI / perf
+├── README.md           # English
+├── README.zh-CN.md     # 中文
 └── scripts/
     ├── make_release.ps1
     └── build_portable.ps1
