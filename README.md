@@ -19,11 +19,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.0/DiskWatch-1.1.0-src.zip"><strong>⬇ Download v1.1.0</strong></a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.0/DiskWatch-1.1.0-win64-portable.zip"><strong>⬇ Portable .exe (Windows x64)</strong></a>
+  ·
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.0/DiskWatch-1.1.0-src.zip">Source zip</a>
   ·
   <a href="https://github.com/niujiaxu/DiskWatch/releases/tag/v1.1.0">Release notes</a>
-  ·
-  <a href="#-quick-start--快速开始">Quick start</a>
 </p>
 
 <p align="center">
@@ -85,6 +85,14 @@ DiskWatch does one job well:
 
 ## 🚀 Quick start · 快速开始
 
+### Portable (recommended · 推荐)
+
+1. Download [`DiskWatch-1.1.0-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.0/DiskWatch-1.1.0-win64-portable.zip)
+2. Unzip anywhere → run **`DiskWatch.exe`**
+3. No Python install required. Config/DB still live under `%APPDATA%\DiskWatch\` by default.
+
+### From source · 源码运行
+
 **Requirements:** Windows 10/11 · Python 3.10+ (tick *Add to PATH*)
 
 ```bat
@@ -105,6 +113,12 @@ python -m venv .venv
 ```
 
 Deps: `PySide6`, `watchdog` — see [`requirements.txt`](requirements.txt).
+
+Rebuild the portable zip yourself:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_portable.ps1
+```
 
 ---
 
@@ -161,11 +175,14 @@ Normal installs into Program Files stay out of the DB with default filters.
 ```
 DiskWatch/
 ├── start.bat / 启动.bat
-├── run.pyw
+├── run.pyw / run_portable.py
+├── DiskWatch.spec      # PyInstaller
 ├── diskwatch/          # app
 ├── docs/               # screenshots
 ├── tests/              # smoke / UI / perf
-└── scripts/make_release.ps1
+└── scripts/
+    ├── make_release.ps1
+    └── build_portable.ps1
 ```
 
 ```bat
@@ -179,7 +196,7 @@ DiskWatch/
 ## Roadmap
 
 - [ ] Optional “modified” tracking (not only creates)
-- [ ] Portable `.exe` (PyInstaller)
+- [x] Portable `.exe` (PyInstaller)
 - [ ] English UI strings
 
 Issues and PRs welcome. If DiskWatch saved you a “where did that file go?” moment, a ⭐ helps others find it.
