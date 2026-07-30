@@ -27,7 +27,7 @@ from ..autostart import is_enabled as autostart_enabled, set_enabled as set_auto
 from ..config import Config, default_home, paths
 from ..storage import Storage
 from ..watcher import list_drives
-from .style import PANEL_QSS, app_icon, enable_dark_titlebar
+from .style import PANEL_QSS, apply_window_icon, enable_dark_titlebar
 
 
 class SettingsDialog(QDialog):
@@ -40,7 +40,12 @@ class SettingsDialog(QDialog):
         self._pending_config_path = ""
         self._pending_db_path = ""
         self.setWindowTitle("设置")
-        self.setWindowIcon(app_icon())
+        # 独立顶层窗，避免任务栏仍挂 python 默认图标
+        self.setWindowFlags(
+            (self.windowFlags() | Qt.Window | Qt.WindowStaysOnTopHint)
+            & ~Qt.WindowContextHelpButtonHint
+        )
+        apply_window_icon(self)
         self.setStyleSheet(PANEL_QSS)
         self.setMinimumSize(640, 600)
         self._build()
@@ -48,6 +53,7 @@ class SettingsDialog(QDialog):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        apply_window_icon(self)
         enable_dark_titlebar(self)
 
     def _build(self) -> None:

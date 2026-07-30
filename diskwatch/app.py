@@ -16,7 +16,7 @@ from .storage import Storage, human_size, today_str
 from .ui.ball import MiniBall
 from .ui.panel import DetailPanel
 from .ui.settings import SettingsDialog
-from .ui.style import app_icon, apply_dark_theme
+from .ui.style import app_icon, apply_dark_theme, set_app_user_model_id
 from .ui.widget import FloatingWidget
 from .watcher import FileMonitor
 
@@ -298,10 +298,14 @@ class DiskWatchApp:
 
 
 def main() -> int:
+    # 必须在创建 QApplication 之前：否则任务栏仍显示 python.exe 图标
+    set_app_user_model_id(f"{APP_NAME}.Desktop")
+
     qt_app = QApplication(sys.argv)
     qt_app.setApplicationName(APP_NAME)
     qt_app.setQuitOnLastWindowClosed(False)
-    qt_app.setWindowIcon(app_icon())
+    icon = app_icon()
+    qt_app.setWindowIcon(icon)
     apply_dark_theme(qt_app)
 
     # 单实例：重复启动时直接退出，避免两个监控互相打架

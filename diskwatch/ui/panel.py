@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 
 from ..storage import Storage, human_size, today_str
 from ..watcher import open_in_explorer
-from .style import PANEL_QSS, app_icon, enable_dark_titlebar
+from .style import PANEL_QSS, apply_window_icon, enable_dark_titlebar
 
 AUTO_REFRESH_MS = 5000
 SEARCH_DEBOUNCE_MS = 280
@@ -63,9 +63,10 @@ class DetailPanel(QWidget):
         super().__init__(objectName="panelRoot")
         self._storage = storage
         self.setWindowTitle("硬盘新增文件 · 详情")
-        self.setWindowIcon(app_icon())
         # 与悬浮卡片同级置顶，避免卡片挡在详情表上面
         self.setWindowFlags(self.windowFlags() | Qt.Window | Qt.WindowStaysOnTopHint)
+        # setWindowFlags 会重建原生窗口，图标必须放在其后
+        apply_window_icon(self)
         self.setStyleSheet(PANEL_QSS)
         self.resize(1040, 680)
 
@@ -495,6 +496,7 @@ class DetailPanel(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        apply_window_icon(self)
         enable_dark_titlebar(self)
         self._load_signature = None
         self.count_label.setText("加载中…")

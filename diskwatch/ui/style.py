@@ -261,19 +261,35 @@ def apply_dark_theme(app) -> None:
             enable_dark_titlebar(w)
 
 
-def app_icon(size: int = 64) -> QIcon:
-    """画一个渐变圆角方块 + 磁盘刻度，避免依赖外部图标文件。"""
+_ICON_CACHE: QIcon | None = None
+
+
+def set_app_user_model_id(app_id: str = "DiskWatch.Desktop") -> None:
+    """让 Windows 任务栏用我们的窗口图标，而不是 python.exe 自带图标。"""
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:
+        pass
+
+
+def _paint_app_pixmap(size: int) -> QPixmap:
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing)
 
+    pad = max(1, size // 32)
+    radius = size * 0.28
     grad = QLinearGradient(QPointF(0, 0), QPointF(size, size))
     grad.setColorAt(0.0, ACCENT)
     grad.setColorAt(1.0, ACCENT_2)
 
     path = QPainterPath()
-    path.addRoundedRect(QRectF(2, 2, size - 4, size - 4), size * 0.28, size * 0.28)
+    path.addRoundedRect(
+        QRectF(pad, pad, size - 2 * pad, size - 2 * pad), radius, radius
+    )
     p.fillPath(path, grad)
 
     p.setPen(Qt.NoPen)
@@ -287,7 +303,24 @@ def app_icon(size: int = 64) -> QIcon:
     p.setBrush(QColor(87, 217, 163))
     p.drawEllipse(QPointF(size * 0.76, size * 0.76), size * 0.11, size * 0.11)
     p.end()
-    return QIcon(pm)
+    return pm
+
+
+def app_icon(size: int = 64) -> QIcon:
+    """多尺寸程序图标（任务栏 / 标题栏 / 托盘），不依赖外部 .ico 文件。"""
+    global _ICON_CACHE
+    if _ICON_CACHE is not None:
+        return _ICON_CACHE
+    icon = QIcon()
+    for s in (16, 24, 32, 48, 64, 128, 256):
+        icon.addPixmap(_paint_app_pixmap(s))
+    _ICON_CACHE = icon
+    return icon
+
+
+def apply_window_icon(widget: QWidget) -> None:
+    """给顶层窗口挂上应用图标（改 windowFlags 之后要再调一次）。"""
+    widget.setWindowIcon(app_icon())
 
 
 def mono_font(size: int = 10) -> QFont:
