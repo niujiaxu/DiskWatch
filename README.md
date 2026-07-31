@@ -6,78 +6,81 @@
 
 <p align="center">
   <strong>See what landed on your disk today.</strong><br/>
-  <sub>Windows desktop widget · real-time new-file tracker · local only</sub>
+  <sub>A tiny Windows desktop widget that tracks newly created files — in real time, locally, quietly.</sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/latest"><img src="https://img.shields.io/github/v/release/niujiaxu/DiskWatch?style=flat-square&label=release" alt="release" /></a>
-  <a href="https://github.com/niujiaxu/DiskWatch/stargazers"><img src="https://img.shields.io/github/stars/niujiaxu/DiskWatch?style=flat-square" alt="stars" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="license" /></a>
-  <img src="https://img.shields.io/badge/python-3.10%2B-green?style=flat-square" alt="python" />
-  <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey?style=flat-square" alt="platform" />
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/latest"><img src="https://img.shields.io/github/v/release/niujiaxu/DiskWatch?style=for-the-badge&label=release" alt="release" /></a>
+  <a href="https://github.com/niujiaxu/DiskWatch/stargazers"><img src="https://img.shields.io/github/stars/niujiaxu/DiskWatch?style=for-the-badge" alt="stars" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="license" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.3/DiskWatch-1.1.3-win64-portable.zip"><strong>⬇ Portable .exe (Windows x64)</strong></a>
-  ·
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.3/DiskWatch-1.1.3-src.zip">Source zip</a>
-  ·
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/tag/v1.1.3">Release notes</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/latest"><strong>⬇ Download portable .exe</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.3/DiskWatch-1.1.3-win64-portable.zip">v1.1.3 zip</a>
+  &nbsp;·&nbsp;
+  <a href="#-quick-start">Quick start</a>
 </p>
 
+---
+
+## Demo
+
 <p align="center">
-  <img src="docs/widget-preview.png" alt="Floating card" width="280" />
+  <img src="docs/widget-preview.png" alt="Floating card" width="320" />
   &nbsp;&nbsp;
-  <img src="docs/ball-preview.png" alt="Mini ball" width="120" />
+  <img src="docs/ball-preview.png" alt="Mini ball" width="140" />
 </p>
 
----
+<p align="center"><sub>Floating card · Mini ball</sub></p>
 
-## Why DiskWatch?
+<p align="center">
+  <img src="docs/panel-preview.png" alt="Detail panel" width="720" />
+</p>
 
-Installers, zip extracts, downloads, AI coding agents… your disk creates **thousands of files** you never consciously look at.
+<p align="center"><sub>Detail panel — by day, search, sort, export</sub></p>
 
-Most tools either dump a raw change list (noisy) or auto-sort your folders (invasive).  
-DiskWatch does one job well:
+<p align="center">
+  <img src="docs/settings-preview.png" alt="Settings" width="560" />
+</p>
 
-> **Track “what was created today”, show it on the desktop, keep the noise out.**
-
-| | FolderChangesView-style lists | Auto-organizers | **DiskWatch** |
-|--|--|--|--|
-| Real-time create events | ✅ | ✅ | ✅ |
-| Day summary (count + size) | ❌ | ❌ | ✅ |
-| Floating card / mini ball | ❌ | ❌ | ✅ |
-| Smart filters (AppData / caches / PF) | weak | N/A | ✅ |
-| Local SQLite history + CSV export | ❌ | ❌ | ✅ |
-| Moves your files around | ❌ | ✅ | ❌ never |
+<p align="center"><sub>Settings — scope, filters, appearance, data paths</sub></p>
 
 ---
 
-## Features
+## Why this exists
 
-- **Real-time** — Windows directory notifications via `watchdog` (no full-disk scan)
-- **Floating card** — frameless, translucent, draggable, always-on-top; **scrollable recent list** (wheel / thin scrollbar, reused row widgets)
-- **Mini ball** — 66px orb showing **today’s total size** + ring vs 7-day peak
-- **Detail panel** — virtualized table (opens without freezing); two-row toolbar; stays above the floating card; by day / debounced search with **matching summary cards** / **sort by time or size** / export CSV / jump to Explorer
-- **Responsive UI** — SQLite read/write split so background ingest doesn’t freeze clicks; config saves are debounced
-- **Smart filters** — skips `Windows`, `Program Files`, `AppData`, caches, `.git` / `.venv`… (empty card explains this)
-- **Custom data paths** — put `config.json` / `diskwatch.db` on any drive (Settings → Data)
-- **Dark UI** — Fusion dark theme + native Windows dark title bar
-- **Tray + autostart** — single instance (**second launch brings the UI forward**); **Restart** from the tray menu
-- **Privacy** — SQLite under `%APPDATA%\DiskWatch\` by default, no network
+Installers, zip extracts, downloads, AI coding agents… Windows creates **thousands of files** you never consciously look at.
 
-<details>
-<summary>More screenshots</summary>
+Most tools either dump a noisy change list, or start rearranging your folders.  
+DiskWatch does **one** job:
 
-**Settings**
+> **Track “what was created today”, put it on your desktop, filter the junk.**
 
-![Settings](docs/settings-preview.png)
+No cloud. No file moving. Just visibility.
 
-**Detail panel**
+| | Change-list tools | Auto-organizers | **DiskWatch** |
+|--|:--:|:--:|:--:|
+| Real-time creates | ✅ | ✅ | ✅ |
+| Today’s count + size | ❌ | ❌ | ✅ |
+| Desktop card / mini ball | ❌ | ❌ | ✅ |
+| Smart noise filters | weak | — | ✅ |
+| Local history + CSV | ❌ | ❌ | ✅ |
+| Moves your files | ❌ | ✅ | ❌ never |
 
-![Detail panel](docs/panel-preview.png)
+---
 
-</details>
+## Highlights
+
+- **Live monitoring** — Windows directory notifications (not a full-disk scan)
+- **Floating card** — translucent, draggable, always-on-top, scrollable recent list
+- **Mini ball** — 66px orb with today’s total size + 7-day peak ring
+- **Detail panel** — virtualized table, day switch, search that matches the stats, sort by time/size, CSV export, jump to Explorer
+- **Smart filters** — skips `AppData`, `Program Files`, caches, `.git` / `.venv`… by default
+- **Single instance** — launch again → brings the UI forward
+- **Portable** — unzip and run; optional autostart from tray
+- **Private** — SQLite under `%APPDATA%\DiskWatch\`, zero network
 
 ---
 
@@ -85,13 +88,14 @@ DiskWatch does one job well:
 
 ### Portable (recommended)
 
-1. Download [`DiskWatch-1.1.3-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.3/DiskWatch-1.1.3-win64-portable.zip)
-2. Unzip anywhere → run **`DiskWatch.exe`** (or `Start DiskWatch.bat`)
-3. No Python install required. Config/DB still live under `%APPDATA%\DiskWatch\` by default.
+1. Grab the latest build from [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest)  
+   or direct: [`DiskWatch-1.1.3-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.3/DiskWatch-1.1.3-win64-portable.zip)
+2. Unzip → run **`DiskWatch.exe`**
+3. Done. No Python required.
 
 ### From source
 
-**Requirements:** Windows 10/11 · Python 3.10+ (tick *Add to PATH*)
+Windows 10/11 · Python 3.10+
 
 ```bat
 git clone https://github.com/niujiaxu/DiskWatch.git
@@ -99,111 +103,41 @@ cd DiskWatch
 start.bat
 ```
 
-Or download the source zip → unzip → double-click **`start.bat`**  
-(First run creates `.venv` and installs dependencies; then watch the tray icon.)
-
-Manual:
-
-```bat
-python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-.venv\Scripts\pythonw.exe run.pyw
-```
-
-Deps: `PySide6`, `watchdog` — see [`requirements.txt`](requirements.txt).
-
-Rebuild the portable zip yourself:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build_portable.ps1
-```
+First run creates `.venv` and installs `PySide6` + `watchdog`.
 
 ---
 
-## Usage
+## Everyday use
 
-| Action | Result |
-|--------|--------|
-| Drag card / ball | Move (positions remembered separately) |
-| Card **－** | Collapse to mini ball |
-| Card **✕** | Hide (tray can restore) |
-| Click ball | Expand card |
-| Scroll recent list on card | Browse more of today’s files (up to 24) |
-| Detail panel column header | Sort asc/desc (time & size use real values, not display text) |
-| Double-click a file row | Reveal in Explorer |
-| Tray left-click | Show / hide (remembers card vs ball) |
-| Tray double-click | Open detail panel |
-| Tray → **Restart** (`重启`) | Relaunch the whole app (portable exe / source both OK) |
-| Tray → **Restart monitoring** (`重新开始监控`) | Restart file watchers only |
-
-### Filters matter
-
-By default you **won’t** see writes under `Program Files`, `AppData`, or common caches — on purpose.  
-Otherwise one installer floods the log with tens of thousands of junk rows.
-
-Need those paths? **Settings → Filters**, delete the matching lines, save.  
-Only future events are affected.
-
-Data lives at (default):
-
-```
-%APPDATA%\DiskWatch\
-  config.json
-  diskwatch.db
-  location.json   # only if you moved paths elsewhere
-```
-
-You can change both paths in **Settings → Data**. A tiny `location.json` stays in AppData so the app can find your custom files on next launch. Default retention: **90 days**.
-
----
-
-## Footprint (measured)
-
-Whole C: drive, ~20 min steady:
-
-| Metric | Approx. |
+| You do | It does |
 |--------|---------|
-| Working set | 100–110 MB (Qt dominates; monitor-only ~24 MB) |
-| Idle CPU | 0.6%–1.7% of one core |
-| Events | ~3–10/s, ~93% filtered |
+| Drag card / ball | Remembers position |
+| Card **－** | Collapse to mini ball |
+| Click ball | Expand card |
+| Double-click a file | Reveal in Explorer |
+| Tray left-click | Show / hide |
+| Tray double-click | Open detail panel |
 
-Burst: 3000 new files in ~2.6s — all captured.  
-Normal installs into Program Files stay out of the DB with default filters.
-
----
-
-## Project layout
-
-```
-DiskWatch/
-├── start.bat / 启动.bat
-├── run.pyw / run_portable.py
-├── DiskWatch.spec      # PyInstaller
-├── diskwatch/          # app
-├── docs/               # screenshots
-├── tests/              # smoke / UI / perf
-├── README.md           # English
-├── README.zh-CN.md     # 中文
-└── scripts/
-    ├── make_release.ps1
-    └── build_portable.ps1
-```
-
-```bat
-.venv\Scripts\python.exe tests\smoke_test.py
-.venv\Scripts\python.exe tests\ui_state_test.py
-.venv\Scripts\python.exe tests\perf_test.py 60
-```
+**Filters matter:** by default you won’t see `Program Files` / `AppData` noise — on purpose.  
+Need those paths? **Settings → Filters**.
 
 ---
 
-## Roadmap
+## Footprint
 
-- [ ] Optional “modified” tracking (not only creates)
-- [x] Portable `.exe` (PyInstaller)
-- [ ] English UI strings
+| Metric | Approx. (whole C:, idle) |
+|--------|--------------------------|
+| RAM | ~100–110 MB (Qt); monitor-only ~24 MB |
+| CPU | ~0.6%–1.7% of one core |
+| Noise | ~93% of events filtered by default |
 
-Issues and PRs welcome. If DiskWatch saved you a “where did that file go?” moment, a ⭐ helps others find it.
+---
+
+## Star if it helped
+
+If DiskWatch ever answered *“where did that file go?”* for you, a ⭐ helps other Windows users find it.
+
+Issues and PRs welcome · roadmap includes optional “modified” tracking and English UI strings.
 
 ---
 
