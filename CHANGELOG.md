@@ -4,6 +4,14 @@ All notable changes to DiskWatch are documented in this file.
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-07-31
+
+### Added
+- Detail panel **按应用分组**: tree view that clusters same-day files under one path root (e.g. `Tencent Files`, AppData apps) without a hard-coded allowlist
+
+### Changed
+- Detail panel no longer forces always-on-top (floating card/ball still follow Settings)
+
 ## [1.1.3] - 2026-07-31
 
 ### Fixed

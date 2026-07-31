@@ -18,7 +18,7 @@
 <p align="center">
   <a href="https://github.com/niujiaxu/DiskWatch/releases/latest"><strong>⬇ Download portable .exe</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.3/DiskWatch-1.1.3-win64-portable.zip">v1.1.3 zip</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.4/DiskWatch-1.1.4-win64-portable.zip">v1.1.4 zip</a>
   &nbsp;·&nbsp;
   <a href="#-quick-start">Quick start</a>
 </p>
@@ -39,7 +39,7 @@
   <img src="docs/panel-preview.png" alt="Detail panel" width="720" />
 </p>
 
-<p align="center"><sub>Detail panel — by day, search, sort, export</sub></p>
+<p align="center"><sub>Detail panel — by day, search, sort, group by app, export</sub></p>
 
 <p align="center">
   <img src="docs/settings-preview.png" alt="Settings" width="560" />
@@ -76,7 +76,7 @@ No cloud. No file moving. Just visibility.
 - **Live monitoring** — Windows directory notifications (not a full-disk scan)
 - **Floating card** — translucent, draggable, always-on-top, scrollable recent list
 - **Mini ball** — 66px orb with today’s total size + 7-day peak ring
-- **Detail panel** — virtualized table, day switch, search that matches the stats, sort by time/size, CSV export, jump to Explorer
+- **Detail panel** — virtualized tree/table, optional **group by app** (same path root → one folder), day switch, search that matches the stats, sort by time/size, CSV export, jump to Explorer
 - **Smart filters** — skips `AppData`, `Program Files`, caches, `.git` / `.venv`… by default
 - **Single instance** — launch again → brings the UI forward
 - **Portable** — unzip and run; optional autostart from tray
@@ -89,7 +89,7 @@ No cloud. No file moving. Just visibility.
 ### Portable (recommended)
 
 1. Grab the latest build from [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest)  
-   or direct: [`DiskWatch-1.1.3-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.3/DiskWatch-1.1.3-win64-portable.zip)
+   or direct: [`DiskWatch-1.1.4-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.4/DiskWatch-1.1.4-win64-portable.zip)
 2. Unzip → run **`DiskWatch.exe`**
 3. Done. No Python required.
 
@@ -117,6 +117,7 @@ First run creates `.venv` and installs `PySide6` + `watchdog`.
 | Double-click a file | Reveal in Explorer |
 | Tray left-click | Show / hide |
 | Tray double-click | Open detail panel |
+| Detail **按应用分组** | Collapse same-day files under one path root |
 
 **Filters matter:** by default you won’t see `Program Files` / `AppData` noise — on purpose.  
 Need those paths? **Settings → Filters**.

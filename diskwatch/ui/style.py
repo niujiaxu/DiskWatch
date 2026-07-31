@@ -115,7 +115,7 @@ QPushButton {{
 QPushButton:hover {{ background: #343849; }}
 QPushButton#primary {{ background: {ACCENT.name()}; border: none; color: white; }}
 QPushButton#primary:hover {{ background: #8b7cff; }}
-QTableWidget, QTableView {{
+QTableWidget, QTableView, QTreeView {{
     background: #1a1c25; alternate-background-color: #1e202b;
     color: {TEXT}; gridline-color: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.06); border-radius: 8px;
@@ -126,7 +126,20 @@ QHeaderView::section {{
     border: none; border-bottom: 1px solid rgba(255,255,255,0.08);
     padding: 6px; font-weight: 500;
 }}
-QTableWidget::item, QTableView::item {{ padding: 4px 6px; }}
+QTableWidget::item, QTableView::item, QTreeView::item {{ padding: 4px 6px; }}
+QTreeView::branch {{
+    background: transparent;
+}}
+QTreeView::branch:has-children:!has-siblings:closed,
+QTreeView::branch:closed:has-children:has-siblings {{
+    border-image: none;
+    image: none;
+}}
+QTreeView::branch:open:has-children:!has-siblings,
+QTreeView::branch:open:has-children:has-siblings {{
+    border-image: none;
+    image: none;
+}}
 QScrollBar:vertical {{ background: transparent; width: 9px; margin: 2px; }}
 QScrollBar::handle:vertical {{
     background: rgba(255,255,255,0.18); border-radius: 4px; min-height: 30px;

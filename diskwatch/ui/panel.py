@@ -1,19 +1,29 @@
 """详情面板：按天查看新增文件、汇总统计、搜索与导出。
 
-打开/刷新时后台查库；表格用 QTableView + Model 虚拟绘制，只画可见行。
+打开/刷新时后台查库；默认按应用树状分组，也可平铺。
 """
 
 from __future__ import annotations
 
 import csv
 import threading
+from dataclasses import dataclass, field
 from datetime import datetime
 
-from PySide6.QtCore import QAbstractTableModel, QEvent, QModelIndex, QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import (
+    QAbstractItemModel,
+    QEvent,
+    QModelIndex,
+    QPoint,
+    Qt,
+    QTimer,
+    Signal,
+)
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -25,11 +35,12 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QTableView,
+    QTreeView,
     QVBoxLayout,
     QWidget,
 )
 
+from ..grouping import assign_groups
 from ..storage import FileRecord, Storage, human_size, today_str
 from ..watcher import open_in_explorer
 from .style import PANEL_QSS, apply_window_icon, enable_dark_titlebar
@@ -38,9 +49,276 @@ AUTO_REFRESH_MS = 5000
 SEARCH_DEBOUNCE_MS = 280
 MAX_TABLE_ROWS = 2500
 PATH_ROLE = Qt.UserRole + 1
+IS_GROUP_ROLE = Qt.UserRole + 2
 DIM_FG = QColor("#8b8f9f")
+GROUP_FG = QColor("#c8cce0")
 
 _HEADERS = ("时间", "文件名", "大小", "类型", "所在目录")
+
+
+@dataclass
+class _Group:
+    key: str
+    label: str
+    files: list[FileRecord] = field(default_factory=list)
+
+    @property
+    def total_size(self) -> int:
+        return sum(f.size for f in self.files)
+
+    @property
+    def latest_at(self) -> float:
+        return max((f.added_at for f in self.files), default=0.0)
+
+
+def _record_sort_key(rec: FileRecord, col: int):
+    if col == 0:
+        return rec.added_at
+    if col == 2:
+        return rec.size
+    if col == 1:
+        return rec.name.lower()
+    if col == 3:
+        return (rec.ext or "").lower()
+    return (rec.folder or "").lower()
+
+
+def _sort_records(
+    records: list[FileRecord], col: int, order: Qt.SortOrder
+) -> list[FileRecord]:
+    reverse = order == Qt.DescendingOrder
+    return sorted(records, key=lambda r: _record_sort_key(r, col), reverse=reverse)
+
+
+def _top_sort_key(item: _Group | FileRecord, col: int):
+    if isinstance(item, _Group):
+        if col == 0:
+            return item.latest_at
+        if col == 2:
+            return item.total_size
+        return item.label.lower()
+    return _record_sort_key(item, col)
+
+
+def _file_display(rec: FileRecord, col: int, role: int):
+    if role == Qt.DisplayRole:
+        if col == 0:
+            return datetime.fromtimestamp(rec.added_at).strftime("%H:%M:%S")
+        if col == 1:
+            return rec.name
+        if col == 2:
+            return human_size(rec.size)
+        if col == 3:
+            return rec.ext or "—"
+        if col == 4:
+            return rec.folder
+        return None
+    if role == Qt.TextAlignmentRole and col == 2:
+        return int(Qt.AlignRight | Qt.AlignVCenter)
+    if role == Qt.ForegroundRole and rec.size == 0:
+        return DIM_FG
+    if role == Qt.ToolTipRole and col == 1:
+        return rec.path
+    if role == PATH_ROLE:
+        return rec.path
+    if role == IS_GROUP_ROLE:
+        return False
+    if role == Qt.UserRole:
+        if col == 0:
+            return float(rec.added_at)
+        if col == 2:
+            return float(rec.size)
+        return None
+    return None
+
+
+class FilesTreeModel(QAbstractItemModel):
+    """两级树：应用组 → 文件；平铺时全部为顶层文件行。"""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._grouped = True
+        self._sort_col = 0
+        self._sort_order = Qt.DescendingOrder
+        self._raw: list[FileRecord] = []
+        # 顶层：_Group（多文件）或 FileRecord（单文件提升）
+        self._top: list[_Group | FileRecord] = []
+
+    @property
+    def grouped(self) -> bool:
+        return self._grouped
+
+    @property
+    def sort_col(self) -> int:
+        return self._sort_col
+
+    @property
+    def sort_order(self) -> Qt.SortOrder:
+        return self._sort_order
+
+    def records(self) -> list[FileRecord]:
+        return self._raw
+
+    def file_count(self) -> int:
+        return len(self._raw)
+
+    def set_grouped(self, grouped: bool) -> None:
+        if grouped == self._grouped:
+            return
+        self._grouped = grouped
+        self._rebuild()
+
+    def set_records(self, records: list[FileRecord]) -> None:
+        self._raw = list(records)
+        self._rebuild()
+
+    def sort_by(self, column: int, order: Qt.SortOrder) -> None:
+        if column < 0:
+            return
+        same = column == self._sort_col and order == self._sort_order
+        self._sort_col = column
+        self._sort_order = order
+        if same or not self._raw:
+            return
+        self._rebuild()
+
+    def expand_rows(self) -> list[int]:
+        """分组模式下应默认展开的顶层行（子文件数 < 3）。"""
+        if not self._grouped:
+            return []
+        rows = []
+        for i, item in enumerate(self._top):
+            if isinstance(item, _Group) and len(item.files) < 3:
+                rows.append(i)
+        return rows
+
+    def _rebuild(self) -> None:
+        self.beginResetModel()
+        sorted_files = _sort_records(self._raw, self._sort_col, self._sort_order)
+        if not self._grouped:
+            self._top = list(sorted_files)
+            self.endResetModel()
+            return
+
+        buckets: dict[str, _Group] = {}
+        order_keys: list[str] = []
+        labels = assign_groups(sorted_files)
+        for rec in sorted_files:
+            key, label = labels[rec.path]
+            if key not in buckets:
+                buckets[key] = _Group(key=key, label=label)
+                order_keys.append(key)
+            buckets[key].files.append(rec)
+
+        top: list[_Group | FileRecord] = []
+        for key in order_keys:
+            g = buckets[key]
+            if len(g.files) == 1:
+                # 单文件不套空壳组，直接提到顶层
+                top.append(g.files[0])
+            else:
+                g.files = _sort_records(g.files, self._sort_col, self._sort_order)
+                top.append(g)
+
+        reverse = self._sort_order == Qt.DescendingOrder
+        col = self._sort_col
+        self._top = sorted(
+            top, key=lambda item: _top_sort_key(item, col), reverse=reverse
+        )
+        self.endResetModel()
+
+    # ----- QAbstractItemModel -----
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        return 5
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        if not parent.isValid():
+            return len(self._top)
+        if parent.internalId() != 0:
+            return 0
+        item = self._top[parent.row()]
+        if isinstance(item, _Group):
+            return len(item.files)
+        return 0
+
+    def index(  # noqa: N802
+        self, row: int, column: int, parent: QModelIndex = QModelIndex()
+    ) -> QModelIndex:
+        if row < 0 or column < 0 or column >= 5:
+            return QModelIndex()
+        if not parent.isValid():
+            if row >= len(self._top):
+                return QModelIndex()
+            return self.createIndex(row, column, 0)
+        if parent.internalId() != 0:
+            return QModelIndex()
+        item = self._top[parent.row()]
+        if not isinstance(item, _Group) or row >= len(item.files):
+            return QModelIndex()
+        return self.createIndex(row, column, parent.row() + 1)
+
+    def parent(self, child: QModelIndex) -> QModelIndex:  # noqa: N802
+        if not child.isValid() or child.internalId() == 0:
+            return QModelIndex()
+        return self.createIndex(child.internalId() - 1, 0, 0)
+
+    def headerData(  # noqa: N802
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole
+    ):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            if 0 <= section < len(_HEADERS):
+                return _HEADERS[section]
+        return None
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):  # noqa: N802
+        if not index.isValid():
+            return None
+        if index.internalId() == 0:
+            item = self._top[index.row()]
+            if isinstance(item, _Group):
+                return self._group_data(item, index.column(), role)
+            return _file_display(item, index.column(), role)
+        g = self._top[index.internalId() - 1]
+        if not isinstance(g, _Group):
+            return None
+        return _file_display(g.files[index.row()], index.column(), role)
+
+    @staticmethod
+    def _group_data(g: _Group, col: int, role: int):
+        if role == Qt.DisplayRole:
+            if col == 0:
+                return datetime.fromtimestamp(g.latest_at).strftime("%H:%M:%S")
+            if col == 1:
+                return f"{g.label}  ·  {len(g.files)} 个"
+            if col == 2:
+                return human_size(g.total_size)
+            if col == 3:
+                return "应用"
+            if col == 4:
+                return f"{len(g.files)} 个文件"
+            return None
+        if role == Qt.TextAlignmentRole and col == 2:
+            return int(Qt.AlignRight | Qt.AlignVCenter)
+        if role == Qt.ForegroundRole:
+            return GROUP_FG
+        if role == Qt.FontRole:
+            font = QFont()
+            font.setBold(True)
+            return font
+        if role == Qt.ToolTipRole:
+            return g.label
+        if role == PATH_ROLE:
+            return None
+        if role == IS_GROUP_ROLE:
+            return True
+        if role == Qt.UserRole:
+            if col == 0:
+                return float(g.latest_at)
+            if col == 2:
+                return float(g.total_size)
+            return None
+        return None
 
 
 class DayPicker(QWidget):
@@ -193,117 +471,6 @@ class DayPicker(QWidget):
         super().hideEvent(event)
 
 
-class FilesTableModel(QAbstractTableModel):
-    """只持有 FileRecord 列表，由视图按需取单元格，避免创建上万 QTableWidgetItem。"""
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self._records: list[FileRecord] = []
-        self._sort_col = 0
-        self._sort_order = Qt.DescendingOrder
-
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
-        return 0 if parent.isValid() else len(self._records)
-
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
-        return 0 if parent.isValid() else 5
-
-    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):  # noqa: N802
-        if not index.isValid():
-            return None
-        rec = self._records[index.row()]
-        col = index.column()
-
-        if role == Qt.DisplayRole:
-            if col == 0:
-                return datetime.fromtimestamp(rec.added_at).strftime("%H:%M:%S")
-            if col == 1:
-                return rec.name
-            if col == 2:
-                return human_size(rec.size)
-            if col == 3:
-                return rec.ext or "—"
-            if col == 4:
-                return rec.folder
-            return None
-
-        if role == Qt.TextAlignmentRole and col == 2:
-            return int(Qt.AlignRight | Qt.AlignVCenter)
-
-        if role == Qt.ForegroundRole and rec.size == 0:
-            return DIM_FG
-
-        if role == Qt.ToolTipRole and col == 1:
-            return rec.path
-
-        if role == PATH_ROLE:
-            return rec.path
-
-        if role == Qt.UserRole:
-            if col == 0:
-                return float(rec.added_at)
-            if col == 2:
-                return float(rec.size)
-            return None
-
-        return None
-
-    def headerData(  # noqa: N802
-        self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole
-    ):
-        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
-            if 0 <= section < len(_HEADERS):
-                return _HEADERS[section]
-        return None
-
-    @property
-    def sort_col(self) -> int:
-        return self._sort_col
-
-    @property
-    def sort_order(self) -> Qt.SortOrder:
-        return self._sort_order
-
-    def records(self) -> list[FileRecord]:
-        return self._records
-
-    def set_records(self, records: list[FileRecord]) -> None:
-        sorted_rows = self._sorted(records, self._sort_col, self._sort_order)
-        self.beginResetModel()
-        self._records = sorted_rows
-        self.endResetModel()
-
-    def sort_by(self, column: int, order: Qt.SortOrder) -> None:
-        if column < 0:
-            return
-        same = column == self._sort_col and order == self._sort_order
-        self._sort_col = column
-        self._sort_order = order
-        if same or not self._records:
-            return
-        sorted_rows = self._sorted(self._records, column, order)
-        self.beginResetModel()
-        self._records = sorted_rows
-        self.endResetModel()
-
-    @staticmethod
-    def _sorted(
-        records: list[FileRecord], col: int, order: Qt.SortOrder
-    ) -> list[FileRecord]:
-        reverse = order == Qt.DescendingOrder
-        if col == 0:
-            key = lambda r: r.added_at
-        elif col == 2:
-            key = lambda r: r.size
-        elif col == 1:
-            key = lambda r: r.name.lower()
-        elif col == 3:
-            key = lambda r: (r.ext or "").lower()
-        else:
-            key = lambda r: (r.folder or "").lower()
-        return sorted(records, key=key, reverse=reverse)
-
-
 class StatCard(QFrame):
     def __init__(self, title: str) -> None:
         super().__init__(objectName="card")
@@ -327,8 +494,8 @@ class DetailPanel(QWidget):
         super().__init__(objectName="panelRoot")
         self._storage = storage
         self.setWindowTitle("硬盘新增文件 · 详情")
-        # 与悬浮卡片同级置顶，避免卡片挡在详情表上面
-        self.setWindowFlags(self.windowFlags() | Qt.Window | Qt.WindowStaysOnTopHint)
+        # 普通顶层窗即可，不要强制置顶（避免盖住其它软件）
+        self.setWindowFlags(self.windowFlags() | Qt.Window)
         # setWindowFlags 会重建原生窗口，图标必须放在其后
         apply_window_icon(self)
         self.setStyleSheet(PANEL_QSS)
@@ -339,7 +506,7 @@ class DetailPanel(QWidget):
         self._day_req = 0
         self._pending_keep_day: str | None = None
         self._fill_meta: dict | None = None
-        self._model = FilesTableModel(self)
+        self._model = FilesTreeModel(self)
 
         self._build()
 
@@ -373,7 +540,7 @@ class DetailPanel(QWidget):
         title_row.addWidget(btn_refresh)
         root.addLayout(title_row)
 
-        # 第二行：日期 + 可伸展的搜索框
+        # 第二行：日期 + 分组切换 + 可伸展的搜索框
         filter_row = QHBoxLayout()
         filter_row.setSpacing(10)
         filter_row.addWidget(QLabel("日期", objectName="dim"))
@@ -383,6 +550,12 @@ class DetailPanel(QWidget):
         self.day_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.day_box.currentIndexChanged.connect(self._on_day_changed)
         filter_row.addWidget(self.day_box)
+
+        self.chk_group = QCheckBox("按应用分组")
+        self.chk_group.setChecked(True)
+        self.chk_group.setToolTip("把同一应用下的文件收成可折叠分组（类似进程树）")
+        self.chk_group.toggled.connect(self._on_group_toggled)
+        filter_row.addWidget(self.chk_group)
 
         self.search = QLineEdit()
         self.search.setPlaceholderText("按文件名或目录筛选…")
@@ -404,18 +577,20 @@ class DetailPanel(QWidget):
             cards.addWidget(c)
         root.addLayout(cards)
 
-        self.table = QTableView()
+        self.table = QTreeView()
         self.table.setModel(self._model)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSortingEnabled(False)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setShowGrid(True)
-        self.table.verticalHeader().setDefaultSectionSize(28)
+        self.table.setUniformRowHeights(True)
+        self.table.setRootIsDecorated(True)
+        self.table.setItemsExpandable(True)
+        self.table.setAnimated(True)
+        self.table.setIndentation(18)
 
-        hh = self.table.horizontalHeader()
+        hh = self.table.header()
         hh.setSectionsClickable(True)
         hh.setSortIndicatorShown(True)
         hh.setSortIndicator(0, Qt.DescendingOrder)
@@ -430,7 +605,10 @@ class DetailPanel(QWidget):
         root.addWidget(self.table, 1)
 
         foot = QHBoxLayout()
-        self.hint = QLabel("双击任意一行可在资源管理器中定位该文件", objectName="dim")
+        self.hint = QLabel(
+            "双击文件行可在资源管理器中定位；双击应用分组可展开/折叠",
+            objectName="dim",
+        )
         foot.addWidget(self.hint)
         foot.addStretch(1)
         self.count_label = QLabel("", objectName="dim")
@@ -548,7 +726,7 @@ class DetailPanel(QWidget):
             tuple((r.path, r.size, r.added_at) for r in records[:40]),
             len(records),
         )
-        if signature == self._load_signature and self._model.rowCount() == len(records):
+        if signature == self._load_signature and self._model.file_count() == len(records):
             self.count_label.setText(
                 self._status_text(len(records), count, keyword, truncated, day_total)
             )
@@ -571,10 +749,11 @@ class DetailPanel(QWidget):
             "day_total": day_total,
         }
         self._model.set_records(records)
-        hh = self.table.horizontalHeader()
+        hh = self.table.header()
         hh.blockSignals(True)
         hh.setSortIndicator(self._model.sort_col, self._model.sort_order)
         hh.blockSignals(False)
+        self._apply_expand_policy()
         self.count_label.setText(
             self._status_text(len(records), count, keyword, truncated, day_total)
         )
@@ -594,6 +773,15 @@ class DetailPanel(QWidget):
             return f"筛选到 {shown:,} 条 / 当日共 {total:,} 条"
         return f"显示 {shown:,} 条"
 
+    def _apply_expand_policy(self) -> None:
+        self.table.collapseAll()
+        for row in self._model.expand_rows():
+            self.table.expand(self._model.index(row, 0))
+
+    def _on_group_toggled(self, checked: bool) -> None:
+        self._model.set_grouped(checked)
+        self._apply_expand_policy()
+
     def _auto_refresh(self) -> None:
         if not self.isVisible():
             return
@@ -605,6 +793,7 @@ class DetailPanel(QWidget):
         if logical_index < 0:
             return
         self._model.sort_by(logical_index, order)
+        self._apply_expand_policy()
 
     def _apply_filter(self) -> None:
         day = self.day_box.currentData()
@@ -613,11 +802,19 @@ class DetailPanel(QWidget):
 
     # ---------- 动作 ----------
 
-    def _open_selected(self, _index: QModelIndex | None = None) -> None:
-        index = self.table.currentIndex()
-        if not index.isValid():
+    def _open_selected(self, index: QModelIndex | None = None) -> None:
+        idx = index if index is not None and index.isValid() else self.table.currentIndex()
+        if not idx.isValid():
             return
-        path = self._model.data(index.sibling(index.row(), 1), PATH_ROLE)
+        if self._model.data(idx, IS_GROUP_ROLE):
+            if self.table.isExpanded(idx):
+                self.table.collapse(idx)
+            else:
+                self.table.expand(idx)
+            return
+        path = self._model.data(idx.sibling(idx.row(), 1), PATH_ROLE)
+        if not path:
+            path = self._model.data(idx, PATH_ROLE)
         if path:
             open_in_explorer(path)
 
@@ -672,7 +869,7 @@ class DetailPanel(QWidget):
                 if meta is not None:
                     self.count_label.setText(
                         self._status_text(
-                            self._model.rowCount(),
+                            self._model.file_count(),
                             int(meta.get("count", n)),
                             str(meta.get("keyword", "")),
                             bool(meta.get("truncated", False)),
