@@ -1,9 +1,11 @@
-"""把界面离屏渲染成 PNG，用于预览外观（不截屏、不干扰运行中的实例）。
+"""把界面离屏渲染成 PNG，用于 README 预览（不截屏、不干扰运行中的实例）。
 
 用法：
     .venv\\Scripts\\python.exe tests\\render_preview.py            # 全部
     .venv\\Scripts\\python.exe tests\\render_preview.py settings   # 只渲染设置页
 """
+
+from __future__ import annotations
 
 import sys
 from pathlib import Path
@@ -24,9 +26,11 @@ from diskwatch.ui.widget import FloatingWidget
 from diskwatch.watcher import FileMonitor
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "docs"
+# 略偏冷的浅灰，衬托深色科技蓝界面
+_CANVAS = QColor("#c5cad6")
 
 
-def save(widget, name: str, margin: int = 20) -> None:
+def save(widget, name: str, margin: int = 24) -> None:
     pm = widget.grab()
     # grab() 返回物理像素图并自带 devicePixelRatio，而 QPainter 按逻辑坐标绘制。
     # 画布必须按物理尺寸开、按同一 DPR 标记，否则高分屏下会留出大片空白。
@@ -35,7 +39,7 @@ def save(widget, name: str, margin: int = 20) -> None:
         int(pm.width() + 2 * margin * dpr), int(pm.height() + 2 * margin * dpr)
     )
     canvas.setDevicePixelRatio(dpr)
-    canvas.fill(QColor("#c9ccd6"))
+    canvas.fill(_CANVAS)
     p = QPainter(canvas)
     p.drawPixmap(margin, margin, pm)
     p.end()
@@ -52,10 +56,9 @@ def main() -> int:
     apply_dark_theme(app)
     config = Config()
     storage = Storage(DB_PATH)
-    monitor = FileMonitor(config, storage)  # 不 start()，只用于显示"监控 N 个位置"
+    monitor = FileMonitor(config, storage)  # 不 start()，只用于显示「监控 N 个位置」
     monitor._roots = ["C:\\"]
 
-    # 每项是 (准备动作, 目标控件, 输出名)
     jobs: list[tuple] = []
 
     if "widget" in targets:
@@ -74,6 +77,9 @@ def main() -> int:
     if "panel" in targets:
         p = DetailPanel(storage)
         p.reload()
+        # 展示「按应用分组」树状效果
+        if hasattr(p, "chk_group"):
+            p.chk_group.setChecked(True)
         p.resize(1000, 620)
         p.show()
         jobs.append((lambda: None, p, "panel-preview"))
@@ -83,6 +89,8 @@ def main() -> int:
         s.resize(640, 580)
         s.show()
         tabs = s.findChild(QTabWidget)
+        # README 用的主图：第一页
+        jobs.append((lambda: tabs.setCurrentIndex(0), s, "settings-preview"))
         for i in range(tabs.count()):
             name = f"settings-{i}-{tabs.tabText(i)}"
             jobs.append((lambda idx=i: tabs.setCurrentIndex(idx), s, name))
@@ -91,11 +99,15 @@ def main() -> int:
         for prepare, widget, name in jobs:
             prepare()
             app.processEvents()
+            if name == "panel-preview":
+                app.processEvents()
             save(widget, name)
         storage.close()
         app.quit()
 
-    QTimer.singleShot(800, grab_all)
+    # 详情面板有异步查库，多给一点时间填表
+    delay = 1200 if "panel" in targets else 800
+    QTimer.singleShot(delay, grab_all)
     return app.exec()
 
 
