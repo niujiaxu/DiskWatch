@@ -305,8 +305,18 @@ class Storage:
         row = cur.fetchone()
         return int(row["m"] or 0)
 
+    def period_total_size(self, days: int = 7) -> int:
+        """近 N 天（含今天）新增文件体积合计，用于迷你球进度环。"""
+        cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
+        cur = self._read.execute(
+            "SELECT COALESCE(SUM(size), 0) s FROM files "
+            "WHERE day >= ? AND deleted = 0",
+            (cutoff,),
+        )
+        return int(cur.fetchone()["s"] or 0)
+
     def max_day_size(self, days: int = 7) -> int:
-        """近 N 天里单日新增体积峰值（字节），用于迷你球进度环。"""
+        """近 N 天里单日新增体积峰值（字节）。"""
         cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
         cur = self._read.execute(
             "SELECT MAX(s) m FROM ("

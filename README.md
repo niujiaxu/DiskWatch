@@ -18,7 +18,7 @@
 <p align="center">
   <a href="https://github.com/niujiaxu/DiskWatch/releases/latest"><strong>⬇ Download portable .exe</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.4/DiskWatch-1.1.4-win64-portable.zip">v1.1.4 zip</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.5/DiskWatch-1.1.5-win64-portable.zip">v1.1.5 zip</a>
   &nbsp;·&nbsp;
   <a href="#-quick-start">Quick start</a>
 </p>
@@ -74,9 +74,10 @@ No cloud. No file moving. Just visibility.
 ## Highlights
 
 - **Live monitoring** — Windows directory notifications (not a full-disk scan)
-- **Floating card** — translucent, draggable, always-on-top, scrollable recent list
-- **Mini ball** — 66px orb with today’s total size + 7-day peak ring
+- **Floating card** — translucent tech-blue glass, draggable, always-on-top, scrollable recent list
+- **Mini ball** — today’s size + ring showing today’s share of the last 7 days’ volume (hover for %)
 - **Detail panel** — virtualized tree/table, optional **group by app** (same path root → one folder), day switch, search that matches the stats, sort by time/size, CSV export, jump to Explorer
+- **Look** — unified cool tech-blue palette across card, ball, detail, and settings
 - **Smart filters** — skips `AppData`, `Program Files`, caches, `.git` / `.venv`… by default
 - **Single instance** — launch again → brings the UI forward
 - **Portable** — unzip and run; optional autostart from tray
@@ -89,7 +90,7 @@ No cloud. No file moving. Just visibility.
 ### Portable (recommended)
 
 1. Grab the latest build from [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest)  
-   or direct: [`DiskWatch-1.1.4-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.4/DiskWatch-1.1.4-win64-portable.zip)
+   or direct: [`DiskWatch-1.1.5-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.5/DiskWatch-1.1.5-win64-portable.zip)
 2. Unzip → run **`DiskWatch.exe`**
 3. Done. No Python required.
 

@@ -1,7 +1,7 @@
 """迷你悬浮球：收起状态下只占一个小圆，显示今日新增总大小。
 
-进度环的比例 = 今日新增体积 / 近 7 天单日体积峰值，用来一眼看出今天忙不忙，
-而不是拿一个凭空定的最大值凑百分比。
+进度环 = 今日体积 / 近 7 天体积合计。
+有两天差不多大时大约半圈；今天持续写入时环会慢慢涨，不会总钉在满圈。
 """
 
 from __future__ import annotations
@@ -17,13 +17,14 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
-from ..storage import Storage, today_str
+from ..storage import Storage, human_size, today_str
 from ..watcher import FileMonitor
-from .style import ACCENT, ACCENT_2, TEXT, TEXT_DIM
+from .style import ACCENT, ACCENT_2, BG_BOTTOM, BG_TOP, TEXT, TEXT_DIM
 
 REFRESH_MS = 2000
 FLASH_MS = 60
 DRAG_SLOP = 4  # 位移小于这个值算点击，不算拖动
+RING_DAYS = 7
 
 
 class MiniBall(QWidget):
@@ -34,7 +35,7 @@ class MiniBall(QWidget):
     hidden_by_user = Signal()
 
     SIZE = 66
-    RING = 5
+    RING = 6
 
     def __init__(self, storage: Storage, monitor: FileMonitor, config) -> None:
         super().__init__()
@@ -44,6 +45,7 @@ class MiniBall(QWidget):
 
         self._count = 0
         self._size_total = 0
+        self._period_total = 0
         self._ratio = 0.0
         self._glow = 0.0
         self._hover = False
@@ -73,20 +75,30 @@ class MiniBall(QWidget):
 
     def refresh(self, initial: bool = False) -> None:
         count, total = self._storage.day_stats(today_str())
-        peak = max(self._storage.max_day_size(7), 1)
+        period = max(self._storage.period_total_size(RING_DAYS), 1)
 
         if not initial and total > self._size_total:
             self._start_flash()
 
-        signature = (count, total, peak, len(self._monitor.roots))
+        signature = (count, total, period, len(self._monitor.roots))
         if signature == self._signature:
             return
         self._signature = signature
 
         self._count = count
         self._size_total = total
-        self._ratio = min(total / peak, 1.0)
+        self._period_total = period
+        self._ratio = min(total / period, 1.0) if total > 0 else 0.0
+        self._update_tooltip()
         self.update()
+
+    def _update_tooltip(self) -> None:
+        pct = int(round(self._ratio * 100))
+        self.setToolTip(
+            f"今日 {human_size(self._size_total)}\n"
+            f"近{RING_DAYS}天合计 {human_size(self._period_total)}\n"
+            f"今日占比 {pct}%"
+        )
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -118,51 +130,57 @@ class MiniBall(QWidget):
         pad = self.RING / 2 + 1
         outer = QRectF(pad, pad, self.SIZE - 2 * pad, self.SIZE - 2 * pad)
 
-        # 新文件进来时短暂发光，让人注意到有变化
+        # 新文件进来时短暂发光（科技蓝，克制一点）
         if self._glow > 0:
             halo = QRadialGradient(outer.center(), self.SIZE / 2)
-            c = QColor(ACCENT_2)
-            c.setAlphaF(0.45 * self._glow)
+            c = QColor(ACCENT)
+            c.setAlphaF(0.36 * self._glow)
             halo.setColorAt(0.55, QColor(0, 0, 0, 0))
             halo.setColorAt(1.0, c)
             p.setPen(Qt.NoPen)
             p.setBrush(halo)
             p.drawEllipse(QRectF(0, 0, self.SIZE, self.SIZE))
 
-        # 球体
+        # 球体：与悬浮卡片同一套 BG 渐变
         body = QRadialGradient(
             outer.center().x(), outer.top(), outer.height() * 1.25
         )
-        body.setColorAt(0.0, QColor(46, 49, 66, 242))
-        body.setColorAt(1.0, QColor(20, 21, 30, 246))
+        top = QColor(BG_TOP)
+        top.setAlpha(244)
+        bottom = QColor(BG_BOTTOM)
+        bottom.setAlpha(248)
+        body.setColorAt(0.0, top)
+        body.setColorAt(1.0, bottom)
         p.setPen(Qt.NoPen)
         p.setBrush(body)
         p.drawEllipse(outer)
 
-        # 进度环底色
-        track = QPen(QColor(255, 255, 255, 34 if not self._hover else 54), self.RING)
+        # 进度环底轨
+        track_a = 40 if not self._hover else 58
+        track = QPen(QColor(160, 190, 255, track_a), self.RING)
         track.setCapStyle(Qt.FlatCap)
         p.setPen(track)
         p.drawArc(outer, 0, 360 * 16)
 
-        # 进度环
+        # 进度环：蓝 → 浅青，同一冷色相
         if self._ratio > 0:
             grad = QConicalGradient(outer.center(), 90)
             grad.setColorAt(0.0, ACCENT_2)
             grad.setColorAt(0.5, ACCENT)
             grad.setColorAt(1.0, ACCENT_2)
             pen = QPen(grad, self.RING)
-            pen.setCapStyle(Qt.RoundCap)
+            pen.setCapStyle(Qt.FlatCap)
             p.setPen(pen)
-            p.drawArc(outer, 90 * 16, -int(360 * 16 * self._ratio))
+            span = max(1, int(360 * 16 * self._ratio))
+            p.drawArc(outer, 90 * 16, -span)
 
         # 中间显示今日总大小（压缩成 2.7M / 128K 这类，66px 里才放得下）
         # 继承应用字体（含中文），只改字号/粗细，避免默认西文字体缺字
         p.setPen(QColor(TEXT))
         f = QFont(self.font())
-        f.setBold(True)
+        f.setWeight(QFont.DemiBold)
         text = _compact_size(self._size_total)
-        f.setPointSizeF(13.0 if len(text) <= 4 else 10.5)
+        f.setPointSizeF(12.5 if len(text) <= 4 else 10.0)
         p.setFont(f)
         p.drawText(outer.adjusted(0, -5, 0, -5), Qt.AlignCenter, text)
 

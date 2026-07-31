@@ -18,7 +18,7 @@
 <p align="center">
   <a href="https://github.com/niujiaxu/DiskWatch/releases/latest"><strong>⬇ 下载便携版 .exe</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.4/DiskWatch-1.1.4-win64-portable.zip">v1.1.4 直链</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.5/DiskWatch-1.1.5-win64-portable.zip">v1.1.5 直链</a>
   &nbsp;·&nbsp;
   <a href="#-快速开始">快速开始</a>
 </p>
@@ -74,9 +74,10 @@ DiskWatch 只干一件事：
 ## 亮点
 
 - **实时监控** — 听 Windows 目录通知，不做全盘扫描
-- **悬浮卡片** — 半透明、可拖、可置顶，最近文件可滚动
-- **迷你球** — 66px 小球显示今日总大小 + 近 7 天峰值环
+- **悬浮卡片** — 半透明科技蓝玻璃、可拖、可置顶，最近文件可滚动
+- **迷你球** — 今日总大小 + 进度环（今日占近 7 天合计体积；悬停看占比）
 - **详情面板** — 虚拟树表不卡；可勾选 **按应用分组**（同一路径根如 `Tencent Files` 收成一组）/ 按天 / 搜索（统计与表格一致）/ 排序 / 导出 / 资源管理器定位
+- **视觉** — 卡片 / 球 / 详情 / 设置统一冷科技蓝配色
 - **智能过滤** — 默认跳过 `AppData`、`Program Files`、缓存、`.git` / `.venv`…
 - **单实例** — 再点一次启动会唤起已有界面
 - **便携运行** — 解压即用；可选开机自启
@@ -89,7 +90,7 @@ DiskWatch 只干一件事：
 ### 便携版（推荐）
 
 1. 打开 [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest) 下载最新包  
-   或直链：[`DiskWatch-1.1.4-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.4/DiskWatch-1.1.4-win64-portable.zip)
+   或直链：[`DiskWatch-1.1.5-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.5/DiskWatch-1.1.5-win64-portable.zip)
 2. 解压 → 运行 **`DiskWatch.exe`**
 3. 完事。不用装 Python。
 

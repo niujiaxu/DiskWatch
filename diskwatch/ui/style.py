@@ -1,4 +1,8 @@
-"""配色、样式表与程序化生成的图标（不依赖任何图片资源）。"""
+"""配色、样式表与程序化生成的图标（不依赖任何图片资源）。
+
+偏亮的科技冷蓝：表面带一点蓝调，强调色用清晰蓝 + 浅青辅色（同冷色相），
+文字提亮，避免发闷的灰紫。
+"""
 
 from __future__ import annotations
 
@@ -19,41 +23,62 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QWidget
 
-BG_TOP = QColor(30, 32, 44, 235)
-BG_BOTTOM = QColor(20, 21, 30, 238)
-BORDER = QColor(255, 255, 255, 28)
-ACCENT = QColor(124, 108, 255)
-ACCENT_2 = QColor(88, 191, 255)
-TEXT = "#eceef6"
-TEXT_DIM = "#aab0c2"
-SURFACE = "#16171f"
-SURFACE_2 = "#1e202b"
-FIELD = "#23252f"
+# ---------- 色板 ----------
+
+# 卡片渐变：略提亮，带冷蓝底色
+BG_TOP = QColor(46, 56, 82, 232)
+BG_BOTTOM = QColor(30, 38, 58, 238)
+BORDER = QColor(140, 180, 255, 36)
+
+# 科技蓝主色 + 同冷色相浅青辅色（环/渐变用）
+ACCENT = QColor(86, 152, 255)
+ACCENT_2 = QColor(112, 210, 236)
+ACCENT_HOVER = QColor(112, 170, 255)
+
+TEXT = "#e8eef8"
+TEXT_DIM = "#a8b6cc"
+SURFACE = "#161e2e"
+SURFACE_2 = "#1e2840"
+FIELD = "#28344c"
+BASE = "#182234"
+BUTTON = "#2c3850"
+BUTTON_HOVER = "#3a4864"
+
+# 状态点：青绿 / 柔橙，亮度跟上整体
+OK = QColor(72, 204, 178)
+WARN = QColor(232, 148, 118)
+
+# 详情树：与正文同一阶梯
+DIM_FG = QColor("#96a4bc")
+GROUP_FG = QColor("#d0daf0")
+
+_AR, _AG, _AB = ACCENT.red(), ACCENT.green(), ACCENT.blue()
+_SEL = f"rgba({_AR},{_AG},{_AB},0.32)"
 
 WIDGET_QSS = f"""
 QLabel {{ color: {TEXT}; background: transparent; }}
 QLabel#title  {{ color: {TEXT_DIM}; font-size: 11px; letter-spacing: 1px; }}
-QLabel#count  {{ color: {TEXT}; font-size: 34px; font-weight: 700; }}
+QLabel#count  {{ color: {TEXT}; font-size: 34px; font-weight: 600; }}
 QLabel#unit   {{ color: {TEXT_DIM}; font-size: 12px; }}
 QLabel#sub    {{ color: {TEXT_DIM}; font-size: 11px; }}
 QLabel#fname  {{ color: {TEXT}; font-size: 11px; }}
 QLabel#fmeta  {{ color: {TEXT_DIM}; font-size: 10px; }}
-QLabel#dot    {{ color: #57d9a3; font-size: 14px; }}
+QLabel#dot    {{ color: {OK.name()}; font-size: 14px; }}
 
 QPushButton#tool {{
     color: {TEXT_DIM};
-    background: rgba(255,255,255,0.06);
+    background: rgba(255,255,255,0.05);
     border: none; border-radius: 6px;
     padding: 4px 10px; font-size: 11px;
 }}
-QPushButton#tool:hover {{ background: rgba(255,255,255,0.14); color: {TEXT}; }}
+QPushButton#tool:hover {{ background: rgba(255,255,255,0.10); color: {TEXT}; }}
 QPushButton#close {{
     color: {TEXT_DIM}; background: transparent; border: none;
     border-radius: 6px; font-size: 16px; font-weight: 600;
     padding: 0px; min-width: 28px; min-height: 28px;
 }}
 QPushButton#close:hover {{
-    color: {TEXT}; background: rgba(255,255,255,0.12);
+    color: {TEXT}; background: rgba(255,255,255,0.10);
 }}
 
 QScrollArea#recentScroll {{
@@ -64,9 +89,9 @@ QScrollBar:vertical {{
     background: transparent; width: 6px; margin: 2px 0;
 }}
 QScrollBar::handle:vertical {{
-    background: rgba(255,255,255,0.22); border-radius: 3px; min-height: 24px;
+    background: rgba(255,255,255,0.16); border-radius: 3px; min-height: 24px;
 }}
-QScrollBar::handle:vertical:hover {{ background: rgba(255,255,255,0.35); }}
+QScrollBar::handle:vertical:hover {{ background: rgba(255,255,255,0.26); }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0; border: none; background: none;
 }}
@@ -82,23 +107,23 @@ QLabel#h1 {{ font-size: 17px; font-weight: 600; }}
 QLabel#dim {{ color: {TEXT_DIM}; font-size: 12px; }}
 QLabel#statValue {{ font-size: 20px; font-weight: 600; }}
 QFrame#card {{
-    background: #1e202b; border: 1px solid rgba(255,255,255,0.06);
+    background: {SURFACE_2}; border: 1px solid rgba(255,255,255,0.05);
     border-radius: 10px;
 }}
 QComboBox, QLineEdit, QPushButton#dayPicker {{
-    background: #23252f; color: {TEXT};
-    border: 1px solid rgba(255,255,255,0.10);
+    background: {FIELD}; color: {TEXT};
+    border: 1px solid rgba(255,255,255,0.08);
     border-radius: 6px; padding: 5px 8px; min-height: 20px;
 }}
 QPushButton#dayPicker {{
     text-align: left; padding-right: 22px;
 }}
-QPushButton#dayPicker:hover {{ background: #2a2d3a; }}
+QPushButton#dayPicker:hover {{ background: {BUTTON}; }}
 QComboBox::drop-down {{ border: none; width: 18px; }}
 QComboBox QAbstractItemView, QListWidget#dayPickerPopup {{
-    background: #23252f; color: {TEXT};
+    background: {FIELD}; color: {TEXT};
     selection-background-color: {ACCENT.name()};
-    border: 1px solid rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.08);
     border-radius: 6px; outline: none;
 }}
 QListWidget#dayPickerPopup::item {{
@@ -108,22 +133,24 @@ QListWidget#dayPickerPopup::item:selected {{
     background: {ACCENT.name()};
 }}
 QPushButton {{
-    background: #2a2d3a; color: {TEXT};
-    border: 1px solid rgba(255,255,255,0.08);
+    background: {BUTTON}; color: {TEXT};
+    border: 1px solid rgba(255,255,255,0.06);
     border-radius: 6px; padding: 6px 14px;
 }}
-QPushButton:hover {{ background: #343849; }}
-QPushButton#primary {{ background: {ACCENT.name()}; border: none; color: white; }}
-QPushButton#primary:hover {{ background: #8b7cff; }}
+QPushButton:hover {{ background: {BUTTON_HOVER}; }}
+QPushButton#primary {{
+    background: {ACCENT.name()}; border: none; color: {TEXT};
+}}
+QPushButton#primary:hover {{ background: {ACCENT_HOVER.name()}; }}
 QTableWidget, QTableView, QTreeView {{
-    background: #1a1c25; alternate-background-color: #1e202b;
-    color: {TEXT}; gridline-color: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.06); border-radius: 8px;
-    selection-background-color: rgba(124,108,255,0.35);
+    background: {BASE}; alternate-background-color: {SURFACE_2};
+    color: {TEXT}; gridline-color: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.05); border-radius: 8px;
+    selection-background-color: {_SEL};
 }}
 QHeaderView::section {{
-    background: #23252f; color: {TEXT_DIM};
-    border: none; border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: {FIELD}; color: {TEXT_DIM};
+    border: none; border-bottom: 1px solid rgba(255,255,255,0.06);
     padding: 6px; font-weight: 500;
 }}
 QTableWidget::item, QTableView::item, QTreeView::item {{ padding: 4px 6px; }}
@@ -142,32 +169,32 @@ QTreeView::branch:open:has-children:has-siblings {{
 }}
 QScrollBar:vertical {{ background: transparent; width: 9px; margin: 2px; }}
 QScrollBar::handle:vertical {{
-    background: rgba(255,255,255,0.18); border-radius: 4px; min-height: 30px;
+    background: rgba(255,255,255,0.14); border-radius: 4px; min-height: 30px;
 }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0px; }}
 QCheckBox, QSpinBox, QPlainTextEdit, QListWidget {{ color: {TEXT}; }}
 QCheckBox {{ spacing: 7px; padding: 2px 0px; }}
 QCheckBox::indicator {{
     width: 15px; height: 15px; border-radius: 4px;
-    border: 1px solid rgba(255,255,255,0.28); background: {FIELD};
+    border: 1px solid rgba(255,255,255,0.22); background: {FIELD};
 }}
-QCheckBox::indicator:hover {{ border-color: rgba(255,255,255,0.5); }}
+QCheckBox::indicator:hover {{ border-color: rgba(255,255,255,0.38); }}
 QCheckBox::indicator:checked {{
     background: {ACCENT.name()}; border-color: {ACCENT.name()};
 }}
 QPlainTextEdit, QListWidget {{
-    background: #1a1c25; border: 1px solid rgba(255,255,255,0.08);
+    background: {BASE}; border: 1px solid rgba(255,255,255,0.06);
     border-radius: 6px; padding: 4px;
 }}
 QListWidget::item {{ padding: 3px 4px; }}
-QListWidget::item:selected {{ background: rgba(124,108,255,0.35); }}
+QListWidget::item:selected {{ background: {_SEL}; }}
 QSpinBox {{
-    background: {FIELD}; border: 1px solid rgba(255,255,255,0.10);
+    background: {FIELD}; border: 1px solid rgba(255,255,255,0.08);
     border-radius: 6px; padding: 4px 6px;
 }}
 QTabWidget::pane {{
     background: {SURFACE_2};
-    border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; top: -1px;
+    border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; top: -1px;
 }}
 QTabBar::tab {{
     background: transparent; color: {TEXT_DIM};
@@ -177,7 +204,7 @@ QTabBar::tab:hover {{ color: {TEXT}; }}
 QTabBar::tab:selected {{ color: {TEXT}; border-bottom: 2px solid {ACCENT.name()}; }}
 QToolTip {{
     background: {FIELD}; color: {TEXT};
-    border: 1px solid rgba(255,255,255,0.15); padding: 4px 6px;
+    border: 1px solid rgba(255,255,255,0.12); padding: 4px 6px;
 }}
 """
 
@@ -261,18 +288,18 @@ def apply_dark_theme(app) -> None:
     text = QColor(TEXT)
     pal.setColor(QPalette.Window, QColor(SURFACE))
     pal.setColor(QPalette.WindowText, text)
-    pal.setColor(QPalette.Base, QColor("#1a1c25"))
+    pal.setColor(QPalette.Base, QColor(BASE))
     pal.setColor(QPalette.AlternateBase, QColor(SURFACE_2))
     pal.setColor(QPalette.Text, text)
-    pal.setColor(QPalette.Button, QColor("#2a2d3a"))
+    pal.setColor(QPalette.Button, QColor(BUTTON))
     pal.setColor(QPalette.ButtonText, text)
     pal.setColor(QPalette.ToolTipBase, QColor(FIELD))
     pal.setColor(QPalette.ToolTipText, text)
     pal.setColor(QPalette.PlaceholderText, QColor(TEXT_DIM))
     pal.setColor(QPalette.Highlight, ACCENT)
-    pal.setColor(QPalette.HighlightedText, QColor("#ffffff"))
+    pal.setColor(QPalette.HighlightedText, text)
     pal.setColor(QPalette.Link, ACCENT_2)
-    disabled = QColor("#767b8c")
+    disabled = QColor("#6e7588")
     for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
         pal.setColor(QPalette.Disabled, role, disabled)
     app.setPalette(pal)
@@ -317,14 +344,16 @@ def _paint_app_pixmap(size: int) -> QPixmap:
     p.fillPath(path, grad)
 
     p.setPen(Qt.NoPen)
-    p.setBrush(QColor(255, 255, 255, 235))
+    disc = QColor(TEXT)
+    disc.setAlpha(230)
+    p.setBrush(disc)
     r = size * 0.30
     c = size / 2
     p.drawEllipse(QPointF(c, c), r, r)
-    p.setBrush(QColor(40, 42, 60))
+    p.setBrush(QColor(SURFACE))
     p.drawEllipse(QPointF(c, c), r * 0.30, r * 0.30)
 
-    p.setBrush(QColor(87, 217, 163))
+    p.setBrush(OK)
     p.drawEllipse(QPointF(size * 0.76, size * 0.76), size * 0.11, size * 0.11)
     p.end()
     return pm

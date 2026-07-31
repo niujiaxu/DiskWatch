@@ -4,6 +4,12 @@ All notable changes to DiskWatch are documented in this file.
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-07-31
+
+### Changed
+- Mini-ball progress ring = today’s volume / last 7 days’ total (easier to see day-to-day change than vs peak)
+- Unified cooler tech-blue UI palette across card, ball, detail, and settings
+
 ## [1.1.4] - 2026-07-31
 
 ### Added

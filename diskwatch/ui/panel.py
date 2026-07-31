@@ -19,7 +19,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -43,15 +43,19 @@ from PySide6.QtWidgets import (
 from ..grouping import assign_groups
 from ..storage import FileRecord, Storage, human_size, today_str
 from ..watcher import open_in_explorer
-from .style import PANEL_QSS, apply_window_icon, enable_dark_titlebar
+from .style import (
+    DIM_FG,
+    GROUP_FG,
+    PANEL_QSS,
+    apply_window_icon,
+    enable_dark_titlebar,
+)
 
 AUTO_REFRESH_MS = 5000
 SEARCH_DEBOUNCE_MS = 280
 MAX_TABLE_ROWS = 2500
 PATH_ROLE = Qt.UserRole + 1
 IS_GROUP_ROLE = Qt.UserRole + 2
-DIM_FG = QColor("#8b8f9f")
-GROUP_FG = QColor("#c8cce0")
 
 _HEADERS = ("时间", "文件名", "大小", "类型", "所在目录")
 

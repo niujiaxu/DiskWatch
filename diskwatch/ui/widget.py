@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 
 from ..storage import Storage, human_size, today_str
 from ..watcher import FileMonitor, open_in_explorer
-from .style import BG_BOTTOM, BG_TOP, BORDER, WIDGET_QSS
+from .style import BG_BOTTOM, BG_TOP, BORDER, OK, WARN, WIDGET_QSS
 
 REFRESH_MS = 2000
 # 视口大约显示这么多行；超出用滚轮 / 细滚动条浏览
@@ -231,7 +231,9 @@ class FloatingWidget(QWidget):
             text += f" · 丢弃 {dropped}"
         self.status.setText(text)
         self.dot.setText("●" if roots else "○")
-        self.dot.setStyleSheet("color:#57d9a3;" if roots else "color:#ff7b7b;")
+        self.dot.setStyleSheet(
+            f"color:{OK.name()};" if roots else f"color:{WARN.name()};"
+        )
 
         bar.setValue(scroll_pos)
 
