@@ -162,7 +162,12 @@ class FloatingWidget(QWidget):
         self.scroll.setFixedHeight(RECENT_VISIBLE * ROW_HEIGHT)
         root.addWidget(self.scroll)
 
-        self.empty = QLabel("暂无记录，安静着呢", objectName="sub")
+        self.empty = QLabel(
+            "暂无记录。默认不监控 AppData、Program Files 等系统目录，"
+            "可在「设置 → 过滤规则」里调整。",
+            objectName="sub",
+        )
+        self.empty.setWordWrap(True)
         root.addWidget(self.empty)
 
         foot = QHBoxLayout()

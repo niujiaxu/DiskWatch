@@ -31,6 +31,7 @@ class MiniBall(QWidget):
     open_panel = Signal()
     open_settings = Signal()
     request_quit = Signal()
+    hidden_by_user = Signal()
 
     SIZE = 66
     RING = 5
@@ -214,9 +215,15 @@ class MiniBall(QWidget):
         menu.addAction("详情面板…", self.open_panel.emit)
         menu.addAction("设置…", self.open_settings.emit)
         menu.addSeparator()
-        menu.addAction("隐藏（保留托盘图标）", self.hide)
+        menu.addAction("隐藏（保留托盘图标）", self._hide_self)
         menu.addAction("退出", self.request_quit.emit)
         menu.exec(event.globalPos())
+
+    def _hide_self(self) -> None:
+        self.hide()
+        self._config.set("widget_visible", False)
+        self._config.save_soon()
+        self.hidden_by_user.emit()
 
     # ---------- 位置 ----------
 

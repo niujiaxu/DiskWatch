@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 
 from PySide6.QtCore import QSharedMemory, QTimer
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from . import APP_NAME, APP_TITLE, VERSION
@@ -21,6 +22,7 @@ from .ui.widget import FloatingWidget
 from .watcher import FileMonitor
 
 PURGE_INTERVAL_MS = 60 * 60 * 1000  # 每小时清一次过期数据
+IPC_NAME = f"{APP_NAME}-activate"
 
 
 class DiskWatchApp:
@@ -77,7 +79,13 @@ class DiskWatchApp:
             surface.request_quit.connect(self.quit)
         self.widget.hidden_by_user.connect(self._sync_tray_actions)
         self.widget.collapse_requested.connect(self.collapse)
+        self.ball.hidden_by_user.connect(self._sync_tray_actions)
         self.ball.expand_requested.connect(self.expand)
+
+        self._ipc = QLocalServer(self.qt_app)
+        QLocalServer.removeServer(IPC_NAME)
+        if self._ipc.listen(IPC_NAME):
+            self._ipc.newConnection.connect(self._on_ipc_connection)
 
     def _build_tray(self) -> None:
         menu = QMenu()
@@ -169,6 +177,23 @@ class DiskWatchApp:
         self.panel.activateWindow()
         # 卡片也是置顶窗，再抬一次详情，避免挡在表上
         self.panel.raise_()
+
+    def activate_from_second_instance(self) -> None:
+        """二次启动时唤起已有界面（显示悬浮组件并置前）。"""
+        self._show_surface()
+        surface = self.ball if self.ball.isVisible() else self.widget
+        surface.raise_()
+        surface.activateWindow()
+        self.tray.show()
+
+    def _on_ipc_connection(self) -> None:
+        while self._ipc.hasPendingConnections():
+            sock = self._ipc.nextPendingConnection()
+            if sock is None:
+                continue
+            sock.readAll()
+            sock.disconnectFromServer()
+        self.activate_from_second_instance()
 
     def show_settings(self) -> None:
         dlg = SettingsDialog(self.config, self.storage, self.panel)
@@ -299,6 +324,21 @@ class DiskWatchApp:
         self.qt_app.quit()
 
 
+def _ping_running_instance() -> bool:
+    """若已有实例在听 IPC，发唤起信号并返回 True。"""
+    sock = QLocalSocket()
+    sock.connectToServer(IPC_NAME)
+    if not sock.waitForConnected(800):
+        return False
+    sock.write(b"raise\n")
+    sock.flush()
+    sock.waitForBytesWritten(800)
+    sock.disconnectFromServer()
+    if sock.state() != QLocalSocket.UnconnectedState:
+        sock.waitForDisconnected(500)
+    return True
+
+
 def main() -> int:
     # 必须在创建 QApplication 之前：否则任务栏仍显示 python.exe 图标
     set_app_user_model_id(f"{APP_NAME}.Desktop")
@@ -310,10 +350,14 @@ def main() -> int:
     qt_app.setWindowIcon(icon)
     apply_dark_theme(qt_app)
 
-    # 单实例：重复启动时直接退出，避免两个监控互相打架
+    # 单实例：重复启动时唤起已有窗口，避免两个监控互相打架
     lock = QSharedMemory(f"{APP_NAME}-single-instance")
     if not lock.create(1):
-        QMessageBox.information(None, APP_TITLE, f"{APP_NAME} 已经在运行了（见系统托盘）。")
+        if _ping_running_instance():
+            return 0
+        QMessageBox.information(
+            None, APP_TITLE, f"{APP_NAME} 已经在运行了（见系统托盘）。"
+        )
         return 0
 
     if not QSystemTrayIcon.isSystemTrayAvailable():

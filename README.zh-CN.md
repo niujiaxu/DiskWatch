@@ -22,11 +22,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.2/DiskWatch-1.1.2-win64-portable.zip"><strong>⬇ 便携版 .exe（Windows x64）</strong></a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.3/DiskWatch-1.1.3-win64-portable.zip"><strong>⬇ 便携版 .exe（Windows x64）</strong></a>
   ·
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.2/DiskWatch-1.1.2-src.zip">源码包</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.3/DiskWatch-1.1.3-src.zip">源码包</a>
   ·
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/tag/v1.1.2">发布说明</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/tag/v1.1.3">发布说明</a>
 </p>
 
 <p align="center">
@@ -64,12 +64,12 @@ DiskWatch 只做一件事：
 - **实时监控** — 通过 `watchdog` 听 Windows 目录通知（不做全盘扫描）
 - **悬浮卡片** — 无边框、半透明、可拖动、可置顶；**最近列表可滚动**（滚轮 / 细滚动条，行控件复用）
 - **迷你球** — 66px 小球显示**今日新增总大小**，进度环对比近 7 天峰值
-- **详情面板** — 打开不卡悬浮窗；顶栏分两行不遮挡；置顶不被卡片盖住；按天查看 / 搜索防抖 / **按时间或大小排序** / 导出 CSV / 资源管理器定位
+- **详情面板** — 虚拟列表（打开不卡悬浮窗）；顶栏分两行；置顶不被卡片盖住；按天查看 / 搜索防抖且**顶部统计与表格一致** / **按时间或大小排序** / 导出 CSV / 资源管理器定位
 - **界面流畅** — SQLite 读写分离，后台入库不堵点击；配置延迟保存
-- **智能过滤** — 默认跳过 `Windows`、`Program Files`、`AppData`、缓存、`.git` / `.venv`…
+- **智能过滤** — 默认跳过 `Windows`、`Program Files`、`AppData`、缓存、`.git` / `.venv`…（空状态会提示）
 - **自定义数据路径** — 配置 / 数据库可放到任意盘（设置 → 数据）
 - **深色界面** — Fusion 深色主题 + Windows 原生深色标题栏
-- **托盘 + 开机自启** — 单实例；托盘菜单可 **重启** 整个程序
+- **托盘 + 开机自启** — 单实例（**再次启动会唤起已有界面**）；托盘菜单可 **重启** 整个程序
 - **隐私** — 默认数据在 `%APPDATA%\DiskWatch\`，不联网
 
 <details>
@@ -91,7 +91,7 @@ DiskWatch 只做一件事：
 
 ### 便携版（推荐）
 
-1. 下载 [`DiskWatch-1.1.2-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.2/DiskWatch-1.1.2-win64-portable.zip)
+1. 下载 [`DiskWatch-1.1.3-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.3/DiskWatch-1.1.3-win64-portable.zip)
 2. 解压到任意目录 → 运行 **`DiskWatch.exe`**（或 `Start DiskWatch.bat`）
 3. 无需安装 Python。配置 / 数据库默认仍在 `%APPDATA%\DiskWatch\`。
 

@@ -18,11 +18,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.2/DiskWatch-1.1.2-win64-portable.zip"><strong>⬇ Portable .exe (Windows x64)</strong></a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.3/DiskWatch-1.1.3-win64-portable.zip"><strong>⬇ Portable .exe (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.2/DiskWatch-1.1.2-src.zip">Source zip</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.3/DiskWatch-1.1.3-src.zip">Source zip</a>
   ·
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/tag/v1.1.2">Release notes</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/tag/v1.1.3">Release notes</a>
 </p>
 
 <p align="center">
@@ -58,12 +58,12 @@ DiskWatch does one job well:
 - **Real-time** — Windows directory notifications via `watchdog` (no full-disk scan)
 - **Floating card** — frameless, translucent, draggable, always-on-top; **scrollable recent list** (wheel / thin scrollbar, reused row widgets)
 - **Mini ball** — 66px orb showing **today’s total size** + ring vs 7-day peak
-- **Detail panel** — opens without freezing the widget; two-row toolbar (no overlap); stays above the floating card; by day / debounced search / **sort by time or size** / export CSV / jump to Explorer
+- **Detail panel** — virtualized table (opens without freezing); two-row toolbar; stays above the floating card; by day / debounced search with **matching summary cards** / **sort by time or size** / export CSV / jump to Explorer
 - **Responsive UI** — SQLite read/write split so background ingest doesn’t freeze clicks; config saves are debounced
-- **Smart filters** — skips `Windows`, `Program Files`, `AppData`, caches, `.git` / `.venv`…
+- **Smart filters** — skips `Windows`, `Program Files`, `AppData`, caches, `.git` / `.venv`… (empty card explains this)
 - **Custom data paths** — put `config.json` / `diskwatch.db` on any drive (Settings → Data)
 - **Dark UI** — Fusion dark theme + native Windows dark title bar
-- **Tray + autostart** — single instance; **Restart** from the tray menu
+- **Tray + autostart** — single instance (**second launch brings the UI forward**); **Restart** from the tray menu
 - **Privacy** — SQLite under `%APPDATA%\DiskWatch\` by default, no network
 
 <details>
@@ -85,7 +85,7 @@ DiskWatch does one job well:
 
 ### Portable (recommended)
 
-1. Download [`DiskWatch-1.1.2-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.2/DiskWatch-1.1.2-win64-portable.zip)
+1. Download [`DiskWatch-1.1.3-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.3/DiskWatch-1.1.3-win64-portable.zip)
 2. Unzip anywhere → run **`DiskWatch.exe`** (or `Start DiskWatch.bat`)
 3. No Python install required. Config/DB still live under `%APPDATA%\DiskWatch\` by default.
 

@@ -4,6 +4,16 @@ All notable changes to DiskWatch are documented in this file.
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-07-31
+
+### Fixed
+- Launching DiskWatch again activates the existing instance (shows the floating surface) instead of only showing “already running”
+- Detail panel search stats (count / size / top folder / top ext) now match the filtered table; status shows “筛选到 N / 当日共 M”
+- Hiding from the mini-ball updates `widget_visible` and the tray “显示悬浮组件” checkbox like the card does
+
+### Changed
+- Empty floating card explains that AppData / Program Files are filtered by default
+
 ## [1.1.2] - 2026-07-30
 
 ### Changed

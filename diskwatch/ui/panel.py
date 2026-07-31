@@ -528,6 +528,7 @@ class DetailPanel(QWidget):
         truncated = data["truncated"]
         count = data["count"]
         size = data["size"]
+        day_total = int(data.get("day_total", count))
         folders = data["folders"]
         exts = data["exts"]
         day = data["day"]
@@ -540,6 +541,7 @@ class DetailPanel(QWidget):
             keyword,
             count,
             size,
+            day_total,
             folder_key,
             ext_key,
             truncated,
@@ -548,7 +550,7 @@ class DetailPanel(QWidget):
         )
         if signature == self._load_signature and self._model.rowCount() == len(records):
             self.count_label.setText(
-                self._status_text(len(records), count, keyword, truncated)
+                self._status_text(len(records), count, keyword, truncated, day_total)
             )
             return
         self._load_signature = signature
@@ -566,6 +568,7 @@ class DetailPanel(QWidget):
             "count": count,
             "keyword": keyword,
             "truncated": truncated,
+            "day_total": day_total,
         }
         self._model.set_records(records)
         hh = self.table.horizontalHeader()
@@ -573,14 +576,23 @@ class DetailPanel(QWidget):
         hh.setSortIndicator(self._model.sort_col, self._model.sort_order)
         hh.blockSignals(False)
         self.count_label.setText(
-            self._status_text(len(records), count, keyword, truncated)
+            self._status_text(len(records), count, keyword, truncated, day_total)
         )
 
     @staticmethod
-    def _status_text(shown: int, count: int, keyword: str, truncated: bool) -> str:
+    def _status_text(
+        shown: int,
+        count: int,
+        keyword: str,
+        truncated: bool,
+        day_total: int | None = None,
+    ) -> str:
         if truncated:
-            return f"显示前 {shown:,} 条 / 共 {count:,} 条（请用搜索缩小范围）"
-        return f"显示 {shown:,} 条" + (f" / 共 {count:,} 条" if keyword else "")
+            return f"显示前 {shown:,} 条 / 筛选共 {count:,} 条（请再缩小关键词）"
+        if keyword:
+            total = count if day_total is None else day_total
+            return f"筛选到 {shown:,} 条 / 当日共 {total:,} 条"
+        return f"显示 {shown:,} 条"
 
     def _auto_refresh(self) -> None:
         if not self.isVisible():
@@ -664,6 +676,7 @@ class DetailPanel(QWidget):
                             int(meta.get("count", n)),
                             str(meta.get("keyword", "")),
                             bool(meta.get("truncated", False)),
+                            int(meta.get("day_total", meta.get("count", n))),
                         )
                     )
 
