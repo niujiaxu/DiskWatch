@@ -4,6 +4,10 @@ All notable changes to DiskWatch are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- 下载临时名（`.part` / `.crdownload` 等被过滤的扩展名）重命名为正式名时记录丢失：改名事件对 `src` 未入库的文件直接登记 `dst`，不再先插后删
+- 整目录移动后同一批文件重复计数：删除/移动事件对路径做「自身 + 子树」级联标记，旧路径残留不再参与统计
+
 ## [1.1.5] - 2026-07-31
 
 ### Changed

@@ -155,9 +155,19 @@ class Storage:
         if not paths:
             return
         with self._write_lock:
-            self._write.executemany(
-                "UPDATE files SET deleted = 1 WHERE path = ?", [(p,) for p in paths]
-            )
+            for p in paths:
+                p = p.rstrip("\\/")
+                if not p:
+                    continue
+                # Windows 上整目录移动/删除时，watchdog 只对目录本身发一个被误标为
+                # 文件的删除事件，子文件不会逐个下发。对「自身 + 子树」级联标记，
+                # 目录移动/删除时子文件才不会残留成重复计数。对普通文件删除，
+                # LIKE 子树分支不命中任何行，行为不变。
+                esc = (p + "\\").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                self._write.execute(
+                    "UPDATE files SET deleted = 1 WHERE path = ? OR path LIKE ? ESCAPE '\\'",
+                    (p, esc + "%"),
+                )
             self._write.commit()
 
     def delete_paths(self, paths: list[str]) -> None:
@@ -169,13 +179,97 @@ class Storage:
             )
             self._write.commit()
 
-    def rename(self, src: str, dst: str) -> None:
+    def move_file(self, src: str, dst: str, fallback: FileRecord | None) -> None:
+        """处理单文件改名 / 移动（watchdog 的 on_moved 是唯一事件，不补发 on_created）。
+
+        - src 已入库：把旧行整体挪到 dst（保留原 added_at / size），并清掉 dst 处可能存在的旧行。
+        - src 未入库：重命名本身就是「新增」（最常见的下载 .part/.crdownload → 正式名，
+          临时名通常被扩展名过滤挡掉、从未入库），直接登记 dst。
+        - fallback 为 None 表示 dst 也没通过过滤，无事可做。
+        """
+        src = src.replace("/", "\\")
+        dst = dst.replace("/", "\\")
+        if src == dst:
+            return
         with self._write_lock:
-            self._write.execute("DELETE FROM files WHERE path = ?", (dst,))
-            self._write.execute(
-                "UPDATE files SET path = ?, name = ?, folder = ?, ext = ? WHERE path = ?",
-                (dst, Path(dst).name, str(Path(dst).parent), Path(dst).suffix.lower(), src),
-            )
+            tracked = self._write.execute(
+                "SELECT 1 FROM files WHERE path = ?", (src,)
+            ).fetchone()
+            if tracked:
+                self._write.execute("DELETE FROM files WHERE path = ?", (dst,))
+                # 文件既然搬到了 dst 就还活着，重置 deleted，防止同批级联标删先执行。
+                self._write.execute(
+                    "UPDATE files SET path = ?, name = ?, folder = ?, ext = ?, deleted = 0 WHERE path = ?",
+                    (dst, Path(dst).name, str(Path(dst).parent), Path(dst).suffix.lower(), src),
+                )
+            elif fallback is not None:
+                self._write.execute(
+                    """
+                    INSERT INTO files (path, name, ext, drive, folder, size, added_at, day, size_final, deleted)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    ON CONFLICT(path) DO UPDATE SET
+                        size       = excluded.size,
+                        added_at   = excluded.added_at,
+                        day        = excluded.day,
+                        size_final = excluded.size_final,
+                        deleted    = 0
+                    """,
+                    (
+                        fallback.path,
+                        fallback.name,
+                        fallback.ext,
+                        fallback.drive,
+                        fallback.folder,
+                        fallback.size,
+                        fallback.added_at,
+                        datetime.fromtimestamp(fallback.added_at).date().isoformat(),
+                        1 if fallback.size > 0 else 0,
+                    ),
+                )
+            self._write.commit()
+
+    def move_subtree(self, src: str, dst: str) -> None:
+        """目录整体移动（watchdog 的 DirMovedEvent）。
+
+        移动时 watchdog 会给新位置下的文件补发 on_created（新路径已入库），
+        旧路径行就成了残留：
+        - 目标路径已存在 → 旧行是幽灵，删掉（避免同一文件出现新旧两条）
+        - 目标路径不存在 → 把旧行整体平移到新路径（兜底，事件没补全时也不丢记录）
+        """
+        src = src.rstrip("\\/")
+        dst = dst.rstrip("\\/")
+        if not src or not dst or src.lower() == dst.lower():
+            return
+        prefix = src + "\\"
+        nprefix = dst + "\\"
+        # LIKE 通配符转义：路径里的 % _ 都要当字面量
+        esc = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        with self._write_lock:
+            rows = self._write.execute(
+                "SELECT path FROM files WHERE path = ? OR path LIKE ? ESCAPE '\\'",
+                (src, esc + "%"),
+            ).fetchall()
+            if not rows:
+                self._write.commit()
+                return
+            mapping = [
+                (p, dst if p == src else nprefix + p[len(prefix) :])
+                for p in (r["path"] for r in rows)
+            ]
+            for old, new in mapping:
+                if new == old:
+                    continue
+                if self._write.execute(
+                    "SELECT 1 FROM files WHERE path = ?", (new,)
+                ).fetchone():
+                    # 新路径已有行（on_created 补发的）→ 旧行是残留
+                    self._write.execute("DELETE FROM files WHERE path = ?", (old,))
+                else:
+                    # 目录搬到新路径后子文件仍存在，重置 deleted，防级联标删竞态
+                    self._write.execute(
+                        "UPDATE files SET path = ?, name = ?, folder = ?, ext = ?, deleted = 0 WHERE path = ?",
+                        (new, Path(new).name, str(Path(new).parent), Path(new).suffix.lower(), old),
+                    )
             self._write.commit()
 
     def pending_size_rows(self, older_than: float, limit: int = 500) -> list[str]:

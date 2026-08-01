@@ -62,6 +62,9 @@ class _Handler(FileSystemEventHandler):
 
     def on_moved(self, event) -> None:
         if event.is_directory:
+            # 整目录移动：旧路径行会残留、新路径又会补 on_created，
+            # 必须把旧子树整体处理掉，否则同一批文件重复计数。
+            self._monitor.submit(("dir_move", event.src_path, event.dest_path))
             return
         # 从临时名重命名成正式文件是极常见的写入模式，目标路径才是"新增"。
         self._monitor.submit(("move", event.src_path, event.dest_path))
@@ -186,7 +189,8 @@ class FileMonitor:
     def _consume_loop(self) -> None:
         pending: list[FileRecord] = []
         deletes: list[str] = []
-        renames: list[tuple[str, str]] = []
+        moves: list[tuple[str, str, FileRecord | None]] = []
+        dir_moves: list[tuple[str, str]] = []
         last_flush = time.monotonic()
 
         while not self._stop.is_set():
@@ -203,11 +207,12 @@ class FileMonitor:
                     if rec:
                         pending.append(rec)
                 elif kind == "move":
+                    # 不要把 dst 混进 pending 批量插入：改名是 dst 的唯一事件，
+                    # src 是否入库决定该「移动旧行」还是「登记新增」，由 move_file 决定。
                     src, dst = item[1], item[2]
-                    rec = self._build_record(dst)
-                    if rec:
-                        pending.append(rec)
-                    renames.append((src, dst))
+                    moves.append((src, dst, self._build_record(dst)))
+                elif kind == "dir_move":
+                    dir_moves.append((item[1], item[2]))
                 elif kind == "del":
                     deletes.append(item[1])
 
@@ -215,19 +220,22 @@ class FileMonitor:
                 time.monotonic() - last_flush >= FLUSH_INTERVAL
                 or len(pending) >= FLUSH_BATCH
                 or len(deletes) >= FLUSH_BATCH
+                or len(moves) >= FLUSH_BATCH
+                or len(dir_moves) >= FLUSH_BATCH
             )
             if due:
-                self._flush(pending, deletes, renames)
-                pending, deletes, renames = [], [], []
+                self._flush(pending, deletes, moves, dir_moves)
+                pending, deletes, moves, dir_moves = [], [], [], []
                 last_flush = time.monotonic()
 
-        self._flush(pending, deletes, renames)
+        self._flush(pending, deletes, moves, dir_moves)
 
     def _flush(
         self,
         pending: list[FileRecord],
         deletes: list[str],
-        renames: list[tuple[str, str]],
+        moves: list[tuple[str, str, FileRecord | None]],
+        dir_moves: list[tuple[str, str]],
     ) -> None:
         try:
             if pending:
@@ -238,9 +246,12 @@ class FileMonitor:
                     self._added_total += len(unique)
             if deletes:
                 self._storage.mark_deleted(deletes)
-            for src, dst in renames:
+            for src, dst, rec in moves:
                 if src != dst:
-                    self._storage.rename(src, dst)
+                    self._storage.move_file(src, dst, rec)
+            for src, dst in dir_moves:
+                if src != dst:
+                    self._storage.move_subtree(src, dst)
         except Exception:
             # 后台线程里绝不能因为单批失败而退出
             pass
