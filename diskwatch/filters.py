@@ -63,6 +63,29 @@ class PathFilter:
 
         return True
 
+    def excludes_dir(self, path: str) -> bool:
+        """该目录是否应被跳过（供 os.walk / 补扫剪枝用，避免深入 AppData 等目录）。
+
+        只判断目录本身：点号开头的目录名、被排除的路径片段、被排除的盘符。
+        上层 os.walk 是自顶向下遍历，剪掉一个目录后就不会进入其子目录，
+        所以这里不需要像 accepts_path 那样检查整条祖先链。
+        """
+        path = path.rstrip("\\/")
+        if not path:
+            return False
+        low = path.lower()
+        drive = os.path.splitdrive(path)[0].upper()
+        if drive and drive in self._excluded_drives:
+            return True
+        for frag in self._exclude_dirs:
+            if frag in low:
+                return True
+        if self._ignore_dot_dirs:
+            name = os.path.basename(path)
+            if name.startswith(".") and len(name) > 1:
+                return True
+        return False
+
     def is_candidate(self, st: os.stat_result | None) -> bool:
         """与体积无关的磁盘侧判断：必须是普通文件，且不是隐藏/系统文件。"""
         if st is None:

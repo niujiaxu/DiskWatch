@@ -151,6 +151,41 @@ class Storage:
             self._write.commit()
             return cur.rowcount
 
+    def backfill_records(self, records: list[FileRecord]) -> int:
+        """启动补扫专用：只插入缺失路径，绝不覆盖已有行的统计。
+
+        - 路径不在库 → 完整插入（added_at 取文件创建时间，落到正确的天）。
+        - 路径已存在且 deleted=1（曾删除后又重建）→ 只把 deleted 清 0 复活。
+        - 路径已存在且正常 → 什么都不动（实时 watcher 的数据更准，扫描别去覆盖）。
+        """
+        if not records:
+            return 0
+        rows = [
+            (
+                r.path,
+                r.name,
+                r.ext,
+                r.drive,
+                r.folder,
+                r.size,
+                r.added_at,
+                datetime.fromtimestamp(r.added_at).date().isoformat(),
+                1 if r.size > 0 else 0,
+            )
+            for r in records
+        ]
+        with self._write_lock:
+            cur = self._write.executemany(
+                """
+                INSERT INTO files (path, name, ext, drive, folder, size, added_at, day, size_final, deleted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                ON CONFLICT(path) DO UPDATE SET deleted = 0
+                """,
+                rows,
+            )
+            self._write.commit()
+            return cur.rowcount
+
     def mark_deleted(self, paths: list[str]) -> None:
         if not paths:
             return

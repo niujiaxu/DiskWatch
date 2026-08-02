@@ -7,12 +7,13 @@ import sys
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QSharedMemory, QTimer
+from PySide6.QtCore import QObject, QSharedMemory, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from . import APP_NAME, APP_TITLE, VERSION
 from .config import Config, DB_PATH, apply_paths, paths
+from .scan import scan_and_backfill
 from .storage import Storage, human_size, today_str
 from .ui.ball import MiniBall
 from .ui.panel import DetailPanel
@@ -20,6 +21,13 @@ from .ui.settings import SettingsDialog
 from .ui.style import app_icon, apply_dark_theme, set_app_user_model_id
 from .ui.widget import FloatingWidget
 from .watcher import FileMonitor
+
+
+class _ScanNotifier(QObject):
+    """跨线程通知：后台补扫线程完成 → 主线程刷新悬浮组件。"""
+
+    done = Signal()
+
 
 PURGE_INTERVAL_MS = 60 * 60 * 1000  # 每小时清一次过期数据
 IPC_NAME = f"{APP_NAME}-activate"
@@ -41,8 +49,12 @@ class DiskWatchApp:
         self._wire()
         self._build_tray()
 
+        self._scan_notifier = _ScanNotifier()
+        self._scan_notifier.done.connect(self._after_scan_refresh)
+
         self.monitor.start()
         self._purge()
+        self._start_scan()
 
         self._purge_timer = QTimer(qt_app)
         self._purge_timer.timeout.connect(self._purge)
@@ -294,6 +306,36 @@ class DiskWatchApp:
                     pass
 
             threading.Thread(target=_run, name="dw-purge", daemon=True).start()
+
+    def _start_scan(self) -> None:
+        """启动补扫：后台线程拿磁盘现状对账，把漏掉的文件补进库。
+
+        不阻塞启动；扫描与实时 watcher 共用同一套过滤规则。
+        """
+        if not self.config.get("scan_on_startup", True):
+            return
+
+        def _run() -> None:
+            try:
+                scan_and_backfill(
+                    self.config,
+                    self.storage,
+                    self.monitor.roots,
+                    lookback_days=int(self.config.get("scan_lookback_days", 3)),
+                )
+            except Exception:
+                pass
+            # 扫描落库后再把悬浮组件刷新一次（信号跨线程排队到主线程）
+            self._scan_notifier.done.emit()
+
+        threading.Thread(target=_run, name="dw-startup-scan", daemon=True).start()
+
+    def _after_scan_refresh(self) -> None:
+        try:
+            self.widget.refresh()
+            self.ball.refresh()
+        except Exception:
+            pass
 
     def _update_tooltip(self) -> None:
         count, size = self.storage.day_stats(today_str())

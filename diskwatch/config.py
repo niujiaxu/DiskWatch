@@ -294,6 +294,11 @@ DEFAULTS: dict[str, Any] = {
     # 保留
     "retention_days": 90,            # 数据保留天数，0 = 永久
 
+    # 启动补扫：程序没在跑（或电脑睡眠）期间新增的文件一个事件都收不到，
+    # 启动时按磁盘现状对一次账，把落在回看窗口内的文件补进库。
+    "scan_on_startup": True,         # 启动时后台补扫
+    "scan_lookback_days": 3,         # 只补回看窗口内的文件（按文件创建时间）
+
     # 界面
     "widget_pos": None,              # [x, y]
     "ball_pos": None,                # 迷你球的位置

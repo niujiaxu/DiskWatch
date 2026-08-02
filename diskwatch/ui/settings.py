@@ -171,6 +171,14 @@ class SettingsDialog(QDialog):
         form.addRow("", self.chk_autostart)
         self.chk_start_min = QCheckBox("启动时只显示托盘图标，不显示悬浮组件")
         form.addRow("", self.chk_start_min)
+        self.chk_scan = QCheckBox("启动时补扫最近创建的文件（补回程序没在跑期间遗漏的记录）")
+        form.addRow("", self.chk_scan)
+        self.spin_scan_days = QSpinBox()
+        self.spin_scan_days.setRange(1, 30)
+        self.spin_scan_days.setSuffix(" 天")
+        self.spin_scan_days.setToolTip("只补创建时间落在最近 N 天内的文件")
+        form.addRow("补扫回看窗口", self.spin_scan_days)
+        self.chk_scan.toggled.connect(self.spin_scan_days.setEnabled)
         return w
 
     def _tab_data(self) -> QWidget:
@@ -265,6 +273,9 @@ class SettingsDialog(QDialog):
         self.chk_top.setChecked(bool(cfg.get("always_on_top", True)))
         self.chk_start_min.setChecked(bool(cfg.get("start_minimized", False)))
         self.chk_autostart.setChecked(autostart_enabled())
+        self.chk_scan.setChecked(bool(cfg.get("scan_on_startup", True)))
+        self.spin_scan_days.setValue(int(cfg.get("scan_lookback_days", 3)))
+        self.spin_scan_days.setEnabled(self.chk_scan.isChecked())
 
         self.spin_retention.setValue(int(cfg.get("retention_days", 90)))
         self.lbl_total.setText(f"当前已记录 {self._storage.total_count():,} 条文件记录")
@@ -298,6 +309,8 @@ class SettingsDialog(QDialog):
             "always_on_top": self.chk_top.isChecked(),
             "start_minimized": self.chk_start_min.isChecked(),
             "retention_days": self.spin_retention.value(),
+            "scan_on_startup": self.chk_scan.isChecked(),
+            "scan_lookback_days": self.spin_scan_days.value(),
         }
 
     def accept(self) -> None:
