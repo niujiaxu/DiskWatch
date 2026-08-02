@@ -13,3 +13,6 @@ release/
 .DS_Store
 Thumbs.db
 docs/*-preview-*.png
+
+# Cursor IDE 本地规则
+.cursor/
