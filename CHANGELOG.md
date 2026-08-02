@@ -4,6 +4,8 @@ All notable changes to DiskWatch are documented in this file.
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-08-02
+
 ### Added
 - 中英双语：设置「外观与启动 → 界面语言」可切换中文 / English（保存后需重启生效），全部界面文案已接入翻译
 - 启动补扫：程序没在跑（或电脑睡眠）期间落地、事件层收不到的文件，启动时后台按磁盘现状对账补回；默认开启，可在设置「外观与启动」里关掉或调回看天数
