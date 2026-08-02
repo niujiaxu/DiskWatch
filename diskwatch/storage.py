@@ -417,7 +417,7 @@ class Storage:
             (day, limit),
         )
         return [
-            (r["ext"] or "(无扩展名)", int(r["c"]), int(r["s"]))
+            (r["ext"] or tr("(无扩展名)"), int(r["c"]), int(r["s"]))
             for r in cur.fetchall()
         ]
 
@@ -532,7 +532,7 @@ class Storage:
                 ).fetchall()
             ]
             exts = [
-                (r["ext"] or "(无扩展名)", int(r["c"]), int(r["s"]))
+                (r["ext"] or tr("(无扩展名)"), int(r["c"]), int(r["s"]))
                 for r in conn.execute(
                     f"SELECT ext, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
                     f"WHERE {where} GROUP BY ext "

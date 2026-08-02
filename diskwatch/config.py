@@ -307,6 +307,7 @@ DEFAULTS: dict[str, Any] = {
     "widget_visible": True,
     "always_on_top": True,
     "start_minimized": False,
+    "language": "zh_CN",             # zh_CN | en_US，重启生效
 }
 
 

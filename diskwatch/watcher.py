@@ -106,7 +106,7 @@ class FileMonitor:
             try:
                 observer.schedule(handler, root, recursive=True)
             except OSError as exc:
-                self._errors.append(f"{root} 监控失败: {exc}")
+                self._errors.append(tr("{root} 监控失败: {exc}", root=root, exc=exc))
         observer.daemon = True
         observer.start()
         self._observer = observer

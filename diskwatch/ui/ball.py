@@ -17,6 +17,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
+from ..i18n import tr
 from ..storage import Storage, human_size, today_str
 from ..watcher import FileMonitor
 from .style import ACCENT, ACCENT_2, BG_BOTTOM, BG_TOP, TEXT, TEXT_DIM
@@ -95,9 +96,13 @@ class MiniBall(QWidget):
     def _update_tooltip(self) -> None:
         pct = int(round(self._ratio * 100))
         self.setToolTip(
-            f"今日 {human_size(self._size_total)}\n"
-            f"近{RING_DAYS}天合计 {human_size(self._period_total)}\n"
-            f"今日占比 {pct}%"
+            tr(
+                "今日 {today}\n近{days}天合计 {total}\n今日占比 {pct}%",
+                today=human_size(self._size_total),
+                days=RING_DAYS,
+                total=human_size(self._period_total),
+                pct=pct,
+            )
         )
 
     def showEvent(self, event) -> None:
@@ -188,7 +193,7 @@ class MiniBall(QWidget):
         small = QFont(self.font())
         small.setPointSizeF(7.0)
         p.setFont(small)
-        p.drawText(outer.adjusted(0, 17, 0, 17), Qt.AlignCenter, "今日")
+        p.drawText(outer.adjusted(0, 17, 0, 17), Qt.AlignCenter, tr("今日"))
 
     # ---------- 交互 ----------
 
@@ -229,12 +234,12 @@ class MiniBall(QWidget):
 
     def contextMenuEvent(self, event) -> None:
         menu = QMenu(self)
-        menu.addAction("展开卡片", self.expand_requested.emit)
-        menu.addAction("详情面板…", self.open_panel.emit)
-        menu.addAction("设置…", self.open_settings.emit)
+        menu.addAction(tr("展开卡片"), self.expand_requested.emit)
+        menu.addAction(tr("详情面板…"), self.open_panel.emit)
+        menu.addAction(tr("设置…"), self.open_settings.emit)
         menu.addSeparator()
-        menu.addAction("隐藏（保留托盘图标）", self._hide_self)
-        menu.addAction("退出", self.request_quit.emit)
+        menu.addAction(tr("隐藏（保留托盘图标）"), self._hide_self)
+        menu.addAction(tr("退出"), self.request_quit.emit)
         menu.exec(event.globalPos())
 
     def _hide_self(self) -> None:

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..i18n import tr
 from ..storage import Storage, human_size, today_str
 from ..watcher import FileMonitor, open_in_explorer
 from .style import BG_BOTTOM, BG_TOP, BORDER, OK, WARN, WIDGET_QSS
@@ -106,14 +107,14 @@ class FloatingWidget(QWidget):
         head = QHBoxLayout()
         head.setSpacing(6)
         self.dot = QLabel("●", objectName="dot")
-        self.title = QLabel("今日新增文件", objectName="title")
+        self.title = QLabel(tr("今日新增文件"), objectName="title")
         btn_min = QPushButton("－", objectName="close")
         btn_min.setFixedSize(28, 28)
-        btn_min.setToolTip("收成迷你悬浮球")
+        btn_min.setToolTip(tr("收成迷你悬浮球"))
         btn_min.clicked.connect(self.collapse_requested.emit)
         btn_close = QPushButton("✕", objectName="close")
         btn_close.setFixedSize(28, 28)
-        btn_close.setToolTip("隐藏组件（托盘图标可再次唤出）")
+        btn_close.setToolTip(tr("隐藏组件（托盘图标可再次唤出）"))
         btn_close.clicked.connect(self._hide_self)
         head.addWidget(self.dot)
         head.addWidget(self.title)
@@ -125,7 +126,7 @@ class FloatingWidget(QWidget):
         num = QHBoxLayout()
         num.setSpacing(6)
         self.count = QLabel("0", objectName="count")
-        unit = QLabel("个", objectName="unit")
+        unit = QLabel(tr("个"), objectName="unit")
         unit.setAlignment(Qt.AlignBottom)
         num.addWidget(self.count)
         num.addWidget(unit)
@@ -135,7 +136,7 @@ class FloatingWidget(QWidget):
         num.addWidget(self.total_size)
         root.addLayout(num)
 
-        self.sep_label = QLabel("最近", objectName="title")
+        self.sep_label = QLabel(tr("最近"), objectName="title")
         root.addWidget(self.sep_label)
 
         host = QWidget(objectName="recentHost")
@@ -163,8 +164,8 @@ class FloatingWidget(QWidget):
         root.addWidget(self.scroll)
 
         self.empty = QLabel(
-            "暂无记录。默认不监控 AppData、Program Files 等系统目录，"
-            "可在「设置 → 过滤规则」里调整。",
+            tr("暂无记录。默认不监控 AppData、Program Files 等系统目录，"
+               "可在「设置 → 过滤规则」里调整。"),
             objectName="sub",
         )
         self.empty.setWordWrap(True)
@@ -173,8 +174,8 @@ class FloatingWidget(QWidget):
         foot = QHBoxLayout()
         foot.setSpacing(6)
         self.status = QLabel("", objectName="fmeta")
-        btn_detail = QPushButton("详情", objectName="tool")
-        btn_setting = QPushButton("设置", objectName="tool")
+        btn_detail = QPushButton(tr("详情"), objectName="tool")
+        btn_setting = QPushButton(tr("设置"), objectName="tool")
         btn_detail.clicked.connect(self.open_panel.emit)
         btn_setting.clicked.connect(self.open_settings.emit)
         foot.addWidget(self.status)
@@ -224,12 +225,12 @@ class FloatingWidget(QWidget):
         self.sep_label.setVisible(has_any)
         self.scroll.setVisible(has_any)
 
-        text = f"监控 {roots} 个位置"
+        parts = [tr("监控 {roots} 个位置", roots=roots)]
         if pending:
-            text += f" · 队列 {pending}"
+            parts.append(tr(" · 队列 {queue}", queue=pending))
         if dropped:
-            text += f" · 丢弃 {dropped}"
-        self.status.setText(text)
+            parts.append(tr(" · 丢弃 {dropped}", dropped=dropped))
+        self.status.setText("".join(parts))
         self.dot.setText("●" if roots else "○")
         self.dot.setStyleSheet(
             f"color:{OK.name()};" if roots else f"color:{WARN.name()};"
@@ -295,12 +296,12 @@ class FloatingWidget(QWidget):
         from PySide6.QtWidgets import QMenu
 
         menu = QMenu(self)
-        menu.addAction("打开详情面板", self.open_panel.emit)
-        menu.addAction("设置", self.open_settings.emit)
+        menu.addAction(tr("打开详情面板"), self.open_panel.emit)
+        menu.addAction(tr("设置"), self.open_settings.emit)
         menu.addSeparator()
-        menu.addAction("收成迷你球", self.collapse_requested.emit)
-        menu.addAction("隐藏组件", self._hide_self)
-        menu.addAction("退出", self.request_quit.emit)
+        menu.addAction(tr("收成迷你球"), self.collapse_requested.emit)
+        menu.addAction(tr("隐藏组件"), self._hide_self)
+        menu.addAction(tr("退出"), self.request_quit.emit)
         menu.exec(event.globalPos())
 
     def _hide_self(self) -> None:

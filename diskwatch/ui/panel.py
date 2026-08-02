@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..grouping import assign_groups
+from ..i18n import tr
 from ..storage import FileRecord, Storage, human_size, today_str
 from ..watcher import open_in_explorer
 from .style import (
@@ -272,7 +273,7 @@ class FilesTreeModel(QAbstractItemModel):
     ):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:
             if 0 <= section < len(_HEADERS):
-                return _HEADERS[section]
+                return tr(_HEADERS[section])  # 显示时翻译，语言在启动时已确定
         return None
 
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole):  # noqa: N802
@@ -294,13 +295,13 @@ class FilesTreeModel(QAbstractItemModel):
             if col == 0:
                 return datetime.fromtimestamp(g.latest_at).strftime("%H:%M:%S")
             if col == 1:
-                return f"{g.label}  ·  {len(g.files)} 个"
+                return tr("{label}  ·  {count} 个", label=g.label, count=len(g.files))
             if col == 2:
                 return human_size(g.total_size)
             if col == 3:
-                return "应用"
+                return tr("应用")
             if col == 4:
-                return f"{len(g.files)} 个文件"
+                return tr("{count} 个文件", count=len(g.files))
             return None
         if role == Qt.TextAlignmentRole and col == 2:
             return int(Qt.AlignRight | Qt.AlignVCenter)
@@ -497,7 +498,7 @@ class DetailPanel(QWidget):
     def __init__(self, storage: Storage) -> None:
         super().__init__(objectName="panelRoot")
         self._storage = storage
-        self.setWindowTitle("硬盘新增文件 · 详情")
+        self.setWindowTitle(tr("硬盘新增文件 · 详情"))
         # 普通顶层窗即可，不要强制置顶（避免盖住其它软件）
         self.setWindowFlags(self.windowFlags() | Qt.Window)
         # setWindowFlags 会重建原生窗口，图标必须放在其后
@@ -534,11 +535,11 @@ class DetailPanel(QWidget):
         # 第一行：标题 + 操作按钮（避免和日期/搜索挤在同一行互相遮挡）
         title_row = QHBoxLayout()
         title_row.setSpacing(10)
-        title_row.addWidget(QLabel("新增文件明细", objectName="h1"))
+        title_row.addWidget(QLabel(tr("新增文件明细"), objectName="h1"))
         title_row.addStretch(1)
-        btn_export = QPushButton("导出 CSV")
+        btn_export = QPushButton(tr("导出 CSV"))
         btn_export.clicked.connect(self._export_csv)
-        btn_refresh = QPushButton("刷新", objectName="primary")
+        btn_refresh = QPushButton(tr("刷新"), objectName="primary")
         btn_refresh.clicked.connect(lambda: self.reload(keep_day=True))
         title_row.addWidget(btn_export)
         title_row.addWidget(btn_refresh)
@@ -547,7 +548,7 @@ class DetailPanel(QWidget):
         # 第二行：日期 + 分组切换 + 可伸展的搜索框
         filter_row = QHBoxLayout()
         filter_row.setSpacing(10)
-        filter_row.addWidget(QLabel("日期", objectName="dim"))
+        filter_row.addWidget(QLabel(tr("日期"), objectName="dim"))
         self.day_box = DayPicker()
         self.day_box.setMinimumWidth(200)
         self.day_box.setMaximumWidth(280)
@@ -555,14 +556,14 @@ class DetailPanel(QWidget):
         self.day_box.currentIndexChanged.connect(self._on_day_changed)
         filter_row.addWidget(self.day_box)
 
-        self.chk_group = QCheckBox("按应用分组")
+        self.chk_group = QCheckBox(tr("按应用分组"))
         self.chk_group.setChecked(True)
-        self.chk_group.setToolTip("把同一应用下的文件收成可折叠分组（类似进程树）")
+        self.chk_group.setToolTip(tr("把同一应用下的文件收成可折叠分组（类似进程树）"))
         self.chk_group.toggled.connect(self._on_group_toggled)
         filter_row.addWidget(self.chk_group)
 
         self.search = QLineEdit()
-        self.search.setPlaceholderText("按文件名或目录筛选…")
+        self.search.setPlaceholderText(tr("按文件名或目录筛选…"))
         self.search.setMinimumWidth(180)
         self.search.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.search.textChanged.connect(
@@ -573,10 +574,10 @@ class DetailPanel(QWidget):
 
         cards = QHBoxLayout()
         cards.setSpacing(10)
-        self.card_count = StatCard("新增文件")
-        self.card_size = StatCard("占用空间")
-        self.card_folder = StatCard("最活跃目录")
-        self.card_ext = StatCard("最多的类型")
+        self.card_count = StatCard(tr("新增文件"))
+        self.card_size = StatCard(tr("占用空间"))
+        self.card_folder = StatCard(tr("最活跃目录"))
+        self.card_ext = StatCard(tr("最多的类型"))
         for c in (self.card_count, self.card_size, self.card_folder, self.card_ext):
             cards.addWidget(c)
         root.addLayout(cards)
@@ -610,7 +611,7 @@ class DetailPanel(QWidget):
 
         foot = QHBoxLayout()
         self.hint = QLabel(
-            "双击文件行可在资源管理器中定位；双击应用分组可展开/折叠",
+            tr("双击文件行可在资源管理器中定位；双击应用分组可展开/折叠"),
             objectName="dim",
         )
         foot.addWidget(self.hint)
@@ -628,7 +629,7 @@ class DetailPanel(QWidget):
         )
         self._days_req += 1
         req = self._days_req
-        self.count_label.setText("加载中…")
+        self.count_label.setText(tr("加载中…"))
 
         storage = self._storage
 
@@ -645,7 +646,7 @@ class DetailPanel(QWidget):
         if req != self._days_req or not self.isVisible():
             return
         if isinstance(payload, Exception):
-            self.count_label.setText(f"加载失败：{payload}")
+            self.count_label.setText(tr("加载失败：{err}", err=payload))
             return
 
         days = list(payload)
@@ -657,13 +658,27 @@ class DetailPanel(QWidget):
         self.day_box.clear()
         for d in days:
             if d.day == today:
-                label = f"今天 · {d.count} 个 · {human_size(d.total_size)}"
+                label = tr(
+                    "今天 · {count} 个 · {size}",
+                    count=f"{d.count}",
+                    size=human_size(d.total_size),
+                )
             else:
-                label = f"{d.day} · {d.count} 个 · {human_size(d.total_size)}"
+                label = tr(
+                    "{day} · {count} 个 · {size}",
+                    day=d.day,
+                    count=f"{d.count}",
+                    size=human_size(d.total_size),
+                )
             self.day_box.addItem(label, d.day)
             self.day_box.setItemData(
                 self.day_box.count() - 1,
-                f"{d.day}  ·  {d.count} 个  ·  {human_size(d.total_size)}",
+                tr(
+                    "{day}  ·  {count} 个  ·  {size}",
+                    day=d.day,
+                    count=f"{d.count}",
+                    size=human_size(d.total_size),
+                ),
                 Qt.ToolTipRole,
             )
 
@@ -684,7 +699,7 @@ class DetailPanel(QWidget):
         keyword = self.search.text().strip()
         self._day_req += 1
         req = self._day_req
-        self.count_label.setText("加载中…")
+        self.count_label.setText(tr("加载中…"))
 
         storage = self._storage
         limit = MAX_TABLE_ROWS + 1
@@ -702,7 +717,7 @@ class DetailPanel(QWidget):
         if req != self._day_req or not self.isVisible():
             return
         if isinstance(payload, Exception):
-            self.count_label.setText(f"加载失败：{payload}")
+            self.count_label.setText(tr("加载失败：{err}", err=payload))
             return
 
         data = payload
@@ -742,8 +757,11 @@ class DetailPanel(QWidget):
         self.card_folder.set_value(
             _shorten(folders[0][0], 26) + f"  ({folders[0][1]})" if folders else "—"
         )
+        ext_name = exts[0][0] if exts else ""
+        if ext_name == "(无扩展名)":
+            ext_name = tr("(无扩展名)")
         self.card_ext.set_value(
-            f"{exts[0][0]}  ({exts[0][1]})" if exts else "—"
+            f"{ext_name}  ({exts[0][1]})" if exts else "—"
         )
 
         self._fill_meta = {
@@ -771,11 +789,19 @@ class DetailPanel(QWidget):
         day_total: int | None = None,
     ) -> str:
         if truncated:
-            return f"显示前 {shown:,} 条 / 筛选共 {count:,} 条（请再缩小关键词）"
+            return tr(
+                "显示前 {shown} 条 / 筛选共 {count} 条（请再缩小关键词）",
+                shown=f"{shown:,}",
+                count=f"{count:,}",
+            )
         if keyword:
             total = count if day_total is None else day_total
-            return f"筛选到 {shown:,} 条 / 当日共 {total:,} 条"
-        return f"显示 {shown:,} 条"
+            return tr(
+                "筛选到 {shown} 条 / 当日共 {total} 条",
+                shown=f"{shown:,}",
+                total=f"{total:,}",
+            )
+        return tr("显示 {shown} 条", shown=f"{shown:,}")
 
     def _apply_expand_policy(self) -> None:
         self.table.collapseAll()
@@ -824,11 +850,11 @@ class DetailPanel(QWidget):
 
     def _export_csv(self) -> None:
         day = self.day_box.currentData() or today_str()
-        default = f"新增文件_{day}.csv"
-        path, _ = QFileDialog.getSaveFileName(self, "导出 CSV", default, "CSV (*.csv)")
+        default = tr("新增文件_{day}.csv", day=day)
+        path, _ = QFileDialog.getSaveFileName(self, tr("导出 CSV"), default, "CSV (*.csv)")
         if not path:
             return
-        self.count_label.setText("正在导出…")
+        self.count_label.setText(tr("正在导出…"))
         keyword = self.search.text().strip()
         storage = self._storage
 
@@ -841,7 +867,15 @@ class DetailPanel(QWidget):
                 with open(path, "w", newline="", encoding="utf-8-sig") as f:
                     writer = csv.writer(f)
                     writer.writerow(
-                        ["时间", "文件名", "大小(字节)", "可读大小", "类型", "所在目录", "完整路径"]
+                        [
+                            tr("时间"),
+                            tr("文件名"),
+                            tr("大小(字节)"),
+                            tr("可读大小"),
+                            tr("类型"),
+                            tr("所在目录"),
+                            tr("完整路径"),
+                        ]
                     )
                     for r in records:
                         writer.writerow(
@@ -863,11 +897,13 @@ class DetailPanel(QWidget):
 
             def done() -> None:
                 if err is not None:
-                    QMessageBox.warning(self, "导出失败", str(err))
-                    self.count_label.setText("导出失败")
+                    QMessageBox.warning(self, tr("导出失败"), str(err))
+                    self.count_label.setText(tr("导出失败"))
                     return
                 QMessageBox.information(
-                    self, "导出完成", f"已导出 {n} 条记录到：\n{path}"
+                    self,
+                    tr("导出完成"),
+                    tr("已导出 {n} 条记录到：\n{path}", n=n, path=path),
                 )
                 meta = self._fill_meta
                 if meta is not None:
@@ -890,7 +926,7 @@ class DetailPanel(QWidget):
         apply_window_icon(self)
         enable_dark_titlebar(self)
         self._load_signature = None
-        self.count_label.setText("加载中…")
+        self.count_label.setText(tr("加载中…"))
         # 先让窗口画出来，再启动后台加载，避免点「详情」瞬间整卡
         QTimer.singleShot(0, lambda: self.reload(keep_day=True))
         self._timer.start(AUTO_REFRESH_MS)

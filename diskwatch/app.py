@@ -11,8 +11,9 @@ from PySide6.QtCore import QObject, QSharedMemory, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
-from . import APP_NAME, APP_TITLE, VERSION
+from . import APP_NAME, VERSION
 from .config import Config, DB_PATH, apply_paths, paths
+from .i18n import set_language, tr
 from .scan import scan_and_backfill
 from .storage import Storage, human_size, today_str
 from .ui.ball import MiniBall
@@ -38,6 +39,8 @@ class DiskWatchApp:
         self.qt_app = qt_app
         self._instance_lock = instance_lock
         self.config = Config()
+        # 语言在创建任何 UI 前设置，所有 tr() 从此按此语言渲染（重启生效）
+        set_language(self.config.get("language", "zh_CN"))
         self.storage = Storage(Path(str(DB_PATH)))
         self.monitor = FileMonitor(self.config, self.storage)
 
@@ -76,8 +79,8 @@ class DiskWatchApp:
 
         if self.monitor.errors:
             self.tray.showMessage(
-                APP_TITLE,
-                "部分位置监控失败：\n" + "\n".join(self.monitor.errors[:3]),
+                tr("硬盘新增文件监控"),
+                tr("部分位置监控失败：\n") + "\n".join(self.monitor.errors[:3]),
                 QSystemTrayIcon.Warning,
                 5000,
             )
@@ -101,25 +104,27 @@ class DiskWatchApp:
 
     def _build_tray(self) -> None:
         menu = QMenu()
-        self.act_widget = menu.addAction("显示悬浮组件")
+        self.act_widget = menu.addAction(tr("显示悬浮组件"))
         self.act_widget.setCheckable(True)
         self.act_widget.triggered.connect(self._toggle_widget)
-        self.act_ball = menu.addAction("迷你球模式")
+        self.act_ball = menu.addAction(tr("迷你球模式"))
         self.act_ball.setCheckable(True)
         self.act_ball.triggered.connect(
             lambda checked: self.collapse() if checked else self.expand()
         )
-        menu.addAction("详情面板…", self.show_panel)
+        menu.addAction(tr("详情面板…"), self.show_panel)
         menu.addSeparator()
-        menu.addAction("设置…", self.show_settings)
-        menu.addAction("重新开始监控", self._restart_monitor)
-        menu.addAction("重启", self._restart_app)
+        menu.addAction(tr("设置…"), self.show_settings)
+        menu.addAction(tr("重新开始监控"), self._restart_monitor)
+        menu.addAction(tr("重启"), self._restart_app)
         menu.addSeparator()
-        menu.addAction(f"关于 {APP_NAME} {VERSION}", self._about)
-        menu.addAction("退出", self.quit)
+        menu.addAction(
+            tr("关于 {name} {version}", name=APP_NAME, version=VERSION), self._about
+        )
+        menu.addAction(tr("退出"), self.quit)
 
         self.tray.setContextMenu(menu)
-        self.tray.setToolTip(APP_TITLE)
+        self.tray.setToolTip(tr("硬盘新增文件监控"))
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
         self._sync_tray_actions()
@@ -211,8 +216,26 @@ class DiskWatchApp:
         dlg = SettingsDialog(self.config, self.storage, self.panel)
         if not dlg.exec():
             return
-        self.config.update(dlg.result_values())
+        values = dlg.result_values()
+        old_lang = self.config.get("language", "zh_CN")
+        new_lang = values.get("language", old_lang)
+
+        self.config.update(values)
         self.config.save()
+
+        # 语言变更：提示重启，其余设置留给重启后生效
+        if new_lang != old_lang:
+            reply = QMessageBox.question(
+                self.panel,
+                tr("语言已变更"),
+                tr("语言更改需要重启应用才能生效，是否立即重启？"),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if reply == QMessageBox.Yes:
+                self._relaunch()
+            return
+
         self.widget.apply_appearance()
         self.ball.apply_appearance()
         self._restart_monitor()
@@ -229,11 +252,12 @@ class DiskWatchApp:
                 apply_paths(Path(cfg_path), Path(db_path), migrate=True)
                 QMessageBox.information(
                     self.panel,
-                    "位置已更新",
-                    f"配置：{paths.config}\n数据库：{paths.db}\n\n程序将重启以加载新位置。",
+                    tr("位置已更新"),
+                    tr("配置：{config}\n数据库：{db}\n\n程序将重启以加载新位置。",
+                       config=paths.config, db=paths.db),
                 )
             except OSError as exc:
-                QMessageBox.warning(self.panel, "更改位置失败", str(exc))
+                QMessageBox.warning(self.panel, tr("更改位置失败"), str(exc))
                 # 尽力恢复原库连接
                 self.storage = Storage(Path(str(DB_PATH)))
                 self.monitor = FileMonitor(self.config, self.storage)
@@ -273,8 +297,8 @@ class DiskWatchApp:
         except OSError as exc:
             QMessageBox.warning(
                 self.panel,
-                "自动重启失败",
-                f"请手动重新运行程序。\n{exc}",
+                tr("自动重启失败"),
+                tr("请手动重新运行程序。\n{exc}", exc=exc),
             )
             return
 
@@ -343,19 +367,29 @@ class DiskWatchApp:
             return
         self._tip_signature = (count, size)
         self.tray.setToolTip(
-            f"{APP_TITLE}\n今日新增 {count:,} 个文件 · {human_size(size)}"
+            tr("硬盘新增文件监控")
+            + "\n"
+            + tr(
+                "今日新增 {count} 个文件 · {size}",
+                count=f"{count:,}",
+                size=human_size(size),
+            )
         )
 
     def _about(self) -> None:
         QMessageBox.information(
             self.panel,
-            f"关于 {APP_NAME}",
-            f"{APP_TITLE} v{VERSION}\n\n"
-            "实时记录硬盘上每天新增了哪些文件。\n"
-            f"数据库：{paths.db}\n"
-            f"配置：{paths.config}\n\n"
-            "左键点击托盘图标可显示/隐藏悬浮组件，双击打开详情面板。\n"
-            "点卡片上的「－」收成迷你球，单击球可再展开。",
+            tr("关于 {name}", name=APP_NAME),
+            f"{tr('硬盘新增文件监控')} v{VERSION}\n\n"
+            + tr("实时记录硬盘上每天新增了哪些文件。")
+            + "\n"
+            + tr("数据库：{db}", db=paths.db)
+            + "\n"
+            + tr("配置：{config}", config=paths.config)
+            + "\n\n"
+            + tr("左键点击托盘图标可显示/隐藏悬浮组件，双击打开详情面板。")
+            + "\n"
+            + tr("点卡片上的「－」收成迷你球，单击球可再展开。"),
         )
 
     def quit(self) -> None:
@@ -392,18 +426,27 @@ def main() -> int:
     qt_app.setWindowIcon(icon)
     apply_dark_theme(qt_app)
 
+    # 早期就需要语言（下述消息框），且保证所有 UI 构造时语言已就绪
+    set_language(Config().get("language", "zh_CN"))
+
     # 单实例：重复启动时唤起已有窗口，避免两个监控互相打架
     lock = QSharedMemory(f"{APP_NAME}-single-instance")
     if not lock.create(1):
         if _ping_running_instance():
             return 0
         QMessageBox.information(
-            None, APP_TITLE, f"{APP_NAME} 已经在运行了（见系统托盘）。"
+            None,
+            tr("硬盘新增文件监控"),
+            tr("{name} 已经在运行了（见系统托盘）。", name=APP_NAME),
         )
         return 0
 
     if not QSystemTrayIcon.isSystemTrayAvailable():
-        QMessageBox.critical(None, APP_TITLE, "当前系统没有可用的托盘区，无法运行。")
+        QMessageBox.critical(
+            None,
+            tr("硬盘新增文件监控"),
+            tr("当前系统没有可用的托盘区，无法运行。"),
+        )
         return 1
 
     app = DiskWatchApp(qt_app, instance_lock=lock)

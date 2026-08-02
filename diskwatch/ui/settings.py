@@ -5,6 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from ..autostart import is_enabled as autostart_enabled, set_enabled as set_autostart
 from ..config import Config, default_home, paths
+from ..i18n import SUPPORTED_LOCALES, tr
 from ..storage import Storage
 from ..watcher import list_drives
 from .style import PANEL_QSS, apply_window_icon, enable_dark_titlebar
@@ -39,7 +41,7 @@ class SettingsDialog(QDialog):
         self.paths_changed = False
         self._pending_config_path = ""
         self._pending_db_path = ""
-        self.setWindowTitle("设置")
+        self.setWindowTitle(tr("设置"))
         # 只关帮助按钮。切勿写 `& ~Qt.WindowContextHelpButtonHint`：
         # PySide6 里对 WindowType 做 ~ 得到的是残缺掩码（约 0x1feffff），
         # 会顺带清掉 WindowCloseButtonHint，标题栏 ✕ 看起来在但点不了。
@@ -59,16 +61,16 @@ class SettingsDialog(QDialog):
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 12)
         tabs = QTabWidget()
-        tabs.addTab(self._tab_scope(), "监控范围")
-        tabs.addTab(self._tab_filters(), "过滤规则")
-        tabs.addTab(self._tab_appearance(), "外观与启动")
-        tabs.addTab(self._tab_data(), "数据")
+        tabs.addTab(self._tab_scope(), tr("监控范围"))
+        tabs.addTab(self._tab_filters(), tr("过滤规则"))
+        tabs.addTab(self._tab_appearance(), tr("外观与启动"))
+        tabs.addTab(self._tab_data(), tr("数据"))
         root.addWidget(tabs)
 
         # objectName 必须在构造时给定：样式表已经应用过之后再改 objectName，
         # Qt 不会自动重新 polish，#primary 的配色就不会生效。
-        btn_ok = QPushButton("保存并应用", objectName="primary")
-        btn_cancel = QPushButton("取消")
+        btn_ok = QPushButton(tr("保存并应用"), objectName="primary")
+        btn_cancel = QPushButton(tr("取消"))
         buttons = QDialogButtonBox(parent=self)
         buttons.addButton(btn_ok, QDialogButtonBox.AcceptRole)
         buttons.addButton(btn_cancel, QDialogButtonBox.RejectRole)
@@ -83,22 +85,22 @@ class SettingsDialog(QDialog):
         lay = QVBoxLayout(w)
         lay.setSpacing(10)
 
-        lay.addWidget(QLabel("勾选要监控的磁盘：", objectName="dim"))
+        lay.addWidget(QLabel(tr("勾选要监控的磁盘："), objectName="dim"))
         self.drive_list = QListWidget()
         self.drive_list.setMaximumHeight(140)
         lay.addWidget(self.drive_list)
 
-        self.chk_removable = QCheckBox("同时监控可移动磁盘（U 盘 / 移动硬盘）")
+        self.chk_removable = QCheckBox(tr("同时监控可移动磁盘（U 盘 / 移动硬盘）"))
         lay.addWidget(self.chk_removable)
 
-        lay.addWidget(QLabel("额外监控的文件夹（可选，留空表示只按磁盘监控）：", objectName="dim"))
+        lay.addWidget(QLabel(tr("额外监控的文件夹（可选，留空表示只按磁盘监控）："), objectName="dim"))
         self.folder_list = QListWidget()
         self.folder_list.setMaximumHeight(110)
         lay.addWidget(self.folder_list)
 
         row = QHBoxLayout()
-        btn_add = QPushButton("添加文件夹…")
-        btn_del = QPushButton("移除选中")
+        btn_add = QPushButton(tr("添加文件夹…"))
+        btn_del = QPushButton(tr("移除选中"))
         btn_add.clicked.connect(self._add_folder)
         btn_del.clicked.connect(self._remove_folder)
         row.addWidget(btn_add)
@@ -106,7 +108,7 @@ class SettingsDialog(QDialog):
         row.addStretch(1)
         lay.addLayout(row)
 
-        self.chk_folders_only = QCheckBox("只监控上面这些文件夹（忽略磁盘勾选）")
+        self.chk_folders_only = QCheckBox(tr("只监控上面这些文件夹（忽略磁盘勾选）"))
         lay.addWidget(self.chk_folders_only)
         lay.addStretch(1)
         return w
@@ -116,16 +118,16 @@ class SettingsDialog(QDialog):
         lay = QVBoxLayout(w)
         lay.setSpacing(8)
 
-        lay.addWidget(QLabel("排除的路径片段（每行一条，路径里包含即忽略，不区分大小写）：", objectName="dim"))
+        lay.addWidget(QLabel(tr("排除的路径片段（每行一条，路径里包含即忽略，不区分大小写）："), objectName="dim"))
         self.txt_dirs = QPlainTextEdit()
         lay.addWidget(self.txt_dirs, 3)
 
-        lay.addWidget(QLabel("排除的扩展名（每行一条，含点号）：", objectName="dim"))
+        lay.addWidget(QLabel(tr("排除的扩展名（每行一条，含点号）："), objectName="dim"))
         self.txt_exts = QPlainTextEdit()
         self.txt_exts.setMaximumHeight(90)
         lay.addWidget(self.txt_exts, 1)
 
-        lay.addWidget(QLabel("排除的文件名（每行一条，支持 * 通配）：", objectName="dim"))
+        lay.addWidget(QLabel(tr("排除的文件名（每行一条，支持 * 通配）："), objectName="dim"))
         self.txt_names = QPlainTextEdit()
         self.txt_names.setMaximumHeight(80)
         lay.addWidget(self.txt_names, 1)
@@ -134,15 +136,15 @@ class SettingsDialog(QDialog):
         self.spin_min = QSpinBox()
         self.spin_min.setRange(0, 1024 * 1024)
         self.spin_min.setSuffix(" KB")
-        self.spin_min.setSpecialValueText("不限制")
-        form.addRow("最小体积", self.spin_min)
-        self.chk_hidden = QCheckBox("忽略隐藏文件与系统文件")
+        self.spin_min.setSpecialValueText(tr("不限制"))
+        form.addRow(tr("最小体积"), self.spin_min)
+        self.chk_hidden = QCheckBox(tr("忽略隐藏文件与系统文件"))
         form.addRow("", self.chk_hidden)
-        self.chk_dot_dirs = QCheckBox("忽略点号开头的目录（.git / .venv / .idea / .cursor 等）")
+        self.chk_dot_dirs = QCheckBox(tr("忽略点号开头的目录（.git / .venv / .idea / .cursor 等）"))
         form.addRow("", self.chk_dot_dirs)
         lay.addLayout(form)
 
-        btn_reset = QPushButton("恢复默认过滤规则")
+        btn_reset = QPushButton(tr("恢复默认过滤规则"))
         btn_reset.clicked.connect(self._reset_filters)
         lay.addWidget(btn_reset, alignment=Qt.AlignLeft)
         return w
@@ -163,21 +165,28 @@ class SettingsDialog(QDialog):
         row.addWidget(self.lbl_opacity)
         holder = QWidget()
         holder.setLayout(row)
-        form.addRow("组件透明度", holder)
+        form.addRow(tr("组件透明度"), holder)
 
-        self.chk_top = QCheckBox("始终置顶")
+        self.chk_top = QCheckBox(tr("始终置顶"))
         form.addRow("", self.chk_top)
-        self.chk_autostart = QCheckBox("开机自动启动")
+        self.chk_autostart = QCheckBox(tr("开机自动启动"))
         form.addRow("", self.chk_autostart)
-        self.chk_start_min = QCheckBox("启动时只显示托盘图标，不显示悬浮组件")
+        self.chk_start_min = QCheckBox(tr("启动时只显示托盘图标，不显示悬浮组件"))
         form.addRow("", self.chk_start_min)
-        self.chk_scan = QCheckBox("启动时补扫最近创建的文件（补回程序没在跑期间遗漏的记录）")
+
+        self.cmb_language = QComboBox()
+        for code, name in SUPPORTED_LOCALES.items():
+            self.cmb_language.addItem(name, code)
+        self.cmb_language.setToolTip(tr("修改语言后需重启生效"))
+        form.addRow(tr("界面语言"), self.cmb_language)
+
+        self.chk_scan = QCheckBox(tr("启动时补扫最近创建的文件（补回程序没在跑期间遗漏的记录）"))
         form.addRow("", self.chk_scan)
         self.spin_scan_days = QSpinBox()
         self.spin_scan_days.setRange(1, 30)
-        self.spin_scan_days.setSuffix(" 天")
-        self.spin_scan_days.setToolTip("只补创建时间落在最近 N 天内的文件")
-        form.addRow("补扫回看窗口", self.spin_scan_days)
+        self.spin_scan_days.setSuffix(tr(" 天"))
+        self.spin_scan_days.setToolTip(tr("只补创建时间落在最近 N 天内的文件"))
+        form.addRow(tr("补扫回看窗口"), self.spin_scan_days)
         self.chk_scan.toggled.connect(self.spin_scan_days.setEnabled)
         return w
 
@@ -189,51 +198,51 @@ class SettingsDialog(QDialog):
         form = QFormLayout()
         self.spin_retention = QSpinBox()
         self.spin_retention.setRange(0, 3650)
-        self.spin_retention.setSuffix(" 天")
-        self.spin_retention.setSpecialValueText("永久保留")
-        form.addRow("历史数据保留", self.spin_retention)
+        self.spin_retention.setSuffix(tr(" 天"))
+        self.spin_retention.setSpecialValueText(tr("永久保留"))
+        form.addRow(tr("历史数据保留"), self.spin_retention)
         lay.addLayout(form)
 
         self.lbl_total = QLabel("", objectName="dim")
         lay.addWidget(self.lbl_total)
 
-        btn_clear = QPushButton("清空所有记录")
+        btn_clear = QPushButton(tr("清空所有记录"))
         btn_clear.clicked.connect(self._clear_data)
         lay.addWidget(btn_clear, alignment=Qt.AlignLeft)
 
-        lay.addWidget(QLabel("文件位置（可改到其他盘；保存后需重启生效）", objectName="dim"))
+        lay.addWidget(QLabel(tr("文件位置（可改到其他盘；保存后需重启生效）"), objectName="dim"))
 
         self.edit_config = QLineEdit()
-        self.edit_config.setPlaceholderText("配置文件路径（.json）")
-        btn_cfg = QPushButton("浏览…")
+        self.edit_config.setPlaceholderText(tr("配置文件路径（.json）"))
+        btn_cfg = QPushButton(tr("浏览…"))
         btn_cfg.clicked.connect(self._browse_config)
         row_cfg = QHBoxLayout()
         row_cfg.addWidget(self.edit_config, 1)
         row_cfg.addWidget(btn_cfg)
-        lay.addWidget(QLabel("配置文件", objectName="dim"))
+        lay.addWidget(QLabel(tr("配置文件"), objectName="dim"))
         lay.addLayout(row_cfg)
 
         self.edit_db = QLineEdit()
-        self.edit_db.setPlaceholderText("数据库路径（.db）")
-        btn_db = QPushButton("浏览…")
+        self.edit_db.setPlaceholderText(tr("数据库路径（.db）"))
+        btn_db = QPushButton(tr("浏览…"))
         btn_db.clicked.connect(self._browse_db)
         row_db = QHBoxLayout()
         row_db.addWidget(self.edit_db, 1)
         row_db.addWidget(btn_db)
-        lay.addWidget(QLabel("数据库", objectName="dim"))
+        lay.addWidget(QLabel(tr("数据库"), objectName="dim"))
         lay.addLayout(row_db)
 
         row_reset = QHBoxLayout()
-        btn_default = QPushButton("恢复默认位置")
-        btn_default.setToolTip(f"默认目录：{default_home()}")
+        btn_default = QPushButton(tr("恢复默认位置"))
+        btn_default.setToolTip(tr("默认目录：{home}", home=default_home()))
         btn_default.clicked.connect(self._reset_paths)
         row_reset.addWidget(btn_default)
         row_reset.addStretch(1)
         lay.addLayout(row_reset)
 
         tip = QLabel(
-            "引导文件始终留在 AppData\\DiskWatch\\location.json，"
-            "用来记住你自定义的路径。改位置时会自动拷贝现有文件。",
+            tr("引导文件始终留在 AppData\\DiskWatch\\location.json，"
+               "用来记住你自定义的路径。改位置时会自动拷贝现有文件。"),
             objectName="dim",
         )
         tip.setWordWrap(True)
@@ -278,7 +287,13 @@ class SettingsDialog(QDialog):
         self.spin_scan_days.setEnabled(self.chk_scan.isChecked())
 
         self.spin_retention.setValue(int(cfg.get("retention_days", 90)))
-        self.lbl_total.setText(f"当前已记录 {self._storage.total_count():,} 条文件记录")
+        self.lbl_total.setText(
+            tr("当前已记录 {count} 条文件记录", count=self._storage.total_count())
+        )
+        lang = cfg.get("language", "zh_CN")
+        idx = self.cmb_language.findData(lang)
+        if idx >= 0:
+            self.cmb_language.setCurrentIndex(idx)
         self.edit_config.setText(str(paths.config))
         self.edit_db.setText(str(paths.db))
         self._orig_config = str(paths.config)
@@ -311,17 +326,18 @@ class SettingsDialog(QDialog):
             "retention_days": self.spin_retention.value(),
             "scan_on_startup": self.chk_scan.isChecked(),
             "scan_lookback_days": self.spin_scan_days.value(),
+            "language": self.cmb_language.currentData(),
         }
 
     def accept(self) -> None:
         if self.chk_folders_only.isChecked() and self.folder_list.count() == 0:
-            QMessageBox.warning(self, "还没选文件夹", "选择了只监控文件夹，但列表是空的。")
+            QMessageBox.warning(self, tr("还没选文件夹"), tr("选择了只监控文件夹，但列表是空的。"))
             return
 
         new_cfg = self.edit_config.text().strip()
         new_db = self.edit_db.text().strip()
         if not new_cfg or not new_db:
-            QMessageBox.warning(self, "路径为空", "配置文件和数据库路径都不能为空。")
+            QMessageBox.warning(self, tr("路径为空"), tr("配置文件和数据库路径都不能为空。"))
             return
 
         set_autostart(self.chk_autostart.isChecked())
@@ -329,9 +345,9 @@ class SettingsDialog(QDialog):
         if new_cfg != self._orig_config or new_db != self._orig_db:
             reply = QMessageBox.question(
                 self,
-                "更改文件位置",
-                "将把现有配置/数据库复制到新位置，并在下次启动时使用新路径。\n"
-                "应用需要重启才能生效，是否继续？",
+                tr("更改文件位置"),
+                tr("将把现有配置/数据库复制到新位置，并在下次启动时使用新路径。\n"
+                   "应用需要重启才能生效，是否继续？"),
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.Yes,
             )
@@ -343,7 +359,7 @@ class SettingsDialog(QDialog):
                 self._pending_db_path = new_db
                 self.paths_changed = True
             except OSError as exc:
-                QMessageBox.warning(self, "无法更改位置", str(exc))
+                QMessageBox.warning(self, tr("无法更改位置"), str(exc))
                 return
 
         super().accept()
@@ -353,7 +369,7 @@ class SettingsDialog(QDialog):
     def _browse_config(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "选择配置文件位置",
+            tr("选择配置文件位置"),
             self.edit_config.text() or str(default_home() / "config.json"),
             "JSON (*.json)",
         )
@@ -365,7 +381,7 @@ class SettingsDialog(QDialog):
     def _browse_db(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "选择数据库位置",
+            tr("选择数据库位置"),
             self.edit_db.text() or str(default_home() / "diskwatch.db"),
             "SQLite (*.db)",
         )
@@ -385,7 +401,7 @@ class SettingsDialog(QDialog):
         return self._pending_config_path, self._pending_db_path
 
     def _add_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "选择要监控的文件夹")
+        folder = QFileDialog.getExistingDirectory(self, tr("选择要监控的文件夹"))
         if folder:
             existing = {
                 self.folder_list.item(i).text() for i in range(self.folder_list.count())
@@ -411,14 +427,14 @@ class SettingsDialog(QDialog):
     def _clear_data(self) -> None:
         ok = QMessageBox.question(
             self,
-            "确认清空",
-            "将删除全部历史记录，且不可恢复。继续？",
+            tr("确认清空"),
+            tr("将删除全部历史记录，且不可恢复。继续？"),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if ok == QMessageBox.Yes:
             self._storage.clear_all()
-            self.lbl_total.setText("当前已记录 0 条文件记录")
+            self.lbl_total.setText(tr("当前已记录 {count} 条文件记录", count=0))
 
 
 def _lines(text: str) -> list[str]:

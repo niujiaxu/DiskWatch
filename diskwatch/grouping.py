@@ -12,6 +12,7 @@ import os
 from collections import defaultdict
 from pathlib import Path
 
+from .i18n import tr
 from .storage import FileRecord
 
 # (稳定键, 展示名)
@@ -160,7 +161,7 @@ def _from_temp(low: list[str]) -> GroupInfo | None:
             continue
         parent = low[i - 1] if i else ""
         if i == 0 or parent in _TEMP_PARENTS:
-            return "temp", "临时文件"
+            return "temp", tr("临时文件")
     return None
 
 
