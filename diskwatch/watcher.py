@@ -20,6 +20,7 @@ from watchdog.observers import Observer
 
 from .config import Config
 from .filters import PathFilter, safe_stat
+from .i18n import tr
 from .storage import FileRecord, Storage, make_record
 
 DRIVE_REMOVABLE = 2

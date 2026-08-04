@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from .i18n import tr
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     path        TEXT PRIMARY KEY,
