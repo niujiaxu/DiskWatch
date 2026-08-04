@@ -9,6 +9,8 @@ import os
 import sqlite3
 import threading
 import time
+from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -103,6 +105,8 @@ class Storage:
         with self._write_lock:
             self._write.executescript(SCHEMA)
             self._write.commit()
+        # 写入异常（被 SQLite 抛出的）会进这里，供 UI 展示与排错
+        self._write_errors: deque[tuple[float, str]] = deque(maxlen=20)
         # 仅供 Qt 主线程读：不与 write 抢同一把 Python 锁
         self._read = self._connect()
         self._read.execute("PRAGMA busy_timeout=5000")
@@ -129,6 +133,27 @@ class Storage:
 
     # ---------- 写 ----------
 
+    @contextmanager
+    def _write_tx(self):
+        """持锁写入：成功则 commit，抛 sqlite3.Error 时 rollback 并记录。
+
+        裸 sqlite3.Connection 在 execute 后会自动开事务；中途出错但未
+        rollback，下一次写入会被并进这个未提交事务，进程一崩整批丢失。
+        """
+        with self._write_lock:
+            try:
+                yield
+            except sqlite3.Error as exc:
+                self._write.rollback()
+                self._write_errors.append((time.time(), f"{type(exc).__name__}: {exc}"))
+                raise
+            else:
+                self._write.commit()
+
+    def recent_errors(self) -> list[tuple[float, str]]:
+        """最近的写入错误，[(timestamp, message)]，新到旧。"""
+        return list(self._write_errors)[::-1]
+
     def add_files(self, records: list[FileRecord]) -> int:
         if not records:
             return 0
@@ -146,7 +171,7 @@ class Storage:
             )
             for r in records
         ]
-        with self._write_lock:
+        with self._write_tx():
             cur = self._write.executemany(
                 """
                 INSERT INTO files (path, name, ext, drive, folder, size, added_at, day, size_final, deleted)
@@ -160,7 +185,6 @@ class Storage:
                 """,
                 rows,
             )
-            self._write.commit()
             return cur.rowcount
 
     def backfill_records(self, records: list[FileRecord]) -> int:
@@ -186,7 +210,7 @@ class Storage:
             )
             for r in records
         ]
-        with self._write_lock:
+        with self._write_tx():
             cur = self._write.executemany(
                 """
                 INSERT INTO files (path, name, ext, drive, folder, size, added_at, day, size_final, deleted)
@@ -195,13 +219,12 @@ class Storage:
                 """,
                 rows,
             )
-            self._write.commit()
             return cur.rowcount
 
     def mark_deleted(self, paths: list[str]) -> None:
         if not paths:
             return
-        with self._write_lock:
+        with self._write_tx():
             for p in paths:
                 p = p.rstrip("\\/")
                 if not p:
@@ -215,16 +238,14 @@ class Storage:
                     "UPDATE files SET deleted = 1 WHERE path = ? OR path LIKE ? ESCAPE '\\'",
                     (p, esc + "%"),
                 )
-            self._write.commit()
 
     def delete_paths(self, paths: list[str]) -> None:
         if not paths:
             return
-        with self._write_lock:
+        with self._write_tx():
             self._write.executemany(
                 "DELETE FROM files WHERE path = ?", [(p,) for p in paths]
             )
-            self._write.commit()
 
     def move_file(self, src: str, dst: str, fallback: FileRecord | None) -> None:
         """处理单文件改名 / 移动（watchdog 的 on_moved 是唯一事件，不补发 on_created）。
@@ -238,7 +259,7 @@ class Storage:
         dst = dst.replace("/", "\\")
         if src == dst:
             return
-        with self._write_lock:
+        with self._write_tx():
             tracked = self._write.execute(
                 "SELECT 1 FROM files WHERE path = ?", (src,)
             ).fetchone()
@@ -273,7 +294,6 @@ class Storage:
                         1 if fallback.size > 0 else 0,
                     ),
                 )
-            self._write.commit()
 
     def move_subtree(self, src: str, dst: str) -> None:
         """目录整体移动（watchdog 的 DirMovedEvent）。
@@ -291,18 +311,18 @@ class Storage:
         nprefix = dst + "\\"
         # LIKE 通配符转义：路径里的 % _ 都要当字面量
         esc = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        with self._write_lock:
-            rows = self._write.execute(
-                "SELECT path FROM files WHERE path = ? OR path LIKE ? ESCAPE '\\'",
-                (src, esc + "%"),
-            ).fetchall()
-            if not rows:
-                self._write.commit()
-                return
-            mapping = [
-                (p, dst if p == src else nprefix + p[len(prefix) :])
-                for p in (r["path"] for r in rows)
-            ]
+        # 子树为空时不需要开事务（也无 commit 必要）
+        rows = self._write.execute(
+            "SELECT path FROM files WHERE path = ? OR path LIKE ? ESCAPE '\\'",
+            (src, esc + "%"),
+        ).fetchall()
+        if not rows:
+            return
+        mapping = [
+            (p, dst if p == src else nprefix + p[len(prefix) :])
+            for p in (r["path"] for r in rows)
+        ]
+        with self._write_tx():
             for old, new in mapping:
                 if new == old:
                     continue
@@ -317,14 +337,13 @@ class Storage:
                         "UPDATE files SET path = ?, name = ?, folder = ?, ext = ?, deleted = 0 WHERE path = ?",
                         (new, Path(new).name, str(Path(new).parent), Path(new).suffix.lower(), old),
                     )
-            self._write.commit()
 
     def record_disk_space(self, samples: list[tuple[str, str, int, int]]) -> None:
         """(day, drive, free_bytes, total_bytes) 按天+盘符 upsert，只保留最新采样。"""
         if not samples:
             return
         now = time.time()
-        with self._write_lock:
+        with self._write_tx():
             self._write.executemany(
                 """
                 INSERT INTO disk_space (day, drive, free_bytes, total_bytes, sampled_at)
@@ -336,7 +355,6 @@ class Storage:
                 """,
                 [(d, dv, f, t, now) for d, dv, f, t in samples],
             )
-            self._write.commit()
 
     def pending_size_rows(self, older_than: float, limit: int = 500) -> list[str]:
         """刚创建的文件往往还是 0 字节，稍后再回来补真实体积。"""
@@ -349,7 +367,9 @@ class Storage:
             return [r["path"] for r in cur.fetchall()]
 
     def update_sizes(self, sizes: dict[str, int], missing: list[str]) -> None:
-        with self._write_lock:
+        if not sizes and not missing:
+            return
+        with self._write_tx():
             if sizes:
                 self._write.executemany(
                     "UPDATE files SET size = ?, size_final = 1 WHERE path = ?",
@@ -360,23 +380,20 @@ class Storage:
                     "UPDATE files SET deleted = 1, size_final = 1 WHERE path = ?",
                     [(p,) for p in missing],
                 )
-            self._write.commit()
 
     def purge_older_than(self, days: int) -> int:
         if days <= 0:
             return 0
         cutoff = (date.today() - timedelta(days=days)).isoformat()
-        with self._write_lock:
+        with self._write_tx():
             cur = self._write.execute("DELETE FROM files WHERE day < ?", (cutoff,))
             self._write.execute("DELETE FROM disk_space WHERE day < ?", (cutoff,))
-            self._write.commit()
             return cur.rowcount
 
     def clear_all(self) -> None:
-        with self._write_lock:
+        with self._write_tx():
             self._write.execute("DELETE FROM files")
             self._write.execute("DELETE FROM disk_space")
-            self._write.commit()
             # 不做 VACUUM：会长时间锁库，点「清空」时容易把界面卡死
 
     # ---------- 读（UI 主线程，不抢 write 锁）----------
