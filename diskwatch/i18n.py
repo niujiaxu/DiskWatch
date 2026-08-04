@@ -43,6 +43,10 @@ _TRANSLATIONS: dict[str, str] = {
     "修改语言后需重启生效": "Restart required to apply language change",
     "语言已变更": "Language Changed",
     "{root} 监控失败: {exc}": "{root} monitor error: {exc}",
+    "最近错误": "Recent Errors",
+    "最近错误 ({n})": "Recent Errors ({n})",
+    "最近错误（最近 {n} 条）": "Recent Errors (last {n})",
+    "暂无错误记录。\n日志文件：{path}": "No errors. Log file: {path}",
 
     # ---------- widget.py ----------
     "今日新增文件": "Files Added Today",

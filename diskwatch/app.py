@@ -12,7 +12,8 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from . import APP_NAME, VERSION
-from .config import Config, DB_PATH, apply_paths, paths
+from .config import Config, DB_PATH, apply_paths, default_home, paths
+from .errorlog import errorlog, setup_logging
 from .i18n import set_language, tr
 from .scan import scan_and_backfill
 from .storage import Storage, human_size, today_str
@@ -38,6 +39,8 @@ class DiskWatchApp:
     def __init__(self, qt_app: QApplication, instance_lock: QSharedMemory | None = None) -> None:
         self.qt_app = qt_app
         self._instance_lock = instance_lock
+        # logging 必须在最前：后面的 storage / monitor 一旦出错就靠它记录
+        setup_logging()
         self.config = Config()
         # 语言在创建任何 UI 前设置，所有 tr() 从此按此语言渲染（重启生效）
         set_language(self.config.get("language", "zh_CN"))
@@ -114,6 +117,9 @@ class DiskWatchApp:
         )
         menu.addAction(tr("详情面板…"), self.show_panel)
         menu.addSeparator()
+        self.act_errors = menu.addAction(tr("最近错误"))
+        self.act_errors.triggered.connect(self._show_errors)
+        menu.addSeparator()
         menu.addAction(tr("设置…"), self.show_settings)
         menu.addAction(tr("重新开始监控"), self._restart_monitor)
         menu.addAction(tr("重启"), self._restart_app)
@@ -123,11 +129,36 @@ class DiskWatchApp:
         )
         menu.addAction(tr("退出"), self.quit)
 
+        # 错误信号 → 实时更新菜单文案（ERROR/WARNING 时显示数字）
+        errorlog.bus.error_recorded.connect(self._refresh_errors_action)
+        self._refresh_errors_action()
+
         self.tray.setContextMenu(menu)
         self.tray.setToolTip(tr("硬盘新增文件监控"))
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
         self._sync_tray_actions()
+
+    def _refresh_errors_action(self, *_args) -> None:
+        """错误计数变了就刷新「最近错误」菜单项的文案。"""
+        n = errorlog.count()
+        if n == 0:
+            self.act_errors.setText(tr("最近错误"))
+        else:
+            self.act_errors.setText(tr("最近错误 ({n})", n=n))
+
+    def _show_errors(self) -> None:
+        items = errorlog.recent(50)
+        if not items:
+            QMessageBox.information(
+                self.panel, tr("最近错误"),
+                tr("暂无错误记录。\n日志文件：{path}", path=str(default_home() / "diskwatch.log")),
+            )
+            return
+        body = "\n".join(f"[{lv}] {msg}" for lv, msg in items)
+        QMessageBox.warning(
+            self.panel, tr("最近错误（最近 {n} 条）", n=len(items)), body
+        )
 
     # ---------- 动作 ----------
 

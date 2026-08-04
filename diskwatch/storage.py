@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .i18n import tr
+from .errorlog import errorlog
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -146,6 +147,7 @@ class Storage:
             except sqlite3.Error as exc:
                 self._write.rollback()
                 self._write_errors.append((time.time(), f"{type(exc).__name__}: {exc}"))
+                errorlog.log_exception("storage", exc)
                 raise
             else:
                 self._write.commit()

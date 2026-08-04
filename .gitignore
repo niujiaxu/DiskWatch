@@ -16,3 +16,6 @@ docs/*-preview-*.png
 
 # Cursor IDE 本地规则
 .cursor/
+
+# 协作约定（本地）
+AGENTS.md

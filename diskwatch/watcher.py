@@ -19,6 +19,7 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from .config import Config
+from .errorlog import errorlog
 from .filters import PathFilter, safe_stat
 from .i18n import tr
 from .storage import FileRecord, Storage, make_record, today_str
@@ -282,9 +283,9 @@ class FileMonitor:
             for src, dst in dir_moves:
                 if src != dst:
                     self._storage.move_subtree(src, dst)
-        except Exception:
+        except Exception as exc:
             # 后台线程里绝不能因为单批失败而退出
-            pass
+            errorlog.log_exception("flush", exc)
 
     def _build_record(self, path: str) -> FileRecord | None:
         st = safe_stat(path)
@@ -318,8 +319,8 @@ class FileMonitor:
                         sizes[p] = st.st_size
                 self._storage.update_sizes(sizes, missing)
                 self._storage.delete_paths(too_small)
-            except Exception:
-                pass
+            except Exception as exc:
+                errorlog.log_exception("settle", exc)
 
     def _space_loop(self) -> None:
         """周期记录各监控盘的剩余空间；启动后立即采一次，此后每 5 分钟一次。"""
@@ -332,8 +333,8 @@ class FileMonitor:
             samples = sample_disk_space(self._roots)
             if samples:
                 self._storage.record_disk_space(samples)
-        except Exception:
-            pass
+        except Exception as exc:
+            errorlog.log_exception("space", exc)
 
 
 def open_in_explorer(path: str) -> None:
