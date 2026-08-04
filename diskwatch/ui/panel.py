@@ -550,8 +550,8 @@ class DetailPanel(QWidget):
         filter_row.setSpacing(10)
         filter_row.addWidget(QLabel(tr("日期"), objectName="dim"))
         self.day_box = DayPicker()
-        self.day_box.setMinimumWidth(200)
-        self.day_box.setMaximumWidth(280)
+        self.day_box.setMinimumWidth(260)
+        self.day_box.setMaximumWidth(380)
         self.day_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.day_box.currentIndexChanged.connect(self._on_day_changed)
         filter_row.addWidget(self.day_box)
@@ -576,9 +576,10 @@ class DetailPanel(QWidget):
         cards.setSpacing(10)
         self.card_count = StatCard(tr("新增文件"))
         self.card_size = StatCard(tr("占用空间"))
+        self.card_free = StatCard(tr("今日剩余空间"))
         self.card_folder = StatCard(tr("最活跃目录"))
         self.card_ext = StatCard(tr("最多的类型"))
-        for c in (self.card_count, self.card_size, self.card_folder, self.card_ext):
+        for c in (self.card_count, self.card_size, self.card_free, self.card_folder, self.card_ext):
             cards.addWidget(c)
         root.addLayout(cards)
 
@@ -657,28 +658,65 @@ class DetailPanel(QWidget):
         self.day_box.blockSignals(True)
         self.day_box.clear()
         for d in days:
+            free = human_size(d.total_free) if d.total_free is not None else None
             if d.day == today:
-                label = tr(
-                    "今天 · {count} 个 · {size}",
-                    count=f"{d.count}",
-                    size=human_size(d.total_size),
-                )
+                if free:
+                    label = tr(
+                        "今天 · {count} 个 · {size} · 剩 {free}",
+                        count=f"{d.count}",
+                        size=human_size(d.total_size),
+                        free=free,
+                    )
+                    tip = tr(
+                        "今天  ·  {count} 个  ·  {size}  ·  剩 {free}",
+                        count=f"{d.count}",
+                        size=human_size(d.total_size),
+                        free=free,
+                    )
+                else:
+                    label = tr(
+                        "今天 · {count} 个 · {size}",
+                        count=f"{d.count}",
+                        size=human_size(d.total_size),
+                    )
+                    tip = tr(
+                        "今天  ·  {count} 个  ·  {size}",
+                        count=f"{d.count}",
+                        size=human_size(d.total_size),
+                    )
             else:
-                label = tr(
-                    "{day} · {count} 个 · {size}",
-                    day=d.day,
-                    count=f"{d.count}",
-                    size=human_size(d.total_size),
-                )
+                if free:
+                    label = tr(
+                        "{day} · {count} 个 · {size} · 剩 {free}",
+                        day=d.day,
+                        count=f"{d.count}",
+                        size=human_size(d.total_size),
+                        free=free,
+                    )
+                    tip = tr(
+                        "{day}  ·  {count} 个  ·  {size}  ·  剩 {free}",
+                        day=d.day,
+                        count=f"{d.count}",
+                        size=human_size(d.total_size),
+                        free=free,
+                    )
+                else:
+                    label = tr(
+                        "{day} · {count} 个 · {size}",
+                        day=d.day,
+                        count=f"{d.count}",
+                        size=human_size(d.total_size),
+                    )
+                    tip = tr(
+                        "{day}  ·  {count} 个  ·  {size}",
+                        day=d.day,
+                        count=f"{d.count}",
+                        size=human_size(d.total_size),
+                    )
             self.day_box.addItem(label, d.day)
             self.day_box.setItemData(
                 self.day_box.count() - 1,
-                tr(
-                    "{day}  ·  {count} 个  ·  {size}",
-                    day=d.day,
-                    count=f"{d.count}",
-                    size=human_size(d.total_size),
-                ),
+                tip,
                 Qt.ToolTipRole,
             )
 
@@ -728,10 +766,12 @@ class DetailPanel(QWidget):
         day_total = int(data.get("day_total", count))
         folders = data["folders"]
         exts = data["exts"]
+        spaces = data.get("spaces") or []
         day = data["day"]
         keyword = data["keyword"]
         folder_key = folders[0] if folders else None
         ext_key = exts[0] if exts else None
+        space_sig = tuple(spaces)
 
         signature = (
             day,
@@ -744,6 +784,7 @@ class DetailPanel(QWidget):
             truncated,
             tuple((r.path, r.size, r.added_at) for r in records[:40]),
             len(records),
+            space_sig,
         )
         if signature == self._load_signature and self._model.file_count() == len(records):
             self.count_label.setText(
@@ -754,6 +795,11 @@ class DetailPanel(QWidget):
 
         self.card_count.set_value(f"{count:,}")
         self.card_size.set_value(human_size(size))
+        self.card_free.set_value(
+            " · ".join(f"{drive} {human_size(free)}" for drive, free, _total in spaces)
+            if spaces
+            else "—"
+        )
         self.card_folder.set_value(
             _shorten(folders[0][0], 26) + f"  ({folders[0][1]})" if folders else "—"
         )

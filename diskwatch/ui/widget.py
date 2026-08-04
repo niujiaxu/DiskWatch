@@ -190,6 +190,7 @@ class FloatingWidget(QWidget):
         day = today_str()
         count, size = self._storage.day_stats(day)
         recent = self._storage.recent_files(day, RECENT_MAX)
+        spaces = self._storage.disk_space_for_day(day)
         _, dropped, pending = self._monitor.stats()
         roots = len(self._monitor.roots)
 
@@ -201,6 +202,7 @@ class FloatingWidget(QWidget):
             dropped,
             pending,
             tuple((r.path, r.size, r.added_at) for r in recent),
+            tuple(spaces),
         )
         if signature == self._signature:
             return
@@ -226,6 +228,9 @@ class FloatingWidget(QWidget):
         self.scroll.setVisible(has_any)
 
         parts = [tr("监控 {roots} 个位置", roots=roots)]
+        if spaces:
+            drive, free, _total = min(spaces, key=lambda s: s[1])
+            parts.append(tr(" · 剩余 {free}", free=f"{drive} {human_size(free)}"))
         if pending:
             parts.append(tr(" · 队列 {queue}", queue=pending))
         if dropped:

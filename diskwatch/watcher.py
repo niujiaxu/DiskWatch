@@ -21,7 +21,7 @@ from watchdog.observers import Observer
 from .config import Config
 from .filters import PathFilter, safe_stat
 from .i18n import tr
-from .storage import FileRecord, Storage, make_record
+from .storage import FileRecord, Storage, make_record, today_str
 
 DRIVE_REMOVABLE = 2
 DRIVE_FIXED = 3
@@ -33,6 +33,7 @@ FLUSH_INTERVAL = 1.5
 FLUSH_BATCH = 300
 SETTLE_DELAY = 30.0
 SETTLE_INTERVAL = 45.0
+SPACE_SAMPLE_INTERVAL = 300.0  # 每 5 分钟记一次磁盘剩余空间（按天+盘符覆盖写）
 
 
 def list_drives(include_removable: bool = False) -> list[str]:
@@ -51,6 +52,33 @@ def list_drives(include_removable: bool = False) -> list[str]:
         if kernel32.GetDriveTypeW(ctypes.c_wchar_p(root)) in wanted:
             drives.append(root)
     return drives
+
+
+def sample_disk_space(roots: list[str]) -> list[tuple[str, str, int, int]]:
+    """采样每个监控根所在盘的剩余空间，返回 [(day, drive, free, total)]。
+
+    free 是磁盘剩余字节数，total 是磁盘总容量；与资源管理器显示一致。
+    """
+    kernel32 = ctypes.windll.kernel32
+    seen: set[str] = set()
+    samples: list[tuple[str, str, int, int]] = []
+    for root in roots:
+        drive = (os.path.splitdrive(root)[0] or "").upper()
+        if not drive or drive in seen:
+            continue
+        seen.add(drive)
+        free = ctypes.c_ulonglong(0)
+        total = ctypes.c_ulonglong(0)
+        avail = ctypes.c_ulonglong(0)
+        ok = kernel32.GetDiskFreeSpaceExW(
+            ctypes.c_wchar_p(drive + "\\"),
+            ctypes.byref(avail),
+            ctypes.byref(total),
+            ctypes.byref(free),
+        )
+        if ok:
+            samples.append((today_str(), drive, int(free.value), int(total.value)))
+    return samples
 
 
 class _Handler(FileSystemEventHandler):
@@ -115,6 +143,7 @@ class FileMonitor:
         self._threads = [
             threading.Thread(target=self._consume_loop, name="dw-consume", daemon=True),
             threading.Thread(target=self._settle_loop, name="dw-settle", daemon=True),
+            threading.Thread(target=self._space_loop, name="dw-space", daemon=True),
         ]
         for t in self._threads:
             t.start()
@@ -291,6 +320,20 @@ class FileMonitor:
                 self._storage.delete_paths(too_small)
             except Exception:
                 pass
+
+    def _space_loop(self) -> None:
+        """周期记录各监控盘的剩余空间；启动后立即采一次，此后每 5 分钟一次。"""
+        self._sample_space()
+        while not self._stop.wait(SPACE_SAMPLE_INTERVAL):
+            self._sample_space()
+
+    def _sample_space(self) -> None:
+        try:
+            samples = sample_disk_space(self._roots)
+            if samples:
+                self._storage.record_disk_space(samples)
+        except Exception:
+            pass
 
 
 def open_in_explorer(path: str) -> None:

@@ -32,6 +32,15 @@ CREATE INDEX IF NOT EXISTS idx_files_day ON files(day);
 CREATE INDEX IF NOT EXISTS idx_files_added ON files(added_at);
 CREATE INDEX IF NOT EXISTS idx_files_pending ON files(size_final, added_at);
 
+CREATE TABLE IF NOT EXISTS disk_space (
+    day         TEXT NOT NULL,
+    drive       TEXT NOT NULL,
+    free_bytes  INTEGER NOT NULL,
+    total_bytes INTEGER NOT NULL,
+    sampled_at  REAL NOT NULL,
+    PRIMARY KEY (day, drive)
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -60,6 +69,7 @@ class DaySummary:
     day: str
     count: int
     total_size: int
+    total_free: int | None = None  # None=当天无空间采样；0=磁盘已满
 
 
 def today_str() -> str:
@@ -309,6 +319,25 @@ class Storage:
                     )
             self._write.commit()
 
+    def record_disk_space(self, samples: list[tuple[str, str, int, int]]) -> None:
+        """(day, drive, free_bytes, total_bytes) 按天+盘符 upsert，只保留最新采样。"""
+        if not samples:
+            return
+        now = time.time()
+        with self._write_lock:
+            self._write.executemany(
+                """
+                INSERT INTO disk_space (day, drive, free_bytes, total_bytes, sampled_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(day, drive) DO UPDATE SET
+                    free_bytes  = excluded.free_bytes,
+                    total_bytes = excluded.total_bytes,
+                    sampled_at  = excluded.sampled_at
+                """,
+                [(d, dv, f, t, now) for d, dv, f, t in samples],
+            )
+            self._write.commit()
+
     def pending_size_rows(self, older_than: float, limit: int = 500) -> list[str]:
         """刚创建的文件往往还是 0 字节，稍后再回来补真实体积。"""
         with self._write_lock:
@@ -339,16 +368,30 @@ class Storage:
         cutoff = (date.today() - timedelta(days=days)).isoformat()
         with self._write_lock:
             cur = self._write.execute("DELETE FROM files WHERE day < ?", (cutoff,))
+            self._write.execute("DELETE FROM disk_space WHERE day < ?", (cutoff,))
             self._write.commit()
             return cur.rowcount
 
     def clear_all(self) -> None:
         with self._write_lock:
             self._write.execute("DELETE FROM files")
+            self._write.execute("DELETE FROM disk_space")
             self._write.commit()
             # 不做 VACUUM：会长时间锁库，点「清空」时容易把界面卡死
 
     # ---------- 读（UI 主线程，不抢 write 锁）----------
+
+    def disk_space_for_day(self, day: str) -> list[tuple[str, int, int]]:
+        """某天记录的磁盘剩余空间：[(drive, free_bytes, total_bytes)]，按盘符排序。"""
+        cur = self._read.execute(
+            "SELECT drive, free_bytes, total_bytes FROM disk_space "
+            "WHERE day = ? ORDER BY drive",
+            (day,),
+        )
+        return [
+            (r["drive"], int(r["free_bytes"]), int(r["total_bytes"]))
+            for r in cur.fetchall()
+        ]
 
     def day_stats(self, day: str) -> tuple[int, int]:
         cur = self._read.execute(
@@ -394,12 +437,31 @@ class Storage:
 
     def days_with_data(self, limit: int = 60) -> list[DaySummary]:
         cur = self._read.execute(
-            "SELECT day, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
-            "WHERE deleted = 0 GROUP BY day ORDER BY day DESC LIMIT ?",
+            """
+            WITH days AS (
+                SELECT DISTINCT day FROM files WHERE deleted = 0
+                UNION
+                SELECT DISTINCT day FROM disk_space
+            )
+            SELECT d.day,
+                   COALESCE(f.c, 0) AS c,
+                   COALESCE(f.s, 0) AS s,
+                   ds.free AS free
+            FROM days d
+            LEFT JOIN (SELECT day, COUNT(*) c, COALESCE(SUM(size), 0) s
+                       FROM files WHERE deleted = 0 GROUP BY day) f ON f.day = d.day
+            LEFT JOIN (SELECT day, SUM(free_bytes) free
+                       FROM disk_space GROUP BY day) ds ON ds.day = d.day
+            ORDER BY d.day DESC LIMIT ?
+            """,
             (limit,),
         )
         return [
-            DaySummary(r["day"], int(r["c"]), int(r["s"])) for r in cur.fetchall()
+            DaySummary(
+                r["day"], int(r["c"]), int(r["s"]),
+                int(r["free"]) if r["free"] is not None else None,
+            )
+            for r in cur.fetchall()
         ]
 
     def top_folders(self, day: str, limit: int = 5) -> list[tuple[str, int, int]]:
@@ -469,12 +531,31 @@ class Storage:
         conn.execute("PRAGMA busy_timeout=5000")
         try:
             cur = conn.execute(
-                "SELECT day, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
-                "WHERE deleted = 0 GROUP BY day ORDER BY day DESC LIMIT ?",
+                """
+                WITH days AS (
+                    SELECT DISTINCT day FROM files WHERE deleted = 0
+                    UNION
+                    SELECT DISTINCT day FROM disk_space
+                )
+                SELECT d.day,
+                       COALESCE(f.c, 0) AS c,
+                       COALESCE(f.s, 0) AS s,
+                       ds.free AS free
+                FROM days d
+                LEFT JOIN (SELECT day, COUNT(*) c, COALESCE(SUM(size), 0) s
+                           FROM files WHERE deleted = 0 GROUP BY day) f ON f.day = d.day
+                LEFT JOIN (SELECT day, SUM(free_bytes) free
+                           FROM disk_space GROUP BY day) ds ON ds.day = d.day
+                ORDER BY d.day DESC LIMIT ?
+                """,
                 (limit,),
             )
             return [
-                DaySummary(r["day"], int(r["c"]), int(r["s"])) for r in cur.fetchall()
+                DaySummary(
+                    r["day"], int(r["c"]), int(r["s"]),
+                    int(r["free"]) if r["free"] is not None else None,
+                )
+                for r in cur.fetchall()
             ]
         finally:
             conn.close()
@@ -542,6 +623,14 @@ class Storage:
                     args,
                 ).fetchall()
             ]
+            spaces = [
+                (r["drive"], int(r["free_bytes"]), int(r["total_bytes"]))
+                for r in conn.execute(
+                    "SELECT drive, free_bytes, total_bytes FROM disk_space "
+                    "WHERE day = ? ORDER BY drive",
+                    (day,),
+                ).fetchall()
+            ]
             return {
                 "day": day,
                 "keyword": keyword,
@@ -552,6 +641,7 @@ class Storage:
                 "day_total": day_total,
                 "folders": folders,
                 "exts": exts,
+                "spaces": spaces,
             }
         finally:
             conn.close()

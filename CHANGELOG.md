@@ -4,6 +4,9 @@ All notable changes to DiskWatch are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- 记录磁盘每日剩余空间（详情面板「今日剩余空间」卡片 + 悬浮组件状态栏），每 5 分钟采样一次
+
 ## [1.1.6] - 2026-08-02
 
 ### Added
