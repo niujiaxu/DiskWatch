@@ -144,10 +144,15 @@ class Storage:
         with self._write_lock:
             try:
                 yield
-            except sqlite3.Error as exc:
+            except BaseException as exc:
+                # 任何异常都回滚：不仅 sqlite3.Error，代码 bug 抛的异常
+                # 也会让连接停留在未提交事务，必须一并回滚。
                 self._write.rollback()
-                self._write_errors.append((time.time(), f"{type(exc).__name__}: {exc}"))
-                errorlog.log_exception("storage", exc)
+                if isinstance(exc, sqlite3.Error):
+                    self._write_errors.append(
+                        (time.time(), f"{type(exc).__name__}: {exc}")
+                    )
+                    errorlog.log_exception("storage", exc)
                 raise
             else:
                 self._write.commit()
@@ -313,18 +318,19 @@ class Storage:
         nprefix = dst + "\\"
         # LIKE 通配符转义：路径里的 % _ 都要当字面量
         esc = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        # 子树为空时不需要开事务（也无 commit 必要）
-        rows = self._write.execute(
-            "SELECT path FROM files WHERE path = ? OR path LIKE ? ESCAPE '\\'",
-            (src, esc + "%"),
-        ).fetchall()
-        if not rows:
-            return
-        mapping = [
-            (p, dst if p == src else nprefix + p[len(prefix) :])
-            for p in (r["path"] for r in rows)
-        ]
         with self._write_tx():
+            # SELECT 必须和后续 UPDATE 在同一个锁内：_write 连接被多个
+            # 后台线程共用，锁外读会与写入并发，读到不一致快照。
+            rows = self._write.execute(
+                "SELECT path FROM files WHERE path = ? OR path LIKE ? ESCAPE '\\'",
+                (src, esc + "%"),
+            ).fetchall()
+            if not rows:
+                return  # 无 DML，纯 SELECT 不开启事务，直接返回无需 commit
+            mapping = [
+                (p, dst if p == src else nprefix + p[len(prefix) :])
+                for p in (r["path"] for r in rows)
+            ]
             for old, new in mapping:
                 if new == old:
                     continue

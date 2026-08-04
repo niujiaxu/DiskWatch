@@ -335,12 +335,12 @@ class DiskWatchApp:
 
         try:
             self.monitor.stop()
-        except Exception:
-            pass
+        except Exception as exc:
+            errorlog.log_exception("stop-monitor", exc)
         try:
             self.storage.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            errorlog.log_exception("close-storage", exc)
         self.tray.hide()
         self.qt_app.quit()
 
@@ -357,8 +357,8 @@ class DiskWatchApp:
             def _run() -> None:
                 try:
                     storage.purge_older_than(days)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    errorlog.log_exception("purge", exc)
 
             threading.Thread(target=_run, name="dw-purge", daemon=True).start()
 
@@ -378,8 +378,8 @@ class DiskWatchApp:
                     self.monitor.roots,
                     lookback_days=int(self.config.get("scan_lookback_days", 3)),
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                errorlog.log_exception("scan", exc)
             # 扫描落库后再把悬浮组件刷新一次（信号跨线程排队到主线程）
             self._scan_notifier.done.emit()
 
@@ -389,8 +389,8 @@ class DiskWatchApp:
         try:
             self.widget.refresh()
             self.ball.refresh()
-        except Exception:
-            pass
+        except Exception as exc:
+            errorlog.log_exception("scan-refresh", exc)
 
     def _update_tooltip(self) -> None:
         count, size = self.storage.day_stats(today_str())
