@@ -19,6 +19,15 @@ from .filters import PathFilter
 from .storage import Storage, make_record
 
 SCAN_BATCH = 500
+MTIME_MARGIN = 3.0  # FAT 目录时间戳 2 秒粒度，剪枝判断留 3 秒余量
+
+
+def _dir_mtime(path: str) -> float | None:
+    """目录最近修改时间；stat 失败返回 None（保守：不剪枝）。"""
+    try:
+        return os.stat(path).st_mtime
+    except OSError:
+        return None
 
 
 def scan_and_backfill(
@@ -30,7 +39,8 @@ def scan_and_backfill(
     """递归扫描被监控根目录，补回缺失记录。返回本次补入的条数。
 
     - 只处理创建时间（Windows 上 st_ctime）落在回看窗口内的文件。
-    - 目录剪枝：点号目录、被排除路径片段、排除盘符直接跳过，不深入。
+    - 目录剪枝：点号目录、被排除路径片段、排除盘符直接跳过，不深入；
+      目录 mtime 早于回看窗口的子树整体跳过（目录内新建文件必刷目录 mtime）。
     - 先做纯字符串过滤（accepts_path）命中才 stat，省去对大量
       被排除文件的 stat 开销。
     - 已入库且正常的行不会被覆盖（backfill_records 只插缺失、复活删除行）。
@@ -54,6 +64,11 @@ def scan_and_backfill(
         while stack:
             dirpath = stack.pop()
             if pfilter.excludes_dir(dirpath):
+                continue
+            # 目录内新建/改名/删除文件都会更新目录 mtime，
+            # 目录 mtime 早于回看窗口 ⇒ 子树内不可能有窗口期新文件，整体剪掉。
+            mt = _dir_mtime(dirpath)
+            if mt is not None and mt + MTIME_MARGIN < cutoff:
                 continue
             try:
                 entries = list(os.scandir(dirpath))

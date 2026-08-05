@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import time
@@ -114,11 +115,69 @@ def test_lookback_window() -> None:
     storage.close()
 
 
+def test_mtime_pruning() -> None:
+    tmp = Path(tempfile.mkdtemp(prefix="dw_scan_prune_"))
+    config = _config(tmp)
+    storage = Storage(tmp / "t.db")
+
+    old = tmp / "old_dir"
+    old.mkdir()
+    (old / "old_file.txt").write_text("x")
+    old_time = time.time() - 10 * 86400
+    os.utime(old, (old_time, old_time))
+
+    fresh = tmp / "fresh_dir"
+    fresh.mkdir()
+    (fresh / "new_file.txt").write_text("n")
+
+    real_scandir = scanmod.os.scandir
+    visited: list[str] = []
+
+    def counting_scandir(path, *a, **k):
+        visited.append(str(path))
+        return real_scandir(path, *a, **k)
+
+    scanmod.os.scandir = counting_scandir
+    try:
+        scan_and_backfill(config, storage, [str(tmp)], lookback_days=3)
+    finally:
+        scanmod.os.scandir = real_scandir
+
+    check("旧 mtime 目录未进入遍历", str(old) not in visited, str(visited))
+    check("新 mtime 目录被遍历", str(fresh) in visited)
+    check("旧目录内文件不补", _row(storage, old / "old_file.txt") is None)
+    check("新目录文件正常补入", _row(storage, fresh / "new_file.txt") is not None)
+    storage.close()
+
+
+def test_mtime_pruning_nested() -> None:
+    """外层目录 mtime 旧、内层新：剪枝以外层目录 mtime 为准（文档化契约）。"""
+    tmp = Path(tempfile.mkdtemp(prefix="dw_scan_prune2_"))
+    config = _config(tmp)
+    storage = Storage(tmp / "t.db")
+
+    outer = tmp / "outer_old"
+    inner = outer / "inner_new"
+    inner.mkdir(parents=True)
+    (inner / "b.txt").write_text("b")
+    old_time = time.time() - 10 * 86400
+    os.utime(outer, (old_time, old_time))
+
+    scan_and_backfill(config, storage, [str(tmp)], lookback_days=3)
+
+    check("外层旧目录整体剪枝", _row(storage, inner / "b.txt") is None)
+    storage.close()
+
+
 def main() -> int:
     print("1) 补扫：新文件入库 + 过滤生效")
     test_backfill()
     print("2) 补扫：回看窗口")
     test_lookback_window()
+    print("3) 补扫：目录 mtime 剪枝")
+    test_mtime_pruning()
+    print("4) 补扫：嵌套目录剪枝契约")
+    test_mtime_pruning_nested()
     print("\n" + ("全部通过" if not failures else f"失败 {len(failures)} 项: {failures}"))
     return 1 if failures else 0
 
