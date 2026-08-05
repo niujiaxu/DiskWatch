@@ -234,10 +234,10 @@ class FilesTreeModel(QAbstractItemModel):
 
     # ----- QAbstractItemModel -----
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 5
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         if not parent.isValid():
             return len(self._top)
         if parent.internalId() != 0:
@@ -247,7 +247,7 @@ class FilesTreeModel(QAbstractItemModel):
             return len(item.files)
         return 0
 
-    def index(  # noqa: N802
+    def index(
         self, row: int, column: int, parent: QModelIndex = QModelIndex()
     ) -> QModelIndex:
         if row < 0 or column < 0 or column >= 5:
@@ -263,12 +263,12 @@ class FilesTreeModel(QAbstractItemModel):
             return QModelIndex()
         return self.createIndex(row, column, parent.row() + 1)
 
-    def parent(self, child: QModelIndex) -> QModelIndex:  # noqa: N802
+    def parent(self, child: QModelIndex) -> QModelIndex:
         if not child.isValid() or child.internalId() == 0:
             return QModelIndex()
         return self.createIndex(child.internalId() - 1, 0, 0)
 
-    def headerData(  # noqa: N802
+    def headerData(
         self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole
     ):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:
@@ -276,7 +276,7 @@ class FilesTreeModel(QAbstractItemModel):
                 return tr(_HEADERS[section])  # 显示时翻译，语言在启动时已确定
         return None
 
-    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):  # noqa: N802
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
         if not index.isValid():
             return None
         if index.internalId() == 0:
@@ -346,11 +346,11 @@ class DayPicker(QWidget):
 
         self._popup: QListWidget | None = None
 
-    def setMinimumWidth(self, w: int) -> None:  # noqa: N802
+    def setMinimumWidth(self, w: int) -> None:
         super().setMinimumWidth(w)
         self._btn.setMinimumWidth(w)
 
-    def setMaximumWidth(self, w: int) -> None:  # noqa: N802
+    def setMaximumWidth(self, w: int) -> None:
         super().setMaximumWidth(w)
         self._btn.setMaximumWidth(w)
 
@@ -365,32 +365,32 @@ class DayPicker(QWidget):
     def count(self) -> int:
         return len(self._items)
 
-    def addItem(self, text: str, userData=None) -> None:  # noqa: N802
+    def addItem(self, text: str, userData=None) -> None:
         self._items.append((text, userData))
         if self._index < 0:
             self.setCurrentIndex(0)
 
-    def setItemData(self, index: int, value, role: int = Qt.UserRole) -> None:  # noqa: N802
+    def setItemData(self, index: int, value, role: int = Qt.UserRole) -> None:
         if role == Qt.ToolTipRole and 0 <= index < len(self._items):
             self._tips[index] = str(value)
             if index == self._index:
                 self._btn.setToolTip(str(value))
 
-    def findData(self, data) -> int:  # noqa: N802
+    def findData(self, data) -> int:
         for i, (_t, d) in enumerate(self._items):
             if d == data:
                 return i
         return -1
 
-    def currentData(self, role: int = Qt.UserRole):  # noqa: N802
+    def currentData(self, role: int = Qt.UserRole):
         if 0 <= self._index < len(self._items):
             return self._items[self._index][1]
         return None
 
-    def currentIndex(self) -> int:  # noqa: N802
+    def currentIndex(self) -> int:
         return self._index
 
-    def setCurrentIndex(self, index: int) -> None:  # noqa: N802
+    def setCurrentIndex(self, index: int) -> None:
         if index < 0 or index >= len(self._items):
             return
         changed = index != self._index
@@ -454,7 +454,7 @@ class DayPicker(QWidget):
         if row >= 0:
             self.setCurrentIndex(row)
 
-    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+    def eventFilter(self, obj, event) -> bool:
         if self._popup is None or not self._popup.isVisible():
             return super().eventFilter(obj, event)
         et = event.type()
@@ -471,7 +471,7 @@ class DayPicker(QWidget):
             self._close_popup()
         return super().eventFilter(obj, event)
 
-    def hideEvent(self, event) -> None:  # noqa: N802
+    def hideEvent(self, event) -> None:
         self._close_popup()
         super().hideEvent(event)
 
@@ -637,7 +637,7 @@ class DetailPanel(QWidget):
         def work() -> None:
             try:
                 payload = storage.fetch_days_with_data()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 payload = exc
             self._days_ready.emit(req, payload)
 
@@ -722,7 +722,7 @@ class DetailPanel(QWidget):
 
         target = self._pending_keep_day or today
         idx = self.day_box.findData(target)
-        self.day_box.setCurrentIndex(idx if idx >= 0 else 0)
+        self.day_box.setCurrentIndex(max(idx, 0))
         self.day_box.blockSignals(False)
 
         day = self.day_box.currentData() or today
@@ -745,7 +745,7 @@ class DetailPanel(QWidget):
         def work() -> None:
             try:
                 payload = storage.fetch_day_view(day, keyword, limit)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 payload = exc
             self._day_ready.emit(req, payload)
 
@@ -938,7 +938,7 @@ class DetailPanel(QWidget):
                             ]
                         )
                 n = len(records)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 err = exc
 
             def done() -> None:

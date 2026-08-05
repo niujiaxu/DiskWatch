@@ -94,7 +94,7 @@ class MiniBall(QWidget):
         self.update()
 
     def _update_tooltip(self) -> None:
-        pct = int(round(self._ratio * 100))
+        pct = round(self._ratio * 100)
         self.setToolTip(
             tr(
                 "今日 {today}\n近{days}天合计 {total}\n今日占比 {pct}%",

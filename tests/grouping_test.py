@@ -1,26 +1,12 @@
-"""分组逻辑自测。
-
-运行： python tests/grouping_test.py
-"""
+"""分组逻辑自测。"""
 
 from __future__ import annotations
 
-import sys
 from collections import defaultdict
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 from diskwatch.grouping import assign_groups
 from diskwatch.storage import FileRecord
-
-failures: list[str] = []
-
-
-def check(label: str, ok: bool, detail: str = "") -> None:
-    print(f"  [{'OK ' if ok else 'FAIL'}] {label}{'  ' + detail if detail else ''}")
-    if not ok:
-        failures.append(label)
 
 
 def _rec(path: str) -> FileRecord:
@@ -44,8 +30,7 @@ def _labels(paths: list[str]) -> dict[str, list[str]]:
     return dict(by)
 
 
-def main() -> None:
-    print("1) 自动归到 Documents 下第一层")
+def test_auto_group_under_documents() -> None:
     by = _labels(
         [
             r"C:\Users\niu\Documents\Tencent Files\2991\nt_qq\nt_data\Emoji\a.png",
@@ -57,22 +42,24 @@ def main() -> None:
             r"C:\Users\niu\Documents\alone.txt",
         ]
     )
-    check("Tencent Files", by.get("Tencent Files") == ["a.png", "b.zip"], str(by))
-    check("WeChat Files", by.get("WeChat Files") == ["c.jpg", "d.jpg"], str(by))
-    check("DingDing", by.get("DingDing") == ["e.dat", "f.dat"], str(by))
-    check("散文件用父目录", by.get("Documents") == ["alone.txt"], str(by))
-    check("不会落到用户名", "niu" not in by, str(by.keys()))
+    assert by.get("Tencent Files") == ["a.png", "b.zip"], by
+    assert by.get("WeChat Files") == ["c.jpg", "d.jpg"], by
+    assert by.get("DingDing") == ["e.dat", "f.dat"], by
+    assert by.get("Documents") == ["alone.txt"], by
+    assert "niu" not in by, by.keys()
 
-    print("\n2) 应用自建 temp 不被当成系统临时目录")
+
+def test_app_temp_not_system_temp() -> None:
     by = _labels(
         [
             r"C:\Users\niu\Documents\Tencent Files\x\temp\a.bin",
             r"C:\Users\niu\Documents\Tencent Files\x\temp\b.bin",
         ]
     )
-    check("仍归 Tencent Files", "Tencent Files" in by and "临时文件" not in by, str(by))
+    assert "Tencent Files" in by and "临时文件" not in by, by
 
-    print("\n3) 系统 Temp / AppData / Program Files")
+
+def test_temp_appdata_program_files() -> None:
     by = _labels(
         [
             r"C:\Users\niu\AppData\Local\Temp\x.tmp",
@@ -83,24 +70,16 @@ def main() -> None:
             r"C:\Program Files\Steam\steamapps\common\game\b.dll",
         ]
     )
-    check("系统 Temp", by.get("临时文件") == ["x.tmp", "y.tmp"], str(by))
-    check("Chrome", by.get("Google / Chrome") == ["f", "g"], str(by))
-    check("Steam", by.get("Steam") == ["a.dll", "b.dll"], str(by))
+    assert by.get("临时文件") == ["x.tmp", "y.tmp"], by
+    assert by.get("Google / Chrome") == ["f", "g"], by
+    assert by.get("Steam") == ["a.dll", "b.dll"], by
 
-    print("\n4) 盘符根下自定义目录")
+
+def test_drive_root_custom_dir() -> None:
     by = _labels(
         [
             r"D:\SomeApp\cache\a.tmp",
             r"D:\SomeApp\cache\b.tmp",
         ]
     )
-    check("SomeApp", by.get("SomeApp") == ["a.tmp", "b.tmp"], str(by))
-
-    if failures:
-        print(f"\nFAILED: {len(failures)}")
-        sys.exit(1)
-    print("\nALL PASSED")
-
-
-if __name__ == "__main__":
-    main()
+    assert by.get("SomeApp") == ["a.tmp", "b.tmp"], by

@@ -1,6 +1,6 @@
 """定位资源开销：分别测"只跑监控"和"监控+界面"两种情况。
 
-运行： .venv\\Scripts\\python.exe tests\\perf_test.py [采样秒数]
+运行： .venv\\Scripts\\python.exe tests\\perf_probe.py [采样秒数]
 """
 
 import os
@@ -124,10 +124,10 @@ def with_ui() -> None:
         loop.exec()
 
     def measure(label: str, seconds: int) -> None:
-        seen0, passed0 = app.monitor.event_counters()
+        seen0, _passed0 = app.monitor.event_counters()
         cpu0, mem0 = cpu_seconds(), rss_mb()
         spin(seconds)
-        seen1, passed1 = app.monitor.event_counters()
+        seen1, _passed1 = app.monitor.event_counters()
         cpu1, mem1 = cpu_seconds(), rss_mb()
         print(f"\n--- {label}（{seconds}s） ---")
         print(f"  原始事件      {seen1 - seen0:>8,}")

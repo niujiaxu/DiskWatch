@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from .i18n import tr
 from .errorlog import errorlog
+from .i18n import tr
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -613,7 +613,7 @@ class Storage:
             ]
             truncated = limit is not None and len(records) >= limit
             if truncated:
-                records = records[: limit - 1]
+                records = records[: limit - 1]  # type: ignore[operator]
 
             row = conn.execute(
                 f"SELECT COUNT(*) c, COALESCE(SUM(size), 0) s FROM files WHERE {where}",

@@ -16,7 +16,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QTabWidget
 
-from diskwatch.config import Config, DB_PATH
+from diskwatch.config import DB_PATH, Config
 from diskwatch.storage import Storage
 from diskwatch.ui.ball import MiniBall
 from diskwatch.ui.panel import DetailPanel

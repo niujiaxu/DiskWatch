@@ -245,7 +245,7 @@ class _DarkTitleBarFilter(QObject):
             cls._instance = cls()
         return cls._instance
 
-    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+    def eventFilter(self, obj, event) -> bool:
         if event.type() in (QEvent.Show, QEvent.WinIdChange) and isinstance(obj, QWidget):
             if obj.isWindow() and not obj.windowFlags() & Qt.FramelessWindowHint:
                 enable_dark_titlebar(obj)

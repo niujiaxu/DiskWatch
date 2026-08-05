@@ -110,7 +110,7 @@ class FileMonitor:
         self._storage = storage
         self._filter = PathFilter(config)
         self._queue: queue.Queue = queue.Queue(maxsize=QUEUE_MAX)
-        self._observer: Observer | None = None
+        self._observer: "Observer | None" = None  # type: ignore[valid-type]
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
 

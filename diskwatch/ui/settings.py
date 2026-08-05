@@ -24,7 +24,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..autostart import is_enabled as autostart_enabled, set_enabled as set_autostart
+from ..autostart import is_enabled as autostart_enabled
+from ..autostart import set_enabled as set_autostart
 from ..config import Config, default_home, paths
 from ..i18n import SUPPORTED_LOCALES, tr
 from ..storage import Storage

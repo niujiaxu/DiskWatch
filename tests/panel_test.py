@@ -1,0 +1,135 @@
+"""详情面板 FilesTreeModel 逻辑测试：分组、排序、平铺。
+
+列索引: 0=时间, 1=文件名, 2=大小, 3=类型, 4=所在目录
+"""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+
+from PySide6.QtCore import Qt
+
+from diskwatch.storage import Storage, make_record
+from diskwatch.ui.panel import FilesTreeModel
+
+
+def _rec(path: str, size: int, added_at: float) -> object:
+    return make_record(str(Path(path)), size, added_at=added_at)
+
+
+def _model(records: list) -> FilesTreeModel:
+    m = FilesTreeModel()
+    m.set_records(records)
+    return m
+
+
+def test_flat_sort_by_name() -> None:
+    m = _model(
+        [
+            _rec(r"D:\b.txt", 100, 100.0),
+            _rec(r"D:\a.txt", 200, 200.0),
+        ]
+    )
+    m.set_grouped(False)
+    m.sort_by(1, Qt.AscendingOrder)  # col 1 = 文件名
+    names = [m.data(m.index(i, 1), Qt.DisplayRole) for i in range(m.rowCount())]
+    assert names == ["a.txt", "b.txt"], names
+
+
+def test_flat_sort_by_size_desc() -> None:
+    m = _model(
+        [
+            _rec(r"D:\small.txt", 100, 100.0),
+            _rec(r"D:\large.txt", 200, 200.0),
+        ]
+    )
+    m.set_grouped(False)
+    m.sort_by(2, Qt.DescendingOrder)  # col 2 = 大小
+    names = [m.data(m.index(i, 1), Qt.DisplayRole) for i in range(m.rowCount())]
+    assert names == ["large.txt", "small.txt"], names
+
+
+def test_grouped_top_level() -> None:
+    """2 文件和 1 独立文件 → 1 组 + 1 提升行。"""
+    m = _model(
+        [
+            _rec(r"D:\SomeApp\a.txt", 10, 100.0),
+            _rec(r"D:\SomeApp\b.txt", 20, 200.0),
+            _rec(r"D:\Solo\c.txt", 30, 300.0),
+        ]
+    )
+    assert m.grouped
+    assert m.rowCount() == 2  # SomeApp 组 + Solo 单文件提升
+    top_names = [m.data(m.index(i, 1), Qt.DisplayRole) for i in range(m.rowCount())]
+    assert "c.txt" in top_names, top_names  # 提升的单文件在顶层
+
+
+def test_grouped_children() -> None:
+    m = _model(
+        [
+            _rec(r"D:\App\a.txt", 10, 100.0),
+            _rec(r"D:\App\b.txt", 20, 200.0),
+        ]
+    )
+    assert m.rowCount() == 1  # 只有 App 组
+    group = m.index(0, 0)
+    assert m.rowCount(group) == 2
+    child = m.index(0, 1, group)  # col 1 = 文件名
+    assert m.data(child, Qt.DisplayRole) == "b.txt"  # added_at 倒序，b.txt(200) 先于 a.txt(100)
+
+
+def test_expand_rows_small_groups() -> None:
+    """子文件数 < 3 的组应自动展开。"""
+    m = _model(
+        [
+            _rec(r"D:\One\a.txt", 10, 100.0),
+            _rec(r"D:\One\b.txt", 20, 200.0),
+            _rec(r"D:\Two\c.txt", 30, 300.0),
+            _rec(r"D:\Two\d.txt", 40, 400.0),
+            _rec(r"D:\Two\e.txt", 50, 500.0),
+        ]
+    )
+    rows = m.expand_rows()
+    assert len(rows) == 1  # One(<3) 展开, Two(3) 不展开
+
+
+def test_toggle_grouped() -> None:
+    m = _model([_rec(r"D:\1.txt", 1, 1.0)])
+    m.set_grouped(False)
+    assert not m.grouped
+    m.set_grouped(True)
+    assert m.grouped
+
+
+def test_file_count_and_records() -> None:
+    recs = [_rec(r"D:\1.txt", 1, 1.0), _rec(r"D:\2.txt", 2, 2.0)]
+    m = _model(recs)
+    assert m.file_count() == 2
+    assert m.records() == recs
+
+
+def test_panel_smoke(tmp_path) -> None:
+    """DetailPanel 端到端冒烟：写库 → 展示 → 模型有数据。"""
+    from PySide6.QtWidgets import QApplication
+
+    from diskwatch.ui.panel import DetailPanel
+
+    QApplication.instance() or QApplication([])
+    s = Storage(tmp_path / "t.db")
+    now = time.time()
+    try:
+        s.add_files([make_record(r"C:\a\x.txt", 5, added_at=now)])
+        panel = DetailPanel(s)
+        panel.show()
+        panel.reload(keep_day=False)
+        payload = s.fetch_days_with_data()
+        panel._on_days_ready(panel._days_req, payload)
+        assert panel.day_box.count() >= 1
+
+        day = panel.day_box.currentData()
+        view = s.fetch_day_view(day)
+        panel._on_day_ready(panel._day_req, view)
+        assert panel._model.file_count() == 1
+    finally:
+        s.close()

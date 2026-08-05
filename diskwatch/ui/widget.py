@@ -152,7 +152,7 @@ class FloatingWidget(QWidget):
             self._list_lay.addWidget(row)
         self._list_lay.addStretch(1)
 
-        self.scroll = QScrollArea(objectName="recentScroll")
+        self.scroll = QScrollArea(objectName="recentScroll")  # type: ignore[method-assign]
         self.scroll.setWidget(host)
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)

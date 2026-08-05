@@ -12,7 +12,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from . import APP_NAME, VERSION
-from .config import Config, DB_PATH, apply_paths, default_home, paths
+from .config import DB_PATH, Config, apply_paths, default_home, paths
 from .errorlog import errorlog, setup_logging
 from .i18n import set_language, tr
 from .scan import scan_and_backfill
