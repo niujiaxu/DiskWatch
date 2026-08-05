@@ -332,6 +332,11 @@ class FloatingWidget(QWidget):
         if visible:
             self.show()
 
+    def retranslate(self) -> None:
+        self.title.setText(tr("今日新增文件"))
+        if hasattr(self, "_unit_label"):
+            self._unit_label.setText(tr("个"))
+
     def _restore_geometry(self) -> None:
         self.apply_appearance()
         pos = self._config.get("widget_pos")

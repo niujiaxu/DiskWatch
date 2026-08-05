@@ -9,17 +9,19 @@ import csv
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 from PySide6.QtCore import (
     QAbstractItemModel,
     QEvent,
     QModelIndex,
     QPoint,
+    QRect,
     Qt,
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -33,6 +35,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -495,6 +498,63 @@ class StatCard(QFrame):
         self._value.setText(text)
 
 
+TREND_DAYS = 14
+BAR_GAP = 2
+BAR_W = 14
+BAR_MAX_H = 36
+CHART_H = 52
+
+
+class TrendChart(QWidget):
+    """近 N 天新增趋势迷你柱状图。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._data: list[tuple[str, int]] = []
+        self.setMinimumHeight(CHART_H)
+        self.setMaximumHeight(CHART_H)
+        self.setToolTip("")
+
+    def set_days(self, summaries) -> None:
+        """接收 DaySummary 列表并绘制柱状图。"""
+        self._data = [
+            (s.day, s.count) for s in summaries[:TREND_DAYS] if s.count > 0
+        ]
+        self._data.reverse()  # 旧→新，左侧最早
+        if self._data:
+            self.setToolTip(
+                "\n".join(f"{d}: {c}" for d, c in self._data)
+            )
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        if not self._data:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        w = self.width()
+        h = self.height()
+        n = len(self._data)
+        max_c = max(c for _, c in self._data) or 1
+        bar_total_width = BAR_W + BAR_GAP
+        chart_w = n * bar_total_width
+        if chart_w > w:
+            bar_total_width = max(3, w / n)
+            bw = max(2, bar_total_width - 2)
+        else:
+            bw = BAR_W
+        x0 = 4
+
+        for i, (_day, count) in enumerate(self._data):
+            bh = max(2, int(count / max_c * BAR_MAX_H))
+            y = h - bh - 8
+            painter.fillRect(
+                QRect(int(x0 + i * bar_total_width), y, int(bw), bh),
+                QColor(64, 150, 255),
+            )
+        painter.end()
+
+
 class DetailPanel(QWidget):
     _days_ready = Signal(int, object)
     _day_ready = Signal(int, object)
@@ -517,6 +577,7 @@ class DetailPanel(QWidget):
         self._fill_meta: dict | None = None
         self._event_type = "added"
         self._model = FilesTreeModel(self)
+        self._chart = TrendChart(self)
 
         self._build()
 
@@ -597,6 +658,9 @@ class DetailPanel(QWidget):
             cards.addWidget(c)
         root.addLayout(cards)
 
+        self._chart.setVisible(True)
+        root.addWidget(self._chart)
+
         self.table = QTreeView()
         self.table.setModel(self._model)
         self.table.setAlternatingRowColors(True)
@@ -604,6 +668,8 @@ class DetailPanel(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSortingEnabled(False)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_context_menu)
         self.table.setUniformRowHeights(True)
         self.table.setRootIsDecorated(True)
         self.table.setItemsExpandable(True)
@@ -739,6 +805,8 @@ class DetailPanel(QWidget):
         self.day_box.setCurrentIndex(max(idx, 0))
         self.day_box.blockSignals(False)
 
+        self._chart.set_days(days)
+
         day = self.day_box.currentData() or today
         self._load_day_async(day)
 
@@ -752,6 +820,50 @@ class DetailPanel(QWidget):
         day = self.day_box.currentData()
         if day:
             self._load_day_async(day)
+
+    def _on_context_menu(self, pos) -> None:
+        idx = self.table.indexAt(pos)
+        if not idx.isValid():
+            return
+        is_group = self._model.data(idx, IS_GROUP_ROLE)
+        path = self._model.data(
+            idx.sibling(idx.row(), 1) if is_group else idx, PATH_ROLE
+        )
+        if is_group and not path:
+            return
+
+        menu = QMenu(self)
+        act_open = menu.addAction(tr("打开"))
+        act_reveal = menu.addAction(tr("在资源管理器中定位"))
+        menu.addSeparator()
+        act_copy_path = menu.addAction(tr("复制路径"))
+        act_copy_name = menu.addAction(tr("复制文件名"))
+        action = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if action == act_open:
+            self._open_selected(idx)
+        elif action == act_reveal and path:
+            open_in_explorer(path)
+        elif action == act_copy_path and path:
+            QApplication.clipboard().setText(path)
+        elif action == act_copy_name and path:
+            QApplication.clipboard().setText(Path(path).name)
+
+    def retranslate(self) -> None:
+        self.setWindowTitle(tr("硬盘新增文件 · 详情"))
+        self.card_count._title.setText(tr("新增文件"))
+        self.card_size._title.setText(tr("占用空间"))
+        self.card_free._title.setText(tr("今日剩余空间"))
+        self.card_folder._title.setText(tr("最活跃目录"))
+        self.card_ext._title.setText(tr("最多的类型"))
+        self.chk_group.setText(tr("按应用分组"))
+        self.chk_group.setToolTip(tr("把同一应用下的文件收成可折叠分组（类似进程树）"))
+        self.search.setPlaceholderText(tr("按文件名或目录筛选…"))
+        self.hint.setText(
+            tr("双击文件行可在资源管理器中定位；双击应用分组可展开/折叠")
+        )
+        self.event_filter.setItemText(0, tr("新增"))
+        self.event_filter.setItemText(1, tr("已删除"))
+        self.event_filter.setItemText(2, tr("全部"))
 
     def _load_day_async(self, day: str) -> None:
         keyword = self.search.text().strip()

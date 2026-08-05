@@ -282,6 +282,9 @@ class MiniBall(QWidget):
         if visible:
             self.show()
 
+    def retranslate(self) -> None:
+        self._update_tooltip()
+
 
 def _compact_size(num: int | float) -> str:
     """66px 球心专用：2.7M / 128K / 1.2G，比 '2.7 MB' 更省宽度。"""

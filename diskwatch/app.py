@@ -254,17 +254,15 @@ class DiskWatchApp:
         self.config.update(values)
         self.config.save()
 
-        # 语言变更：提示重启，其余设置留给重启后生效
+        # 语言变更：即时切换，无需重启
         if new_lang != old_lang:
-            reply = QMessageBox.question(
-                self.panel,
-                tr("语言已变更"),
-                tr("语言更改需要重启应用才能生效，是否立即重启？"),
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes,
-            )
-            if reply == QMessageBox.Yes:
-                self._relaunch()
+            set_language(new_lang)
+            self.widget.retranslate()
+            self.ball.retranslate()
+            if self.panel.isVisible():
+                self.panel.retranslate()
+                self.panel.reload(keep_day=True)
+            self._restart_monitor()
             return
 
         self.widget.apply_appearance()
