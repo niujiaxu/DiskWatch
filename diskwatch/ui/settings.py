@@ -148,7 +148,50 @@ class SettingsDialog(QDialog):
         btn_reset = QPushButton(tr("恢复默认过滤规则"))
         btn_reset.clicked.connect(self._reset_filters)
         lay.addWidget(btn_reset, alignment=Qt.AlignLeft)
+
+        presets_row = QHBoxLayout()
+        presets_row.setSpacing(8)
+        self.cmb_preset = QComboBox()
+        self.cmb_preset.addItem(tr("开发目录过滤"), "dev")
+        self.cmb_preset.setToolTip(
+            tr("把 __pycache__ / node_modules / .git / .pytest_cache 等"
+               "常见开发目录加入排除列表")
+        )
+        presets_row.addWidget(self.cmb_preset, 1)
+        btn_apply = QPushButton(tr("应用模板"))
+        btn_apply.clicked.connect(self._apply_preset)
+        presets_row.addWidget(btn_apply)
+        lay.addLayout(presets_row)
         return w
+
+    def _apply_preset(self) -> None:
+        key = self.cmb_preset.currentData()
+        if key == "dev":
+            dev_dirs = [
+                "\\__pycache__\\",
+                "\\node_modules\\",
+                "\\dist\\",
+                "\\build\\",
+                "\\.pytest_cache\\",
+                "\\.mypy_cache\\",
+                "\\.ruff_cache\\",
+                "\\.coverage\\",
+                "\\.tox\\",
+            ]
+            current = list(self._config.get("exclude_dirs", []))
+            added = 0
+            for d in dev_dirs:
+                if d not in current:
+                    current.append(d)
+                    added += 1
+            if added:
+                self._config.set("exclude_dirs", current)
+                self._fill_filters()
+                QMessageBox.information(
+                    self,
+                    tr("已应用"),
+                    tr("已添加 {n} 条开发目录过滤规则。", n=added),
+                )
 
     def _tab_appearance(self) -> QWidget:
         w = QWidget()

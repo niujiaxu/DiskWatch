@@ -4,8 +4,22 @@ All notable changes to DiskWatch are documented in this file.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-05
+
 ### Added
-- 记录磁盘每日剩余空间（详情面板「今日剩余空间」卡片 + 悬浮组件状态栏），每 5 分钟采样一次
+- 目录 mtime 剪枝：启动补扫跳过旧目录子树，全盘补扫从分钟级降到秒级
+- 详情面板事件类型切换（新增 / 已删除 / 全部），删除行标色并显示删除时间
+- 详情面板近 14 天新增趋势迷你柱状图
+- 表格右键菜单：打开 / 资源管理器定位 / 复制路径 / 复制文件名
+- 语言热切换：设置中改语言即时生效，无需重启
+- 过滤预设：一键添加开发目录过滤（`__pycache__` / `node_modules` / `.pytest_cache` 等）
+
+### Changed
+- 测试框架迁至 pytest（原 8 个手写脚本均已迁移），新增 5 个测试文件覆盖 filters / config / storage / panel / settings
+- 新增 ruff 静态检查 + mypy 类型检查，CI-worthy 零问题
+
+### Changed
+- 版本号升至 1.2.0
 
 ## [1.1.6] - 2026-08-02
 
