@@ -254,23 +254,8 @@ class DiskWatchApp:
         self.config.update(values)
         self.config.save()
 
-        # 语言变更：即时切换，无需重启
-        if new_lang != old_lang:
-            set_language(new_lang)
-            self.widget.retranslate()
-            self.ball.retranslate()
-            if self.panel.isVisible():
-                self.panel.retranslate()
-                self.panel.reload(keep_day=True)
-            self._restart_monitor()
-            return
-
-        self.widget.apply_appearance()
-        self.ball.apply_appearance()
-        self._restart_monitor()
-        if self.panel.isVisible():
-            self.panel.reload(keep_day=True)
-
+        # 路径变更需要重启，重启后新语言也会自动生效；
+        # 先处理路径，避免被下面的语言分支提前 return 吞掉。
         pending = dlg.pending_paths()
         if pending:
             cfg_path, db_path = pending
@@ -293,6 +278,24 @@ class DiskWatchApp:
                 self.monitor.start()
                 return
             self._relaunch()
+            return
+
+        # 语言变更：即时切换，无需重启
+        if new_lang != old_lang:
+            set_language(new_lang)
+            self.widget.retranslate()
+            self.ball.retranslate()
+            if self.panel.isVisible():
+                self.panel.retranslate()
+                self.panel.reload(keep_day=True)
+            self._restart_monitor()
+            return
+
+        self.widget.apply_appearance()
+        self.ball.apply_appearance()
+        self._restart_monitor()
+        if self.panel.isVisible():
+            self.panel.reload(keep_day=True)
 
     def _restart_app(self) -> None:
         """整程序重启（托盘菜单「重启」）。"""

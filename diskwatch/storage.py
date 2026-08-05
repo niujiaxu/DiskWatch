@@ -222,7 +222,8 @@ class Storage:
                     added_at   = excluded.added_at,
                     day        = excluded.day,
                     size_final = excluded.size_final,
-                    deleted    = 0
+                    deleted    = 0,
+                    deleted_at = NULL
                 """,
                 rows,
             )
@@ -256,7 +257,7 @@ class Storage:
                 """
                 INSERT INTO files (path, name, ext, drive, folder, size, added_at, day, size_final, deleted)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-                ON CONFLICT(path) DO UPDATE SET deleted = 0
+                ON CONFLICT(path) DO UPDATE SET deleted = 0, deleted_at = NULL
                 """,
                 rows,
             )
@@ -305,7 +306,7 @@ class Storage:
                 self._write.execute("DELETE FROM files WHERE path = ?", (dst,))
                 # 文件既然搬到了 dst 就还活着，重置 deleted，防止同批级联标删先执行。
                 self._write.execute(
-                    "UPDATE files SET path = ?, name = ?, folder = ?, ext = ?, deleted = 0 WHERE path = ?",
+                    "UPDATE files SET path = ?, name = ?, folder = ?, ext = ?, deleted = 0, deleted_at = NULL WHERE path = ?",
                     (dst, Path(dst).name, str(Path(dst).parent), Path(dst).suffix.lower(), src),
                 )
             elif fallback is not None:
@@ -373,7 +374,7 @@ class Storage:
                 else:
                     # 目录搬到新路径后子文件仍存在，重置 deleted，防级联标删竞态
                     self._write.execute(
-                        "UPDATE files SET path = ?, name = ?, folder = ?, ext = ?, deleted = 0 WHERE path = ?",
+                        "UPDATE files SET path = ?, name = ?, folder = ?, ext = ?, deleted = 0, deleted_at = NULL WHERE path = ?",
                         (new, Path(new).name, str(Path(new).parent), Path(new).suffix.lower(), old),
                     )
 

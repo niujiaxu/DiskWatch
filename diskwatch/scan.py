@@ -40,7 +40,8 @@ def scan_and_backfill(
 
     - 只处理创建时间（Windows 上 st_ctime）落在回看窗口内的文件。
     - 目录剪枝：点号目录、被排除路径片段、排除盘符直接跳过，不深入；
-      目录 mtime 早于回看窗口的子树整体跳过（目录内新建文件必刷目录 mtime）。
+      目录 mtime 早于回看窗口时只跳过其直接文件（新建文件必刷父目录 mtime），
+      子目录仍深入（子目录里的新文件不会刷新祖先目录的 mtime）。
     - 先做纯字符串过滤（accepts_path）命中才 stat，省去对大量
       被排除文件的 stat 开销。
     - 已入库且正常的行不会被覆盖（backfill_records 只插缺失、复活删除行）。
@@ -65,10 +66,20 @@ def scan_and_backfill(
             dirpath = stack.pop()
             if pfilter.excludes_dir(dirpath):
                 continue
-            # 目录内新建/改名/删除文件都会更新目录 mtime，
-            # 目录 mtime 早于回看窗口 ⇒ 子树内不可能有窗口期新文件，整体剪掉。
-            mt = _dir_mtime(dirpath)
-            if mt is not None and mt + MTIME_MARGIN < cutoff:
+            # 目录 mtime 只反映「直接子项」的变更；子目录里的新文件不会
+            # 刷新祖先目录的 mtime，所以旧目录只能跳过直接文件 stat，
+            # 子目录仍必须深入（它们的 mtime 会各自判定）。
+            old_dir = _dir_mtime(dirpath)
+            if old_dir is not None and old_dir + MTIME_MARGIN < cutoff:
+                try:
+                    for ent in os.scandir(dirpath):
+                        try:
+                            if ent.is_dir(follow_symlinks=False):
+                                stack.append(ent.path)
+                        except OSError:
+                            continue
+                except OSError:
+                    continue
                 continue
             try:
                 entries = list(os.scandir(dirpath))

@@ -93,3 +93,34 @@ def test_english_ui_construction(qapp) -> None:
     assert widget.title.text() == "Files Added Today", widget.title.text()
     assert dlg.cmb_language.currentData() == "en_US"
     assert dlg.cmb_language.count() == 2, dlg.cmb_language.count()
+
+
+def test_hot_swap_retranslate(qapp) -> None:
+    """语言热切换：retranslate 后可见文案立即变为新语言。"""
+    from diskwatch.config import Config
+    from diskwatch.storage import Storage
+    from diskwatch.ui.panel import DetailPanel
+    from diskwatch.ui.widget import FloatingWidget
+
+    i18n.set_language("en_US")
+    tmp = Path(tempfile.mkdtemp(prefix="dw_i18n_hot_"))
+    cfg = Config()
+    cfg.set("language", "en_US")
+    storage = Storage(tmp / "t.db")
+    try:
+        widget = FloatingWidget(storage, _FakeMon(), cfg)
+        panel = DetailPanel(storage)
+        # 签名被占用后 retranslate 仍要刷新（回归：曾因签名早退而漏刷新）
+        widget.refresh()
+        panel.retranslate()
+
+        i18n.set_language("zh_CN")
+        widget.retranslate()
+        panel.retranslate()
+
+        assert widget.title.text() == "今日新增文件", widget.title.text()
+        assert widget.btn_detail.text() == "详情", widget.btn_detail.text()
+        assert panel.lbl_title.text() == "新增文件明细", panel.lbl_title.text()
+        assert panel.event_filter.itemText(0) == "新增", panel.event_filter.itemText(0)
+    finally:
+        storage.close()

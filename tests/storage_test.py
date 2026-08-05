@@ -179,6 +179,24 @@ def test_mark_deleted_records_timestamp() -> None:
         s.close()
 
 
+def test_resurrect_clears_deleted_at() -> None:
+    """文件删除后重建（复活）：deleted 清 0，残留的 deleted_at 也必须清掉。"""
+    tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
+    s = _storage(tmp)
+    now = time.time()
+    try:
+        s.add_files([make_record(r"C:\a\x.txt", 10, added_at=now - 10)])
+        s.mark_deleted([r"C:\a\x.txt"])
+        s.add_files([make_record(r"C:\a\x.txt", 20, added_at=now)])
+        records = s.files_for_day(today_str(), include_deleted=True)
+        assert len(records) == 1
+        assert not records[0].deleted
+        assert records[0].deleted_at is None, records[0].deleted_at
+        assert records[0].size == 20
+    finally:
+        s.close()
+
+
 def test_fetch_day_view_deleted() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
     s = _storage(tmp)

@@ -57,6 +57,22 @@ def test_move_file_from_recorded_src() -> None:
     s.close()
 
 
+def test_move_file_clears_deleted_at() -> None:
+    """被标删的文件改名（复活）：残留的 deleted_at 必须清掉。"""
+    tmp = Path(tempfile.mkdtemp(prefix="dw_move_test_"))
+    s = Storage(tmp / "e.db")
+    s.add_files([make_record(r"C:\temp\a.txt", 100)])
+    s.mark_deleted([r"C:\temp\a.txt"])
+    s.move_file(r"C:\temp\a.txt", r"C:\temp\b.txt", None)
+    rows = s._read.execute(
+        "SELECT deleted, deleted_at FROM files WHERE path = ?",
+        (r"C:\temp\b.txt",),
+    ).fetchall()
+    assert rows and rows[0]["deleted"] == 0
+    assert rows[0]["deleted_at"] is None, rows[0]["deleted_at"]
+    s.close()
+
+
 def test_move_subtree_already_recreated() -> None:
     """Bug2a：目录移动，新路径已被 on_created 补发 -> 旧行是残留，清掉。"""
     tmp = Path(tempfile.mkdtemp(prefix="dw_move_test_"))

@@ -521,6 +521,7 @@ class TrendChart(QWidget):
             (s.day, s.count) for s in summaries[:TREND_DAYS] if s.count > 0
         ]
         self._data.reverse()  # 旧→新，左侧最早
+        self.setVisible(bool(self._data))
         if self._data:
             self.setToolTip(
                 "\n".join(f"{d}: {c}" for d, c in self._data)
@@ -601,12 +602,15 @@ class DetailPanel(QWidget):
         # 第一行：标题 + 操作按钮（避免和日期/搜索挤在同一行互相遮挡）
         title_row = QHBoxLayout()
         title_row.setSpacing(10)
-        title_row.addWidget(QLabel(tr("新增文件明细"), objectName="h1"))
+        self.lbl_title = QLabel(tr("新增文件明细"), objectName="h1")
+        title_row.addWidget(self.lbl_title)
         title_row.addStretch(1)
         btn_export = QPushButton(tr("导出 CSV"))
         btn_export.clicked.connect(self._export_csv)
+        self.btn_export = btn_export
         btn_refresh = QPushButton(tr("刷新"), objectName="primary")
         btn_refresh.clicked.connect(lambda: self.reload(keep_day=True))
+        self.btn_refresh = btn_refresh
         title_row.addWidget(btn_export)
         title_row.addWidget(btn_refresh)
         root.addLayout(title_row)
@@ -614,7 +618,8 @@ class DetailPanel(QWidget):
         # 第二行：日期 + 分组切换 + 可伸展的搜索框
         filter_row = QHBoxLayout()
         filter_row.setSpacing(10)
-        filter_row.addWidget(QLabel(tr("日期"), objectName="dim"))
+        self.lbl_date = QLabel(tr("日期"), objectName="dim")
+        filter_row.addWidget(self.lbl_date)
         self.day_box = DayPicker()
         self.day_box.setMinimumWidth(260)
         self.day_box.setMaximumWidth(380)
@@ -850,6 +855,10 @@ class DetailPanel(QWidget):
 
     def retranslate(self) -> None:
         self.setWindowTitle(tr("硬盘新增文件 · 详情"))
+        self.lbl_title.setText(tr("新增文件明细"))
+        self.lbl_date.setText(tr("日期"))
+        self.btn_export.setText(tr("导出 CSV"))
+        self.btn_refresh.setText(tr("刷新"))
         self.card_count._title.setText(tr("新增文件"))
         self.card_size._title.setText(tr("占用空间"))
         self.card_free._title.setText(tr("今日剩余空间"))

@@ -108,40 +108,30 @@ def test_mtime_pruning() -> None:
     fresh.mkdir()
     (fresh / "new_file.txt").write_text("n")
 
-    real_scandir = scanmod.os.scandir
-    visited: list[str] = []
+    scan_and_backfill(config, storage, [str(tmp)], lookback_days=3)
 
-    def counting_scandir(path, *a, **k):
-        visited.append(str(path))
-        return real_scandir(path, *a, **k)
-
-    scanmod.os.scandir = counting_scandir
-    try:
-        scan_and_backfill(config, storage, [str(tmp)], lookback_days=3)
-    finally:
-        scanmod.os.scandir = real_scandir
-
-    assert str(old) not in visited, visited
-    assert str(fresh) in visited
+    # 旧目录的直接文件（创建时间也旧）不补入
     assert _row(storage, old / "old_file.txt") is None
+    # 新目录正常补入
     assert _row(storage, fresh / "new_file.txt") is not None
     storage.close()
 
 
-def test_mtime_pruning_nested() -> None:
-    """外层目录 mtime 旧、内层新：剪枝以外层目录 mtime 为准（文档化契约）。"""
+def test_mtime_pruning_still_descends_nested() -> None:
+    """旧目录的子目录里可能有新文件：必须深入子目录（回归：曾整体剪枝漏文件）。"""
     tmp = Path(tempfile.mkdtemp(prefix="dw_scan_prune2_"))
     config = _config(tmp)
     storage = Storage(tmp / "t.db")
 
-    outer = tmp / "outer_old"
-    inner = outer / "inner_new"
+    old_parent = tmp / "old_parent"
+    inner = old_parent / "inner"
     inner.mkdir(parents=True)
-    (inner / "b.txt").write_text("b")
+    (inner / "new.txt").write_text("x")          # 窗口期内的新文件
     old_time = time.time() - 10 * 86400
-    os.utime(outer, (old_time, old_time))
+    os.utime(old_parent, (old_time, old_time))   # 父目录旧，子目录新
 
-    scan_and_backfill(config, storage, [str(tmp)], lookback_days=3)
+    added = scan_and_backfill(config, storage, [str(tmp)], lookback_days=3)
 
-    assert _row(storage, inner / "b.txt") is None
+    assert _row(storage, inner / "new.txt") is not None, "嵌套新文件被漏掉"
+    assert added >= 1, added
     storage.close()

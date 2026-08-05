@@ -7,7 +7,7 @@ All notable changes to DiskWatch are documented in this file.
 ## [1.2.0] - 2026-08-05
 
 ### Added
-- 目录 mtime 剪枝：启动补扫跳过旧目录子树，全盘补扫从分钟级降到秒级
+- 目录 mtime 剪枝：启动补扫对旧目录跳过直接文件的 stat，显著加速全盘补扫
 - 详情面板事件类型切换（新增 / 已删除 / 全部），删除行标色并显示删除时间
 - 详情面板近 14 天新增趋势迷你柱状图
 - 表格右键菜单：打开 / 资源管理器定位 / 复制路径 / 复制文件名
@@ -16,9 +16,7 @@ All notable changes to DiskWatch are documented in this file.
 
 ### Changed
 - 测试框架迁至 pytest（原 8 个手写脚本均已迁移），新增 5 个测试文件覆盖 filters / config / storage / panel / settings
-- 新增 ruff 静态检查 + mypy 类型检查，CI-worthy 零问题
-
-### Changed
+- 新增 ruff 静态检查 + mypy 类型检查，零问题
 - 版本号升至 1.2.0
 
 ## [1.1.6] - 2026-08-02

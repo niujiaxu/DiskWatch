@@ -112,10 +112,12 @@ class FloatingWidget(QWidget):
         btn_min.setFixedSize(28, 28)
         btn_min.setToolTip(tr("收成迷你悬浮球"))
         btn_min.clicked.connect(self.collapse_requested.emit)
+        self.btn_min = btn_min
         btn_close = QPushButton("✕", objectName="close")
         btn_close.setFixedSize(28, 28)
         btn_close.setToolTip(tr("隐藏组件（托盘图标可再次唤出）"))
         btn_close.clicked.connect(self._hide_self)
+        self.btn_close = btn_close
         head.addWidget(self.dot)
         head.addWidget(self.title)
         head.addStretch(1)
@@ -128,6 +130,7 @@ class FloatingWidget(QWidget):
         self.count = QLabel("0", objectName="count")
         unit = QLabel(tr("个"), objectName="unit")
         unit.setAlignment(Qt.AlignBottom)
+        self.unit = unit
         num.addWidget(self.count)
         num.addWidget(unit)
         num.addStretch(1)
@@ -180,6 +183,8 @@ class FloatingWidget(QWidget):
         btn_setting = QPushButton(tr("设置"), objectName="tool")
         btn_detail.clicked.connect(self.open_panel.emit)
         btn_setting.clicked.connect(self.open_settings.emit)
+        self.btn_detail = btn_detail
+        self.btn_setting = btn_setting
         foot.addWidget(self.status)
         btn_row.addStretch(1)
         btn_row.addWidget(btn_detail)
@@ -334,8 +339,19 @@ class FloatingWidget(QWidget):
 
     def retranslate(self) -> None:
         self.title.setText(tr("今日新增文件"))
-        if hasattr(self, "_unit_label"):
-            self._unit_label.setText(tr("个"))
+        self.unit.setText(tr("个"))
+        self.sep_label.setText(tr("最近"))
+        self.btn_min.setToolTip(tr("收成迷你悬浮球"))
+        self.btn_close.setToolTip(tr("隐藏组件（托盘图标可再次唤出）"))
+        self.btn_detail.setText(tr("详情"))
+        self.btn_setting.setText(tr("设置"))
+        self.empty.setText(
+            tr("暂无记录。默认不监控 AppData、Program Files 等系统目录，"
+               "可在「设置 → 过滤规则」里调整。")
+        )
+        # 状态行文案是 i18n 的；签名不含语言，必须先清掉才会重刷
+        self._signature = None
+        self.refresh()
 
     def _restore_geometry(self) -> None:
         self.apply_appearance()

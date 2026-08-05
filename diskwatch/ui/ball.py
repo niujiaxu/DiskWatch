@@ -283,7 +283,10 @@ class MiniBall(QWidget):
             self.show()
 
     def retranslate(self) -> None:
+        # tooltip 是 i18n 的；签名不含语言，先清掉才会重刷
+        self._signature = None
         self._update_tooltip()
+        self.update()
 
 
 def _compact_size(num: int | float) -> str:

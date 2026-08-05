@@ -178,15 +178,14 @@ class SettingsDialog(QDialog):
                 "\\.coverage\\",
                 "\\.tox\\",
             ]
-            current = list(self._config.get("exclude_dirs", []))
+            current = _lines(self.txt_dirs.toPlainText())
             added = 0
             for d in dev_dirs:
                 if d not in current:
                     current.append(d)
                     added += 1
             if added:
-                self._config.set("exclude_dirs", current)
-                self._fill_filters()
+                self.txt_dirs.setPlainText("\n".join(current))
                 QMessageBox.information(
                     self,
                     tr("已应用"),
