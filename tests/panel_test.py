@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -133,3 +135,57 @@ def test_panel_smoke(tmp_path) -> None:
         assert panel._model.file_count() == 1
     finally:
         s.close()
+
+
+def test_event_filter_switches_to_deleted() -> None:
+    """切换事件类型下拉 → 加载删除文件列表。"""
+    from PySide6.QtWidgets import QApplication
+
+    from diskwatch.ui.panel import DetailPanel
+
+    QApplication.instance() or QApplication([])
+    tmp = Path(tempfile.mkdtemp(prefix="dw_panel_et_"))
+    s = Storage(tmp / "t.db")
+    now = time.time()
+    try:
+        s.add_files([make_record(r"C:\a\live.txt", 1, added_at=now)])
+        s.add_files([make_record(r"C:\a\dead.txt", 2, added_at=now - 1)])
+        s.mark_deleted([r"C:\a\dead.txt"])
+        panel = DetailPanel(s)
+        panel.show()
+        panel.reload(keep_day=False)
+        payload = s.fetch_days_with_data()
+        panel._on_days_ready(panel._days_req, payload)
+        day = panel.day_box.currentData()
+
+        # 默认 "新增" 只看到 live.txt
+        view = s.fetch_day_view(day)
+        panel._on_day_ready(panel._day_req, view)
+        assert panel._model.file_count() == 1
+
+        # 切换到 "已删除"
+        panel._event_type = "deleted"
+        view_del = s.fetch_day_view(day, event_type="deleted")
+        panel._on_day_ready(panel._day_req, view_del)
+        assert panel._model.file_count() == 1
+        assert panel._model.records()[0].deleted
+    finally:
+        s.close()
+
+
+def test_deleted_row_timestamp_display() -> None:
+    """删除文件应显示 deleted_at 时间而非 added_at。"""
+    from datetime import datetime
+
+    rec = make_record(r"D:\d.txt", 100, added_at=1000.0)
+    rec_normal = make_record(r"D:\n.txt", 200, added_at=2000.0)
+    # 用 dataclass 不可直接 setattr，需要构造新对象
+
+    rec_deleted = replace(rec, deleted=True, deleted_at=3000.0)
+    assert rec_deleted.deleted
+    time_str = datetime.fromtimestamp(3000.0).strftime("%H:%M:%S")
+
+    from diskwatch.ui import panel as pmod
+
+    assert pmod._file_display(rec_normal, 0, Qt.DisplayRole) != time_str
+    assert pmod._file_display(rec_deleted, 0, Qt.DisplayRole) == time_str

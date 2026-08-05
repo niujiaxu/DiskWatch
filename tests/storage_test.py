@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import time
 from pathlib import Path
@@ -158,5 +159,75 @@ def test_fetch_day_view() -> None:
         assert view["records"][0].name == "2.txt"  # added_at 倒序
         assert view["spaces"] == [("C:", 7, 8)]
         assert view["folders"] and view["exts"]
+    finally:
+        s.close()
+
+
+def test_mark_deleted_records_timestamp() -> None:
+    tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
+    s = _storage(tmp)
+    now = time.time()
+    try:
+        s.add_files([make_record(r"C:\a\x.txt", 10, added_at=now - 10)])
+        s.mark_deleted([r"C:\a\x.txt"])
+        records = s.files_for_day(today_str(), include_deleted=True)
+        assert len(records) == 1
+        assert records[0].deleted
+        assert records[0].deleted_at is not None
+        assert records[0].deleted_at >= now - 1  # 容差
+    finally:
+        s.close()
+
+
+def test_fetch_day_view_deleted() -> None:
+    tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
+    s = _storage(tmp)
+    day = today_str()
+    now = time.time()
+    try:
+        s.add_files(
+            [
+                make_record(r"C:\a\keep.txt", 10, added_at=now),
+                make_record(r"C:\a\gone.txt", 20, added_at=now - 1),
+            ]
+        )
+        s.mark_deleted([r"C:\a\gone.txt"])
+        added = s.fetch_day_view(day)
+        assert added["count"] == 1, added
+        deleted = s.fetch_day_view(day, event_type="deleted")
+        assert deleted["count"] == 1, deleted
+    finally:
+        s.close()
+
+
+def test_schema_migration() -> None:
+    """模拟老库（无 deleted_at 列），验证迁移后列存在且可正常写入。"""
+
+    tmp = Path(tempfile.mkdtemp(prefix="dw_schema_"))
+    # 手工建一个老版本 schema（无 deleted_at 列）
+    old = sqlite3.connect(str(tmp / "old.db"))
+    old.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+    old.execute("""
+        CREATE TABLE IF NOT EXISTS files (
+            path        TEXT PRIMARY KEY,
+            name        TEXT,
+            ext         TEXT,
+            drive       TEXT,
+            folder      TEXT,
+            size        INTEGER DEFAULT 0,
+            added_at    REAL NOT NULL,
+            day         TEXT NOT NULL,
+            size_final  INTEGER DEFAULT 0,
+            deleted     INTEGER DEFAULT 0
+        )
+    """)
+    old.execute("INSERT INTO meta VALUES ('schema_version', '0')")
+    old.commit()
+    old.close()
+    # 打开 → 应自动迁移
+    s = Storage(tmp / "old.db")
+    try:
+        s.add_files([make_record(r"C:\a\mig.txt", 1, added_at=time.time())])
+        assert s.total_count() == 1
     finally:
         s.close()

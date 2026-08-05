@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS files (
     added_at    REAL NOT NULL,
     day         TEXT NOT NULL,
     size_final  INTEGER DEFAULT 0,
-    deleted     INTEGER DEFAULT 0
+    deleted     INTEGER DEFAULT 0,
+    deleted_at  REAL
 );
 CREATE INDEX IF NOT EXISTS idx_files_day ON files(day);
 CREATE INDEX IF NOT EXISTS idx_files_added ON files(added_at);
@@ -50,6 +51,8 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 """
 
+_SCHEMA_VERSION = 1
+
 
 @dataclass(frozen=True)
 class FileRecord:
@@ -61,10 +64,17 @@ class FileRecord:
     size: int
     added_at: float
     deleted: bool = False
+    deleted_at: float | None = None
 
     @property
     def added_dt(self) -> datetime:
         return datetime.fromtimestamp(self.added_at)
+
+    @property
+    def deleted_dt(self) -> datetime | None:
+        if self.deleted_at is not None:
+            return datetime.fromtimestamp(self.deleted_at)
+        return None
 
 
 @dataclass(frozen=True)
@@ -106,6 +116,7 @@ class Storage:
         with self._write_lock:
             self._write.executescript(SCHEMA)
             self._write.commit()
+            self._migrate_schema()
         # 写入异常（被 SQLite 抛出的）会进这里，供 UI 展示与排错
         self._write_errors: deque[tuple[float, str]] = deque(maxlen=20)
         # 仅供 Qt 主线程读：不与 write 抢同一把 Python 锁
@@ -131,6 +142,29 @@ class Storage:
             self._read.close()
         except sqlite3.Error:
             pass
+
+    # ---------- 迁移 ----------
+
+    def _migrate_schema(self) -> None:
+        try:
+            row = self._write.execute(
+                "SELECT value FROM meta WHERE key = 'schema_version'"
+            ).fetchone()
+            ver = int(row["value"]) if row else 0
+        except (ValueError, TypeError):
+            ver = 0
+        if ver < _SCHEMA_VERSION:
+            try:
+                self._write.execute(
+                    "ALTER TABLE files ADD COLUMN deleted_at REAL"
+                )
+            except sqlite3.OperationalError:
+                pass  # 列已存在（可能旧 DB 碰巧有）
+            self._write.execute(
+                "INSERT OR REPLACE INTO meta VALUES ('schema_version', ?)",
+                (str(_SCHEMA_VERSION),),
+            )
+            self._write.commit()
 
     # ---------- 写 ----------
 
@@ -228,22 +262,19 @@ class Storage:
             )
             return cur.rowcount
 
-    def mark_deleted(self, paths: list[str]) -> None:
+    def mark_deleted(self, paths: list[str], deleted_at: float | None = None) -> None:
         if not paths:
             return
+        when = deleted_at if deleted_at is not None else time.time()
         with self._write_tx():
             for p in paths:
                 p = p.rstrip("\\/")
                 if not p:
                     continue
-                # Windows 上整目录移动/删除时，watchdog 只对目录本身发一个被误标为
-                # 文件的删除事件，子文件不会逐个下发。对「自身 + 子树」级联标记，
-                # 目录移动/删除时子文件才不会残留成重复计数。对普通文件删除，
-                # LIKE 子树分支不命中任何行，行为不变。
                 esc = (p + "\\").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
                 self._write.execute(
-                    "UPDATE files SET deleted = 1 WHERE path = ? OR path LIKE ? ESCAPE '\\'",
-                    (p, esc + "%"),
+                    "UPDATE files SET deleted = 1, deleted_at = ? WHERE path = ? OR path LIKE ? ESCAPE '\\'",
+                    (when, p, esc + "%"),
                 )
 
     def delete_paths(self, paths: list[str]) -> None:
@@ -586,17 +617,26 @@ class Storage:
             conn.close()
 
     def fetch_day_view(
-        self, day: str, keyword: str = "", limit: int | None = 2501
+        self,
+        day: str,
+        keyword: str = "",
+        limit: int | None = 2501,
+        event_type: str = "added",
     ) -> dict:
         """后台线程打包一天详情所需的全部查询结果。
 
-        keyword 非空时，列表与顶部统计（数量/体积/目录/类型）都按同一条件筛选，
-        避免「表里 5 条、卡片还显示全天 959」的错位。
+        keyword 非空时，列表与顶部统计（数量/体积/目录/类型）都按同一条件筛选。
+        event_type: "added"（默认）/ "deleted" / "all"
         """
         conn = self._connect()
         conn.execute("PRAGMA busy_timeout=5000")
         try:
-            where = "day = ? AND deleted = 0"
+            if event_type == "deleted":
+                where = "day = ? AND deleted = 1"
+            elif event_type == "all":
+                where = "day = ?"
+            else:
+                where = "day = ? AND deleted = 0"
             args: list = [day]
             if keyword:
                 where += " AND (LOWER(name) LIKE ? OR LOWER(folder) LIKE ?)"
@@ -623,9 +663,15 @@ class Storage:
 
             day_total = count
             if keyword:
+                if event_type == "deleted":
+                    dt_where = "day = ? AND deleted = 1"
+                elif event_type == "all":
+                    dt_where = "day = ?"
+                else:
+                    dt_where = "day = ? AND deleted = 0"
                 day_total = int(
                     conn.execute(
-                        "SELECT COUNT(*) c FROM files WHERE day = ? AND deleted = 0",
+                        f"SELECT COUNT(*) c FROM files WHERE {dt_where}",
                         (day,),
                     ).fetchone()["c"]
                 )
@@ -667,6 +713,7 @@ class Storage:
                 "folders": folders,
                 "exts": exts,
                 "spaces": spaces,
+                "event_type": event_type,
             }
         finally:
             conn.close()
@@ -679,9 +726,10 @@ def _row_to_record(row: sqlite3.Row) -> FileRecord:
         ext=row["ext"] or "",
         drive=row["drive"] or "",
         folder=row["folder"] or "",
-        size=int(row["size"] or 0),
-        added_at=float(row["added_at"]),
+        size=row["size"],
+        added_at=row["added_at"],
         deleted=bool(row["deleted"]),
+        deleted_at=row["deleted_at"] if row["deleted_at"] is not None else None,
     )
 
 

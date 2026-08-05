@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -108,16 +109,19 @@ def _top_sort_key(item: _Group | FileRecord, col: int):
 def _file_display(rec: FileRecord, col: int, role: int):
     if role == Qt.DisplayRole:
         if col == 0:
-            return datetime.fromtimestamp(rec.added_at).strftime("%H:%M:%S")
+            ts = rec.deleted_at if rec.deleted and rec.deleted_at else rec.added_at
+            return datetime.fromtimestamp(ts).strftime("%H:%M:%S")
         if col == 1:
             return rec.name
         if col == 2:
             return human_size(rec.size)
         if col == 3:
-            return rec.ext or "—"
+            return rec.ext or "\u2014"
         if col == 4:
             return rec.folder
         return None
+    if role == Qt.ForegroundRole and rec.deleted:
+        return DIM_FG
     if role == Qt.TextAlignmentRole and col == 2:
         return int(Qt.AlignRight | Qt.AlignVCenter)
     if role == Qt.ForegroundRole and rec.size == 0:
@@ -511,6 +515,7 @@ class DetailPanel(QWidget):
         self._day_req = 0
         self._pending_keep_day: str | None = None
         self._fill_meta: dict | None = None
+        self._event_type = "added"
         self._model = FilesTreeModel(self)
 
         self._build()
@@ -555,6 +560,15 @@ class DetailPanel(QWidget):
         self.day_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.day_box.currentIndexChanged.connect(self._on_day_changed)
         filter_row.addWidget(self.day_box)
+
+        self.event_filter = QComboBox()
+        self.event_filter.addItem(tr("新增"), "added")
+        self.event_filter.addItem(tr("已删除"), "deleted")
+        self.event_filter.addItem(tr("全部"), "all")
+        self.event_filter.setCurrentIndex(0)
+        self.event_filter.setFixedWidth(80)
+        self.event_filter.currentIndexChanged.connect(self._on_event_filter_changed)
+        filter_row.addWidget(self.event_filter)
 
         self.chk_group = QCheckBox(tr("按应用分组"))
         self.chk_group.setChecked(True)
@@ -733,6 +747,12 @@ class DetailPanel(QWidget):
         if day:
             self._load_day_async(day)
 
+    def _on_event_filter_changed(self) -> None:
+        self._event_type = self.event_filter.currentData()
+        day = self.day_box.currentData()
+        if day:
+            self._load_day_async(day)
+
     def _load_day_async(self, day: str) -> None:
         keyword = self.search.text().strip()
         self._day_req += 1
@@ -744,7 +764,7 @@ class DetailPanel(QWidget):
 
         def work() -> None:
             try:
-                payload = storage.fetch_day_view(day, keyword, limit)
+                payload = storage.fetch_day_view(day, keyword, limit, self._event_type)
             except Exception as exc:
                 payload = exc
             self._day_ready.emit(req, payload)
@@ -769,6 +789,7 @@ class DetailPanel(QWidget):
         spaces = data.get("spaces") or []
         day = data["day"]
         keyword = data["keyword"]
+        event_type = data.get("event_type", "added")
         folder_key = folders[0] if folders else None
         ext_key = exts[0] if exts else None
         space_sig = tuple(spaces)
@@ -776,6 +797,7 @@ class DetailPanel(QWidget):
         signature = (
             day,
             keyword,
+            event_type,
             count,
             size,
             day_total,
