@@ -18,7 +18,7 @@
 <p align="center">
   <a href="https://github.com/niujiaxu/DiskWatch/releases/latest"><strong>⬇ Download portable .exe</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.5/DiskWatch-1.1.5-win64-portable.zip">v1.1.5 zip</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.2.0/DiskWatch-1.2.0-win64-portable.zip">v1.2.0 zip</a>
   &nbsp;·&nbsp;
   <a href="#-quick-start">Quick start</a>
 </p>
@@ -39,7 +39,7 @@
   <img src="docs/panel-preview.png" alt="Detail panel" width="720" />
 </p>
 
-<p align="center"><sub>Detail panel — by day, search, sort, group by app, export</sub></p>
+<p align="center"><sub>Detail panel — by day, search, sort, group by app, event types, trend chart, export</sub></p>
 
 <p align="center">
   <img src="docs/settings-preview.png" alt="Settings" width="560" />
@@ -77,8 +77,13 @@ No cloud. No file moving. Just visibility.
 - **Floating card** — translucent tech-blue glass, draggable, always-on-top, scrollable recent list
 - **Mini ball** — today’s size + ring showing today’s share of the last 7 days’ volume (hover for %)
 - **Detail panel** — virtualized tree/table, optional **group by app** (same path root → one folder), day switch, search that matches the stats, sort by time/size, CSV export, jump to Explorer
+- **Event types** — Added / Deleted / All; deleted rows are dimmed and show deletion time
+- **Trend chart** — 14-day mini bar chart of daily new-file counts
+- **Context menu** — open, reveal in Explorer, copy path, copy name
+- **Bilingual** — Chinese / English, switch takes effect instantly without restart
+- **Smart filters** — skips `AppData`, `Program Files`, caches, `.git` / `.venv`… by default; one-click dev-folder preset
+- **Startup backfill** — files created while the app was off are reconciled at launch (accelerated by directory mtime pruning)
 - **Look** — unified cool tech-blue palette across card, ball, detail, and settings
-- **Smart filters** — skips `AppData`, `Program Files`, caches, `.git` / `.venv`… by default
 - **Single instance** — launch again → brings the UI forward
 - **Portable** — unzip and run; optional autostart from tray
 - **Private** — SQLite under `%APPDATA%\DiskWatch\`, zero network
@@ -90,7 +95,7 @@ No cloud. No file moving. Just visibility.
 ### Portable (recommended)
 
 1. Grab the latest build from [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest)  
-   or direct: [`DiskWatch-1.1.5-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.1.5/DiskWatch-1.1.5-win64-portable.zip)
+   or direct: [`DiskWatch-1.2.0-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.2.0/DiskWatch-1.2.0-win64-portable.zip)
 2. Unzip → run **`DiskWatch.exe`**
 3. Done. No Python required.
 
@@ -139,7 +144,7 @@ Need those paths? **Settings → Filters**.
 
 If DiskWatch ever answered *“where did that file go?”* for you, a ⭐ helps other Windows users find it.
 
-Issues and PRs welcome · roadmap includes optional “modified” tracking and English UI strings.
+Issues and PRs welcome · roadmap includes optional “modified” tracking and more languages.
 
 ---
 
