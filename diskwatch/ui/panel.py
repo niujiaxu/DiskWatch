@@ -24,7 +24,6 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QColor,
     QFont,
-    QFontMetrics,
     QLinearGradient,
     QPainter,
     QPen,
@@ -528,7 +527,7 @@ class StatCard(QFrame):
 
 
 TREND_DAYS = 14
-BAR_GAP = 4
+BAR_GAP = 8
 BAR_W = 18
 BAR_MAX_H = 40
 CHART_H = 64
@@ -634,12 +633,10 @@ class TrendChart(QWidget):
         axis_font = painter.font()
         axis_font.setPointSizeF(max(7.0, axis_font.pointSizeF() - 1.5))
         axis_pen = QPen(QColor(TEXT_DIM))
-        fm = QFontMetrics(axis_font)
-        # 柱距较窄时相邻标签会重叠：按标签实际宽度算间隔，
-        # 只画「放得下」的标签（隔 1~2 根显示一个）。
-        stride = bw + gap
-        label_w = fm.horizontalAdvance("08-08") + 8
-        label_step = max(1, int(-(-label_w // stride))) if stride > 0 else 1
+        n_bars = len(self._data)
+        # 底部只标起始 / 结束两个日期，避免相邻标签重叠
+        def _show_label(i: int) -> bool:
+            return i == 0 or i == n_bars - 1
 
         for i, (day, size, _count) in enumerate(self._data):
             x = x0 + i * (bw + gap)
@@ -664,7 +661,7 @@ class TrendChart(QWidget):
                 painter.drawRoundedRect(QRectF(x + 0.5, y + 0.5, bw - 1, bh - 1), 3, 3)
 
             painter.setOpacity(1.0)
-            if i % label_step == 0:  # 日期轴标签：间隔显示防重叠
+            if _show_label(i):  # 底部日期轴：只标起始 / 结束
                 painter.setFont(axis_font)
                 painter.setPen(axis_pen)
                 painter.drawText(
