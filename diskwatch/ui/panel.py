@@ -664,11 +664,16 @@ class TrendChart(QWidget):
             if _show_label(i):  # 底部日期轴：只标起始 / 结束
                 painter.setFont(axis_font)
                 painter.setPen(axis_pen)
-                painter.drawText(
-                    QRectF(x - 4, self.height() - _LABEL_H + 2, bw + 8, _LABEL_H - 2),
-                    Qt.AlignCenter,
-                    day[5:],  # ISO 日期取 MM-DD 作轴标签
-                )
+                label_y = self.height() - _LABEL_H + 2
+                if i == 0:
+                    # 起始标签：左对齐，矩形一直扩到图左边缘，避免首字符被裁
+                    rect = QRectF(0, label_y, x + bw, _LABEL_H - 2)
+                    flags = Qt.AlignLeft | Qt.AlignVCenter
+                else:
+                    # 结束标签：右对齐，矩形扩到图右边缘
+                    rect = QRectF(x - 4, label_y, self.width() - x + 4, _LABEL_H - 2)
+                    flags = Qt.AlignRight | Qt.AlignVCenter
+                painter.drawText(rect, flags, day[5:])  # ISO 日期取 MM-DD
         painter.end()
 
 
