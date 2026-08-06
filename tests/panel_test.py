@@ -12,12 +12,21 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 
-from diskwatch.storage import Storage, make_record
-from diskwatch.ui.panel import FilesTreeModel
+from diskwatch.storage import DaySummary, Storage, human_size, make_record
+from diskwatch.ui.panel import FilesTreeModel, TrendChart
 
 
 def _rec(path: str, size: int, added_at: float) -> object:
     return make_record(str(Path(path)), size, added_at=added_at)
+
+
+def _days() -> list[DaySummary]:
+    return [
+        DaySummary("2026-08-01", 5, 1_000_000),
+        DaySummary("2026-08-02", 12, 8_500_000),
+        DaySummary("2026-08-03", 3, 250_000),
+        DaySummary("2026-08-04", 0, 0),  # 零体积天不画柱
+    ]
 
 
 def _model(records: list) -> FilesTreeModel:
@@ -189,3 +198,37 @@ def test_deleted_row_timestamp_display() -> None:
 
     assert pmod._file_display(rec_normal, 0, Qt.DisplayRole) != time_str
     assert pmod._file_display(rec_deleted, 0, Qt.DisplayRole) == time_str
+
+
+def test_trend_chart_data_dimension() -> None:
+    """趋势图以体积为主维度，零体积天不画柱，旧→新排序。"""
+    c = TrendChart()
+    c.set_days(_days())
+    assert c.isVisible()
+    assert len(c._data) == 3, c._data  # 08-04 体积为 0 被过滤
+    assert c._data[0][0] == "2026-08-03", c._data  # 最新在左
+    assert c._data[-1][0] == "2026-08-01"
+    assert c._data[0][1] == 250_000  # size 为主维度
+    c.set_days([DaySummary("2026-08-05", 0, 0)])
+    assert not c.isVisible()  # 全零 → 隐藏
+
+
+def test_trend_chart_tip_text() -> None:
+    c = TrendChart()
+    c.set_days(_days())
+    tip = c._tip_text(1)  # 08-02, 8_500_000 B, 12 个
+    assert "2026-08-02" in tip
+    assert human_size(8_500_000) in tip
+    assert "12" in tip
+
+
+def test_trend_chart_hover_hit() -> None:
+    c = TrendChart()
+    c.set_days(_days())
+    c.resize(300, 64)
+    bw, gap, x0, _ = c._geometry()
+    assert c._index_at(x0 + bw // 2) == 0
+    assert c._index_at(x0 + bw + gap // 2) == -1  # 间隙不命中
+    assert c._index_at(x0 + 2 * (bw + gap) + bw // 2) == 2
+    assert c._index_at(-5) == -1
+    assert c._index_at(9999) == -1

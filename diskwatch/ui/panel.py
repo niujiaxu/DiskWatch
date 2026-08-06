@@ -16,12 +16,12 @@ from PySide6.QtCore import (
     QEvent,
     QModelIndex,
     QPoint,
-    QRect,
+    QRectF,
     Qt,
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor, QFont, QPainter
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QToolTip,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -48,9 +49,12 @@ from ..i18n import tr
 from ..storage import FileRecord, Storage, human_size, today_str
 from ..watcher import open_in_explorer
 from .style import (
+    ACCENT,
+    ACCENT_2,
     DIM_FG,
     GROUP_FG,
     PANEL_QSS,
+    TEXT_DIM,
     apply_window_icon,
     enable_dark_titlebar,
 )
@@ -517,59 +521,142 @@ class StatCard(QFrame):
 
 
 TREND_DAYS = 14
-BAR_GAP = 2
-BAR_W = 14
-BAR_MAX_H = 36
-CHART_H = 52
+BAR_GAP = 4
+BAR_W = 18
+BAR_MAX_H = 40
+CHART_H = 64
+_PLOT_TOP = 8
+_LABEL_H = 14
 
 
 class TrendChart(QWidget):
-    """近 N 天新增趋势迷你柱状图。"""
+    """近 N 天新增体积趋势图：渐变圆角柱，悬浮显示日期 / 体积 / 数量。
+
+    数据来自 DaySummary（按天聚合），柱高按当天新增字节数归一化；
+    鼠标移入柱体时高亮并弹出浮层，展示该天完整明细。
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._data: list[tuple[str, int]] = []
+        self._data: list[tuple[str, int, int]] = []  # (day, size, count)
+        self._hover: int = -1
         self.setMinimumHeight(CHART_H)
         self.setMaximumHeight(CHART_H)
-        self.setToolTip("")
+        self.setMouseTracking(True)
+
+    # ---------- 数据 ----------
 
     def set_days(self, summaries) -> None:
-        """接收 DaySummary 列表并绘制柱状图。"""
+        """接收 DaySummary 列表并绘制柱状图（按体积）。"""
         self._data = [
-            (s.day, s.count) for s in summaries[:TREND_DAYS] if s.count > 0
+            (s.day, s.total_size, s.count)
+            for s in summaries[:TREND_DAYS]
+            if s.total_size > 0
         ]
         self._data.reverse()  # 旧→新，左侧最早
+        self._hover = -1
         self.setVisible(bool(self._data))
-        if self._data:
-            self.setToolTip(
-                "\n".join(f"{d}: {c}" for d, c in self._data)
-            )
         self.update()
+
+    def _tip_text(self, i: int) -> str:
+        day, size, count = self._data[i]
+        return f"{day}  ·  {human_size(size)}  ·  {tr('{count} 个文件', count=count)}"
+
+    # ---------- 几何 ----------
+
+    def _geometry(self) -> tuple[int, int, int, int]:
+        """返回 (柱宽, 柱距, 起始 x, 柱区高)。"""
+        n = len(self._data)
+        w = self.width()
+        bar_area_h = self.height() - _PLOT_TOP - _LABEL_H - 6
+        if n == 0:
+            return 0, 0, 0, bar_area_h
+        gap = BAR_GAP
+        bw = BAR_W
+        total = n * bw + (n - 1) * gap
+        if total > w - 8:
+            bw = max(3.0, (w - 8 - (n - 1) * gap) / n)
+        x0 = (w - (n * bw + (n - 1) * gap)) / 2
+        return int(bw), gap, int(x0), bar_area_h
+
+    def _index_at(self, x: int) -> int:
+        bw, gap, x0, _ = self._geometry()
+        if bw <= 0:
+            return -1
+        for i in range(len(self._data)):
+            left = x0 + i * (bw + gap)
+            if left <= x <= left + bw:
+                return i
+        return -1
+
+    # ---------- 交互 ----------
+
+    def mouseMoveEvent(self, event) -> None:
+        i = self._index_at(int(event.position().x()))
+        if i != self._hover:
+            self._hover = i
+            self.update()
+        if i >= 0:
+            QToolTip.showText(
+                event.globalPosition().toPoint() + QPoint(14, -10),
+                self._tip_text(i),
+                self,
+                self.rect(),
+            )
+        else:
+            QToolTip.hideText()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        if self._hover >= 0:
+            self._hover = -1
+            self.update()
+        super().leaveEvent(event)
+
+    # ---------- 绘制 ----------
 
     def paintEvent(self, event) -> None:
         if not self._data:
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        w = self.width()
-        h = self.height()
-        n = len(self._data)
-        max_c = max(c for _, c in self._data) or 1
-        bar_total_width = BAR_W + BAR_GAP
-        chart_w = n * bar_total_width
-        if chart_w > w:
-            bar_total_width = max(3, w / n)
-            bw = max(2, bar_total_width - 2)
-        else:
-            bw = BAR_W
-        x0 = 4
+        bw, gap, x0, bar_area_h = self._geometry()
+        max_size = max(s for _, s, _ in self._data) or 1
+        hovered = self._hover >= 0
 
-        for i, (_day, count) in enumerate(self._data):
-            bh = max(2, int(count / max_c * BAR_MAX_H))
-            y = h - bh - 8
-            painter.fillRect(
-                QRect(int(x0 + i * bar_total_width), y, int(bw), bh),
-                QColor(64, 150, 255),
+        axis_font = painter.font()
+        axis_font.setPointSizeF(max(7.0, axis_font.pointSizeF() - 1.5))
+        axis_pen = QPen(QColor(TEXT_DIM))
+
+        for i, (day, size, _count) in enumerate(self._data):
+            x = x0 + i * (bw + gap)
+            bh = max(3, int(size / max_size * bar_area_h))
+            y = _PLOT_TOP + bar_area_h - bh
+
+            if hovered and i != self._hover:
+                painter.setOpacity(0.45)
+            else:
+                painter.setOpacity(1.0)
+            grad = QLinearGradient(x, y, x, y + bh)
+            grad.setColorAt(0.0, ACCENT_2)
+            grad.setColorAt(1.0, ACCENT)
+            painter.setBrush(grad)
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(QRectF(x, y, bw, bh), 3, 3)
+
+            if i == self._hover:
+                painter.setOpacity(1.0)
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(QColor(255, 255, 255, 220), 1.2))
+                painter.drawRoundedRect(QRectF(x + 0.5, y + 0.5, bw - 1, bh - 1), 3, 3)
+
+            painter.setOpacity(1.0)
+            painter.setFont(axis_font)
+            painter.setPen(axis_pen)
+            painter.drawText(
+                QRectF(x - 4, self.height() - _LABEL_H + 2, bw + 8, _LABEL_H - 2),
+                Qt.AlignCenter,
+                day[5:],  # ISO 日期取 MM-DD 作轴标签
             )
         painter.end()
 
