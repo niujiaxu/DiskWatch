@@ -383,8 +383,6 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, tr("路径为空"), tr("配置文件和数据库路径都不能为空。"))
             return
 
-        set_autostart(self.chk_autostart.isChecked())
-
         if new_cfg != self._orig_config or new_db != self._orig_db:
             reply = QMessageBox.question(
                 self,
@@ -395,7 +393,7 @@ class SettingsDialog(QDialog):
                 QMessageBox.Yes,
             )
             if reply != QMessageBox.Yes:
-                return
+                return  # 用户取消：不保存任何设置，autostart 也不改
             try:
                 # 先把当前界面里的设置写进内存，迁移动作由调用方在关闭存储后执行
                 self._pending_config_path = new_cfg
@@ -405,6 +403,8 @@ class SettingsDialog(QDialog):
                 QMessageBox.warning(self, tr("无法更改位置"), str(exc))
                 return
 
+        # 确认完成（路径迁移未取消）后才真正写注册表
+        set_autostart(self.chk_autostart.isChecked())
         super().accept()
 
     # ---------- 动作 ----------

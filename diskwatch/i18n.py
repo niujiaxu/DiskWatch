@@ -39,7 +39,6 @@ _TRANSLATIONS: dict[str, str] = {
     "自动重启失败": "Auto-restart Failed",
     "请手动重新运行程序。\n{exc}": "Please restart the app manually.\n{exc}",
     "关于 {name}": "About {name}",
-    "语言更改需要重启应用才能生效，是否立即重启？": "The language change takes effect after a restart. Restart now?",
     "修改语言后即时生效": "Language change applies instantly",
     "语言已变更": "Language Changed",
     "{root} 监控失败: {exc}": "{root} monitor error: {exc}",

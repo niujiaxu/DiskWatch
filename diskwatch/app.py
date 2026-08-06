@@ -107,6 +107,18 @@ class DiskWatchApp:
 
     def _build_tray(self) -> None:
         menu = QMenu()
+        self.tray.setContextMenu(menu)
+        self._rebuild_tray_menu()
+        # 错误信号 → 实时更新菜单文案（ERROR/WARNING 时显示数字），只连一次
+        errorlog.bus.error_recorded.connect(self._refresh_errors_action)
+        self.tray.setToolTip(tr("硬盘新增文件监控"))
+        self.tray.activated.connect(self._on_tray_activated)
+        self.tray.show()
+        self._sync_tray_actions()
+
+    def _rebuild_tray_menu(self) -> None:
+        """（重新）构建托盘菜单文案。语言热切换后调用以刷新全部菜单项。"""
+        menu = QMenu()
         self.act_widget = menu.addAction(tr("显示悬浮组件"))
         self.act_widget.setCheckable(True)
         self.act_widget.triggered.connect(self._toggle_widget)
@@ -128,15 +140,8 @@ class DiskWatchApp:
             tr("关于 {name} {version}", name=APP_NAME, version=VERSION), self._about
         )
         menu.addAction(tr("退出"), self.quit)
-
-        # 错误信号 → 实时更新菜单文案（ERROR/WARNING 时显示数字）
-        errorlog.bus.error_recorded.connect(self._refresh_errors_action)
-        self._refresh_errors_action()
-
         self.tray.setContextMenu(menu)
-        self.tray.setToolTip(tr("硬盘新增文件监控"))
-        self.tray.activated.connect(self._on_tray_activated)
-        self.tray.show()
+        self._refresh_errors_action()
         self._sync_tray_actions()
 
     def _refresh_errors_action(self, *_args) -> None:
@@ -288,6 +293,10 @@ class DiskWatchApp:
             if self.panel.isVisible():
                 self.panel.retranslate()
                 self.panel.reload(keep_day=True)
+            # 托盘菜单文案是构建时写死的，语言变了必须重建；tooltip 同理
+            self._rebuild_tray_menu()
+            self.tray.setToolTip(tr("硬盘新增文件监控"))
+            self._tip_signature = None
             self._restart_monitor()
             return
 
