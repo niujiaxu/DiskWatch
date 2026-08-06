@@ -665,15 +665,11 @@ class TrendChart(QWidget):
                 painter.setFont(axis_font)
                 painter.setPen(axis_pen)
                 label_y = self.height() - _LABEL_H + 2
-                if i == 0:
-                    # 起始标签：左对齐，矩形一直扩到图左边缘，避免首字符被裁
-                    rect = QRectF(0, label_y, x + bw, _LABEL_H - 2)
-                    flags = Qt.AlignLeft | Qt.AlignVCenter
-                else:
-                    # 结束标签：右对齐，矩形扩到图右边缘
-                    rect = QRectF(x - 4, label_y, self.width() - x + 4, _LABEL_H - 2)
-                    flags = Qt.AlignRight | Qt.AlignVCenter
-                painter.drawText(rect, flags, day[5:])  # ISO 日期取 MM-DD
+                # 标签始终居中在柱子正下方；矩形放宽到 200px，
+                # 只让矩形中心对准柱中心，文字不会被裁、也不会跑到窗口边缘
+                cx = x + bw / 2
+                rect = QRectF(cx - 100, label_y, 200, _LABEL_H - 2)
+                painter.drawText(rect, Qt.AlignCenter, day[5:])  # ISO 日期取 MM-DD
         painter.end()
 
 
