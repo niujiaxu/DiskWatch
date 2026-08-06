@@ -4,6 +4,20 @@ All notable changes to DiskWatch are documented in this file.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-08-06
+
+### Fixed
+- 补扫 mtime 剪枝漏文件：旧目录只跳过直接文件 stat，子目录仍深入（曾整体剪枝丢深层新文件）
+- 下拉选择弹层错位到左上角：全部 QComboBox（事件过滤器 / 语言 / 预设）改用自绘 DayPicker
+- 勾选框样式：填充块改为空心圆角框 + 勾号
+- 语言热切换漏刷新：状态行 / tooltip 切换后仍显示旧语言
+- 设置「应用模板」按钮崩溃（引用不存在的 _fill_filters）
+- 语言与数据路径同时修改时路径变更被吞掉
+
+### Changed
+- 趋势图改为按新增体积统计：渐变圆角柱、悬浮显示「日期 · 体积 · 文件数」、首尾日期轴标签
+- 约束固化：下拉选择禁用 QComboBox（AGENTS.md + AST 自动检查测试）
+
 ## [1.2.0] - 2026-08-05
 
 ### Added
