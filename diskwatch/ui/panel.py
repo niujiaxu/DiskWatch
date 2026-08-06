@@ -21,7 +21,14 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPen
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QLinearGradient,
+    QPainter,
+    QPen,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -627,6 +634,12 @@ class TrendChart(QWidget):
         axis_font = painter.font()
         axis_font.setPointSizeF(max(7.0, axis_font.pointSizeF() - 1.5))
         axis_pen = QPen(QColor(TEXT_DIM))
+        fm = QFontMetrics(axis_font)
+        # 柱距较窄时相邻标签会重叠：按标签实际宽度算间隔，
+        # 只画「放得下」的标签（隔 1~2 根显示一个）。
+        stride = bw + gap
+        label_w = fm.horizontalAdvance("08-08") + 8
+        label_step = max(1, int(-(-label_w // stride))) if stride > 0 else 1
 
         for i, (day, size, _count) in enumerate(self._data):
             x = x0 + i * (bw + gap)
@@ -651,13 +664,14 @@ class TrendChart(QWidget):
                 painter.drawRoundedRect(QRectF(x + 0.5, y + 0.5, bw - 1, bh - 1), 3, 3)
 
             painter.setOpacity(1.0)
-            painter.setFont(axis_font)
-            painter.setPen(axis_pen)
-            painter.drawText(
-                QRectF(x - 4, self.height() - _LABEL_H + 2, bw + 8, _LABEL_H - 2),
-                Qt.AlignCenter,
-                day[5:],  # ISO 日期取 MM-DD 作轴标签
-            )
+            if i % label_step == 0:  # 日期轴标签：间隔显示防重叠
+                painter.setFont(axis_font)
+                painter.setPen(axis_pen)
+                painter.drawText(
+                    QRectF(x - 4, self.height() - _LABEL_H + 2, bw + 8, _LABEL_H - 2),
+                    Qt.AlignCenter,
+                    day[5:],  # ISO 日期取 MM-DD 作轴标签
+                )
         painter.end()
 
 
