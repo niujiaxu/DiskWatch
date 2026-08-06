@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
-    QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -334,7 +333,11 @@ class FilesTreeModel(QAbstractItemModel):
 
 
 class DayPicker(QWidget):
-    """日期选择：列表画在详情窗内部，避免置顶窗里 QComboBox 弹层错位/残影。"""
+    """选择控件：列表画在宿主窗内部，避免原生下拉弹层错位/残影。
+
+    项目里所有下拉选择（日期 / 事件类型 / 语言 / 预设）都用它，
+    API 与 QComboBox 对齐（addItem/currentData/setItemText/…）。
+    """
 
     currentIndexChanged = Signal(int)
 
@@ -382,6 +385,21 @@ class DayPicker(QWidget):
             self._tips[index] = str(value)
             if index == self._index:
                 self._btn.setToolTip(str(value))
+
+    def setItemText(self, index: int, text: str) -> None:
+        if 0 <= index < len(self._items):
+            self._items[index] = (text, self._items[index][1])
+            if index == self._index:
+                self._btn.setText(text)
+
+    def itemText(self, index: int) -> str:
+        if 0 <= index < len(self._items):
+            return self._items[index][0]
+        return ""
+
+    def setFixedWidth(self, w: int) -> None:
+        super().setFixedWidth(w)
+        self._btn.setFixedWidth(w)
 
     def findData(self, data) -> int:
         for i, (_t, d) in enumerate(self._items):
@@ -627,7 +645,7 @@ class DetailPanel(QWidget):
         self.day_box.currentIndexChanged.connect(self._on_day_changed)
         filter_row.addWidget(self.day_box)
 
-        self.event_filter = QComboBox()
+        self.event_filter = DayPicker()
         self.event_filter.addItem(tr("新增"), "added")
         self.event_filter.addItem(tr("已删除"), "deleted")
         self.event_filter.addItem(tr("全部"), "all")

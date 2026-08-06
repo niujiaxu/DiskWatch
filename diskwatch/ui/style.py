@@ -111,7 +111,7 @@ QFrame#card {{
     background: {SURFACE_2}; border: 1px solid rgba(255,255,255,0.05);
     border-radius: 10px;
 }}
-QComboBox, QLineEdit, QPushButton#dayPicker {{
+QLineEdit, QPushButton#dayPicker {{
     background: {FIELD}; color: {TEXT};
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 6px; padding: 5px 8px; min-height: 20px;
@@ -120,8 +120,7 @@ QPushButton#dayPicker {{
     text-align: left; padding-right: 22px;
 }}
 QPushButton#dayPicker:hover {{ background: {BUTTON}; }}
-QComboBox::drop-down {{ border: none; width: 18px; }}
-QComboBox QAbstractItemView, QListWidget#dayPickerPopup {{
+QListWidget#dayPickerPopup {{
     background: {FIELD}; color: {TEXT};
     selection-background-color: {ACCENT.name()};
     border: 1px solid rgba(255,255,255,0.08);

@@ -5,7 +5,6 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -30,6 +29,7 @@ from ..config import Config, default_home, paths
 from ..i18n import SUPPORTED_LOCALES, tr
 from ..storage import Storage
 from ..watcher import list_drives
+from .panel import DayPicker
 from .style import PANEL_QSS, apply_window_icon, enable_dark_titlebar
 
 
@@ -151,7 +151,7 @@ class SettingsDialog(QDialog):
 
         presets_row = QHBoxLayout()
         presets_row.setSpacing(8)
-        self.cmb_preset = QComboBox()
+        self.cmb_preset = DayPicker()
         self.cmb_preset.addItem(tr("开发目录过滤"), "dev")
         self.cmb_preset.setToolTip(
             tr("把 __pycache__ / node_modules / .git / .pytest_cache 等"
@@ -217,10 +217,10 @@ class SettingsDialog(QDialog):
         self.chk_start_min = QCheckBox(tr("启动时只显示托盘图标，不显示悬浮组件"))
         form.addRow("", self.chk_start_min)
 
-        self.cmb_language = QComboBox()
+        self.cmb_language = DayPicker()
         for code, name in SUPPORTED_LOCALES.items():
             self.cmb_language.addItem(name, code)
-        self.cmb_language.setToolTip(tr("修改语言后需重启生效"))
+        self.cmb_language.setToolTip(tr("修改语言后即时生效"))
         form.addRow(tr("界面语言"), self.cmb_language)
 
         self.chk_scan = QCheckBox(tr("启动时补扫最近创建的文件（补回程序没在跑期间遗漏的记录）"))
