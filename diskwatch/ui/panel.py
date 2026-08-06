@@ -1168,7 +1168,9 @@ class DetailPanel(QWidget):
             err: Exception | None = None
             n = 0
             try:
-                bundle = storage.fetch_day_view(day, keyword, limit=None)
+                bundle = storage.fetch_day_view(
+                    day, keyword, limit=None, event_type=self._event_type
+                )
                 records = bundle["records"]
                 with open(path, "w", newline="", encoding="utf-8-sig") as f:
                     writer = csv.writer(f)
@@ -1184,9 +1186,10 @@ class DetailPanel(QWidget):
                         ]
                     )
                     for r in records:
+                        ts = r.deleted_at if r.deleted and r.deleted_at else r.added_at
                         writer.writerow(
                             [
-                                datetime.fromtimestamp(r.added_at).strftime(
+                                datetime.fromtimestamp(ts).strftime(
                                     "%Y-%m-%d %H:%M:%S"
                                 ),
                                 r.name,
