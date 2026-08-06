@@ -1,4 +1,4 @@
-﻿# DiskWatch
+# DiskWatch
 
 <p align="center">
   <a href="README.md">English</a> · <strong>中文</strong>
@@ -18,7 +18,7 @@
 <p align="center">
   <a href="https://github.com/niujiaxu/DiskWatch/releases/latest"><strong>⬇ 下载便携版 .exe</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.2.0/DiskWatch-1.2.0-win64-portable.zip">v1.2.0 直链</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.2.1/DiskWatch-1.2.1-win64-portable.zip">v1.2.1 直链</a>
   &nbsp;·&nbsp;
   <a href="#-快速开始">快速开始</a>
 </p>
@@ -95,7 +95,7 @@ DiskWatch 只干一件事：
 ### 便携版（推荐）
 
 1. 打开 [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest) 下载最新包  
-   或直链：[`DiskWatch-1.2.0-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.2.0/DiskWatch-1.2.0-win64-portable.zip)
+   或直链：[`DiskWatch-1.2.1-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.2.1/DiskWatch-1.2.1-win64-portable.zip)
 2. 解压 → 运行 **`DiskWatch.exe`**
 3. 完事。不用装 Python。
 

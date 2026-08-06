@@ -1,4 +1,4 @@
-﻿# DiskWatch
+# DiskWatch
 
 <p align="center">
   <strong>English</strong> · <a href="README.zh-CN.md">中文</a>
@@ -18,7 +18,7 @@
 <p align="center">
   <a href="https://github.com/niujiaxu/DiskWatch/releases/latest"><strong>⬇ Download portable .exe</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.2.0/DiskWatch-1.2.0-win64-portable.zip">v1.2.0 zip</a>
+  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.2.1/DiskWatch-1.2.1-win64-portable.zip">v1.2.1 zip</a>
   &nbsp;·&nbsp;
   <a href="#-quick-start">Quick start</a>
 </p>
@@ -95,7 +95,7 @@ No cloud. No file moving. Just visibility.
 ### Portable (recommended)
 
 1. Grab the latest build from [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest)  
-   or direct: [`DiskWatch-1.2.0-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.2.0/DiskWatch-1.2.0-win64-portable.zip)
+   or direct: [`DiskWatch-1.2.1-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.2.1/DiskWatch-1.2.1-win64-portable.zip)
 2. Unzip → run **`DiskWatch.exe`**
 3. Done. No Python required.
 
