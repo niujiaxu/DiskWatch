@@ -19,9 +19,10 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPalette,
+    QPen,
     QPixmap,
 )
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QProxyStyle, QStyle, QWidget
 
 # ---------- 色板 ----------
 
@@ -174,14 +175,6 @@ QScrollBar::handle:vertical {{
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0px; }}
 QCheckBox, QSpinBox, QPlainTextEdit, QListWidget {{ color: {TEXT}; }}
 QCheckBox {{ spacing: 7px; padding: 2px 0px; }}
-QCheckBox::indicator {{
-    width: 15px; height: 15px; border-radius: 4px;
-    border: 1px solid rgba(255,255,255,0.22); background: {FIELD};
-}}
-QCheckBox::indicator:hover {{ border-color: rgba(255,255,255,0.38); }}
-QCheckBox::indicator:checked {{
-    background: {ACCENT.name()}; border-color: {ACCENT.name()};
-}}
 QPlainTextEdit, QListWidget {{
     background: {BASE}; border: 1px solid rgba(255,255,255,0.06);
     border-radius: 6px; padding: 4px;
@@ -270,6 +263,63 @@ def prefer_ui_font(app) -> None:
             return
 
 
+class _CheckStyle(QProxyStyle):
+    """深色主题下的勾选框：空心圆角框 + 勾号（不用填充块）。
+
+    样式表没法在 indicator 里画勾号（会被 ACCENT 整块填充吞掉），
+    所以 indicator 的绘制交给这里：未选=空心框，选中=蓝色框 + 白色勾号。
+    """
+
+    _BORDER = QColor(255, 255, 255, 56)     # rgba(255,255,255,0.22)
+    _BORDER_HOVER = QColor(255, 255, 255, 97)
+    _CHECK = QColor(255, 255, 255, 235)
+
+    def drawPrimitive(
+        self,
+        element: QStyle.PrimitiveElement,
+        option,
+        painter,
+        widget=None,
+    ) -> None:
+        if element != QStyle.PE_IndicatorCheckBox:
+            super().drawPrimitive(element, option, painter, widget)
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        r = option.rect
+        box = QRectF(r.x() + 0.5, r.y() + 0.5, r.width() - 1, r.height() - 1)
+        hovered = bool(option.state & QStyle.State_MouseOver)
+        checked = bool(option.state & QStyle.State_On)
+
+        border = ACCENT if checked else (
+            self._BORDER_HOVER if hovered else self._BORDER
+        )
+        painter.setPen(QPen(border, 1.4))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(box, 4, 4)
+
+        if checked:
+            pen = QPen(self._CHECK, 1.8)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(pen)
+            path = QPainterPath()
+            x, y = r.x(), r.y()
+            w, h = r.width(), r.height()
+            path.moveTo(x + w * 0.24, y + h * 0.54)
+            path.lineTo(x + w * 0.44, y + h * 0.72)
+            path.lineTo(x + w * 0.78, y + h * 0.32)
+            painter.drawPath(path)
+        painter.restore()
+
+    def pixelMetric(self, metric, option=None, widget=None) -> int:
+        if metric == QStyle.PM_IndicatorWidth:
+            return 16
+        if metric == QStyle.PM_IndicatorHeight:
+            return 16
+        return super().pixelMetric(metric, option, widget)
+
+
 def apply_dark_theme(app) -> None:
     """统一深色调色板。
 
@@ -277,6 +327,8 @@ def apply_dark_theme(app) -> None:
     不设的话在浅色系统主题下会出现浅字压浅底。
     """
     app.setStyle("Fusion")
+    # 勾选框由代理样式绘制（QSS 无法在 indicator 里画勾号）
+    app.setStyle(_CheckStyle(app.style()))
     prefer_ui_font(app)
     # Qt 6.5+：告诉系统本应用偏好深色，部分原生控件/标题栏会跟着变
     try:
