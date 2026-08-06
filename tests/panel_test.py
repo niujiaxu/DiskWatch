@@ -232,3 +232,71 @@ def test_trend_chart_hover_hit() -> None:
     assert c._index_at(x0 + 2 * (bw + gap) + bw // 2) == 2
     assert c._index_at(-5) == -1
     assert c._index_at(9999) == -1
+
+
+def test_chart_click_emits_day() -> None:
+    """点击柱体发出 day_selected 信号，携带该天的 day。"""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QMouseEvent
+
+    c = TrendChart()
+    c.set_days(_days())
+    c.resize(300, 64)
+    picked: list[str] = []
+    c.day_selected.connect(picked.append)
+
+    bw, gap, x0, _ = c._geometry()
+    # 点击第 2 根柱（08-02）
+    x = x0 + 1 * (bw + gap) + bw // 2
+    event = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress,
+        QPoint(x, 30),
+        Qt.LeftButton,
+        Qt.LeftButton,
+        Qt.NoModifier,
+    )
+    c.mousePressEvent(event)
+    assert picked == ["2026-08-02"], picked
+
+    # 点击间隙不触发
+    c.mousePressEvent(
+        QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPoint(x0 + bw + gap // 2, 30),
+            Qt.LeftButton,
+            Qt.LeftButton,
+            Qt.NoModifier,
+        )
+    )
+    assert picked == ["2026-08-02"], picked
+
+
+def test_chart_click_switches_day_picker(tmp_path) -> None:
+    """端到端：点击趋势图柱子 → 详情面板日期选择器切到该天。"""
+    from PySide6.QtWidgets import QApplication
+
+    from diskwatch.ui.panel import DetailPanel
+
+    QApplication.instance() or QApplication([])
+    s = Storage(tmp_path / "t.db")
+    now = time.time()
+    try:
+        s.add_files([make_record(r"C:\a\1.txt", 10, added_at=now)])
+        s.add_files([make_record(r"C:\a\2.txt", 20, added_at=now - 86400)])
+        panel = DetailPanel(s)
+        panel.show()
+        panel.reload(keep_day=False)
+        days_payload = s.fetch_days_with_data()
+        panel._on_days_ready(panel._days_req, days_payload)
+
+        # 手动触发选中某天（等价于点柱后的信号路径）
+        target = days_payload[1].day if len(days_payload) > 1 else None
+        if target is None:
+            return  # 只有一天时无从切换，跳过
+        panel._on_chart_day_selected(target)
+        assert panel.day_box.currentData() == target
+        # 非当前天的查找不到 → 不崩溃
+        panel._on_chart_day_selected("1970-01-01")
+        assert panel.day_box.currentData() == target
+    finally:
+        s.close()

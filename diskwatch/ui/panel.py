@@ -539,8 +539,11 @@ class TrendChart(QWidget):
     """近 N 天新增体积趋势图：渐变圆角柱，悬浮显示日期 / 体积 / 数量。
 
     数据来自 DaySummary（按天聚合），柱高按当天新增字节数归一化；
-    鼠标移入柱体时高亮并弹出浮层，展示该天完整明细。
+    鼠标移入柱体时高亮并弹出浮层，展示该天完整明细；
+    单击柱体发出 day_selected，宿主可切换到对应天的详情。
     """
+
+    day_selected = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -549,6 +552,7 @@ class TrendChart(QWidget):
         self.setMinimumHeight(CHART_H)
         self.setMaximumHeight(CHART_H)
         self.setMouseTracking(True)
+        self.setCursor(Qt.PointingHandCursor)
 
     # ---------- 数据 ----------
 
@@ -618,6 +622,13 @@ class TrendChart(QWidget):
             self._hover = -1
             self.update()
         super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            i = self._index_at(int(event.position().x()))
+            if i >= 0:
+                self.day_selected.emit(self._data[i][0])
+        super().mousePressEvent(event)
 
     # ---------- 绘制 ----------
 
@@ -781,6 +792,7 @@ class DetailPanel(QWidget):
         root.addLayout(cards)
 
         self._chart.setVisible(True)
+        self._chart.day_selected.connect(self._on_chart_day_selected)
         root.addWidget(self._chart)
 
         self.table = QTreeView()
@@ -936,6 +948,12 @@ class DetailPanel(QWidget):
         day = self.day_box.currentData()
         if day:
             self._load_day_async(day)
+
+    def _on_chart_day_selected(self, day: str) -> None:
+        """点击趋势图柱子 → 日期选择器切到该天（触发 _on_day_changed 加载详情）。"""
+        idx = self.day_box.findData(day)
+        if idx >= 0:
+            self.day_box.setCurrentIndex(idx)
 
     def _on_event_filter_changed(self) -> None:
         self._event_type = self.event_filter.currentData()
