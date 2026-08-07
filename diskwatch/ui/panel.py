@@ -1267,6 +1267,7 @@ class DetailPanel(QWidget):
 
 
 def _shorten(text: str, limit: int) -> str:
+    text = text or ""  # SQL 列理论上非 NULL，防御历史脏数据
     return text if len(text) <= limit else "…" + text[-(limit - 1) :]
 
 
