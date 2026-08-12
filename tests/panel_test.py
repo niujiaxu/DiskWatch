@@ -300,3 +300,38 @@ def test_chart_click_switches_day_picker(tmp_path) -> None:
         assert panel.day_box.currentData() == target
     finally:
         s.close()
+
+
+def test_truncation_banner(tmp_path) -> None:
+    """超过 MAX_TABLE_ROWS 时显示截断横幅；未截断时隐藏。"""
+    from PySide6.QtWidgets import QApplication
+
+    from diskwatch.ui.panel import MAX_TABLE_ROWS, DetailPanel
+
+    QApplication.instance() or QApplication([])
+    s = Storage(tmp_path / "t.db")
+    now = time.time()
+    try:
+        # 造 MAX_TABLE_ROWS + 5 条记录，触发截断
+        for i in range(MAX_TABLE_ROWS + 5):
+            s.add_files([make_record(rf"C:\a\f{i:05d}.txt", 100, added_at=now - i)])
+        panel = DetailPanel(s)
+        panel.show()
+        panel.reload(keep_day=False)
+        days_payload = s.fetch_days_with_data()
+        panel._on_days_ready(panel._days_req, days_payload)
+        day = panel.day_box.currentData()
+
+        view = s.fetch_day_view(day)
+        panel._on_day_ready(panel._day_req, view)
+        assert view["truncated"] is True
+        assert panel.banner.isVisible(), "截断时应显示横幅"
+        assert f"{MAX_TABLE_ROWS:,}" in panel.banner.text()
+
+        # 缩小搜索 → 不截断 → 横幅隐藏
+        view2 = s.fetch_day_view(day, keyword="f00000")
+        panel._on_day_ready(panel._day_req, view2)
+        assert view2["truncated"] is False
+        assert not panel.banner.isVisible(), "未截断时横幅应隐藏"
+    finally:
+        s.close()

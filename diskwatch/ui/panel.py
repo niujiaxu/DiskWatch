@@ -822,6 +822,10 @@ class DetailPanel(QWidget):
         hh.setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.setColumnWidth(1, 300)
         self.table.doubleClicked.connect(self._open_selected)
+        self.banner = QLabel("", objectName="banner")
+        self.banner.setWordWrap(True)
+        self.banner.hide()
+        root.addWidget(self.banner)
         root.addWidget(self.table, 1)
 
         foot = QHBoxLayout()
@@ -1008,6 +1012,17 @@ class DetailPanel(QWidget):
         self.event_filter.setItemText(0, tr("新增"))
         self.event_filter.setItemText(1, tr("已删除"))
         self.event_filter.setItemText(2, tr("全部"))
+        # 截断横幅由 _on_day_ready 重建；语言切换后的 reload 会覆盖，
+        # 这里同步一次避免短暂显示旧语言
+        meta = self._fill_meta
+        if meta and meta.get("truncated"):
+            shown = self._model.file_count()
+            self.banner.setText(
+                tr("共 {count} 条，表格仅显示前 {shown} 条。"
+                   "可在搜索框缩小范围查看其余记录。",
+                   count=f"{meta['count']:,}", shown=f"{shown:,}")
+            )
+            self.banner.show()
 
     def _load_day_async(self, day: str) -> None:
         keyword = self.search.text().strip()
@@ -1094,6 +1109,15 @@ class DetailPanel(QWidget):
             "truncated": truncated,
             "day_total": day_total,
         }
+        if truncated:
+            self.banner.setText(
+                tr("共 {count} 条，表格仅显示前 {shown} 条。"
+                   "可在搜索框缩小范围查看其余记录。",
+                   count=f"{count:,}", shown=f"{len(records):,}")
+            )
+            self.banner.show()
+        else:
+            self.banner.hide()
         self._model.set_records(records)
         hh = self.table.header()
         hh.blockSignals(True)

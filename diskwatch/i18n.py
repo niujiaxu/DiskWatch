@@ -105,6 +105,7 @@ _TRANSLATIONS: dict[str, str] = {
     "加载中…": "Loading…",
     "加载失败：{err}": "Load failed: {err}",
     "显示前 {shown} 条 / 筛选共 {count} 条（请再缩小关键词）": "Showing first {shown} / filtered {count} total (try narrowing your keyword)",
+    "共 {count} 条，表格仅显示前 {shown} 条。可在搜索框缩小范围查看其余记录。": "{count} records total; the table shows only the first {shown}. Narrow the search to see the rest.",
     "筛选到 {shown} 条 / 当日共 {total} 条": "Filtered {shown} / {total} today",
     "显示 {shown} 条": "{shown} entries",
     "正在导出…": "Exporting…",

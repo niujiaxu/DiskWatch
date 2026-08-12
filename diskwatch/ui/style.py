@@ -107,6 +107,12 @@ QLabel {{ color: {TEXT}; background: transparent; }}
 QLabel#h1 {{ font-size: 17px; font-weight: 600; }}
 QLabel#dim {{ color: {TEXT_DIM}; font-size: 12px; }}
 QLabel#statValue {{ font-size: 20px; font-weight: 600; }}
+QLabel#banner {{
+    color: #f5c97b; font-size: 12px;
+    background: rgba(232, 148, 118, 0.12);
+    border: 1px solid rgba(232, 148, 118, 0.35);
+    border-radius: 6px; padding: 6px 10px;
+}}
 QFrame#card {{
     background: {SURFACE_2}; border: 1px solid rgba(255,255,255,0.05);
     border-radius: 10px;
