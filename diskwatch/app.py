@@ -99,6 +99,7 @@ class DiskWatchApp:
             surface.open_settings.connect(self.show_settings)
             surface.request_quit.connect(self.quit)
         self.dashboard.day_selected.connect(self._dashboard_show_day)
+        self.panel.open_dashboard.connect(self.show_dashboard)
         self.widget.hidden_by_user.connect(self._sync_tray_actions)
         self.widget.collapse_requested.connect(self.collapse)
         self.ball.hidden_by_user.connect(self._sync_tray_actions)

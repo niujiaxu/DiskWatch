@@ -122,6 +122,7 @@ _TRANSLATIONS: dict[str, str] = {
 
     # ---------- dashboard.py ----------
     "硬盘新增文件 · 数据看板": "DiskWatch · Dashboard",
+    "数据面板": "Dashboard",
     "数据看板": "Dashboard",
     "数据看板…": "Dashboard…",
     "看板": "Dashboard",

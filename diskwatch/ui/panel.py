@@ -831,6 +831,7 @@ class DetailPanel(QWidget):
     _days_ready = Signal(int, object)
     _day_ready = Signal(int, object)
     _compile_ready = Signal(int, object, object)  # (req, top|Exception, expand_rows)
+    open_dashboard = Signal()  # 标题行「数据面板」按钮 → 宿主打开看板窗口
 
     def __init__(self, storage: Storage) -> None:
         super().__init__(objectName="panelRoot")
@@ -883,12 +884,16 @@ class DetailPanel(QWidget):
         self.lbl_title = QLabel(tr("新增文件明细"), objectName="h1")
         title_row.addWidget(self.lbl_title)
         title_row.addStretch(1)
+        btn_dashboard = QPushButton(tr("数据面板"))
+        btn_dashboard.clicked.connect(self.open_dashboard.emit)
+        self.btn_dashboard = btn_dashboard
         btn_export = QPushButton(tr("导出 CSV"))
         btn_export.clicked.connect(self._export_csv)
         self.btn_export = btn_export
         btn_refresh = QPushButton(tr("刷新"), objectName="primary")
         btn_refresh.clicked.connect(lambda: self.reload(keep_day=True))
         self.btn_refresh = btn_refresh
+        title_row.addWidget(btn_dashboard)
         title_row.addWidget(btn_export)
         title_row.addWidget(btn_refresh)
         root.addLayout(title_row)
@@ -959,6 +964,10 @@ class DetailPanel(QWidget):
         self.table.setItemsExpandable(True)
         # 全量数据下逐行展开动画开销大，关闭；视觉影响可忽略
         self.table.setAnimated(False)
+        # 双击展开/折叠由 _open_selected 统一处理：Qt 内置 expandsOnDoubleClick
+        # 会与 doubleClicked 信号双重触发（展开后立即被 _open_selected 折叠回
+        # 去，表现为双击没反应），显式禁用内置处理，行为与 Qt 版本无关
+        self.table.setExpandsOnDoubleClick(False)
         self.table.setIndentation(18)
 
         hh = self.table.header()
@@ -1147,6 +1156,7 @@ class DetailPanel(QWidget):
         self.setWindowTitle(tr("硬盘新增文件 · 详情"))
         self.lbl_title.setText(tr("新增文件明细"))
         self.lbl_date.setText(tr("日期"))
+        self.btn_dashboard.setText(tr("数据面板"))
         self.btn_export.setText(tr("导出 CSV"))
         self.btn_refresh.setText(tr("刷新"))
         self.card_count._title.setText(tr("新增文件"))

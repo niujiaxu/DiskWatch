@@ -341,6 +341,69 @@ def test_full_display_no_truncation(tmp_path) -> None:
         s.close()
 
 
+def test_double_click_group_toggles_expand(qapp, tmp_path) -> None:
+    """双击目录行展开/折叠明细（回归：Qt 内置 expandsOnDoubleClick 与
+    doubleClicked 双重触发会把展开又折叠回去，表现为双击没反应）。"""
+    from PySide6.QtCore import QEvent, QPoint
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
+    from diskwatch.ui.panel import DetailPanel, _Group, compile_view
+
+    s = Storage(tmp_path / "t.db")
+    now = time.time()
+    s.add_files(
+        [make_record(rf"C:\BigApp\f{i}.txt", 100 + i, added_at=now - i) for i in range(4)]
+    )
+    panel = DetailPanel(s)
+    panel.show()
+    days = s.fetch_days_with_data()
+    panel._on_days_ready(panel._days_req, days)
+    day = panel.day_box.currentData()
+    view = s.fetch_day_view(day)
+    top, expand_rows = compile_view(
+        view["records"], panel._model.sort_col,
+        panel._model.sort_order, panel._model.grouped,
+    )
+    view["top"] = top
+    view["expand_rows"] = expand_rows
+    panel._on_day_ready(panel._day_req, view)
+    try:
+        gi = None
+        for i in range(panel._model.rowCount()):
+            if isinstance(panel._model._top[i], _Group):
+                gi = panel._model.index(i, 0)
+                break
+        assert gi is not None and gi.isValid()
+        assert not panel.table.isExpanded(gi)
+
+        def _dblclick() -> None:
+            rect = panel.table.visualRect(gi)
+            assert rect.height() > 0, "组行应可见"
+            pos = rect.center()
+            for etype in (
+                QEvent.MouseButtonPress,
+                QEvent.MouseButtonRelease,
+                QEvent.MouseButtonPress,
+                QEvent.MouseButtonDblClick,
+                QEvent.MouseButtonRelease,
+            ):
+                ev = QMouseEvent(
+                    etype, QPoint(pos), QPoint(pos),
+                    Qt.LeftButton, Qt.LeftButton, Qt.NoModifier,
+                )
+                QApplication.sendEvent(panel.table.viewport(), ev)
+            QApplication.processEvents()
+
+        _dblclick()
+        assert panel.table.isExpanded(gi), "双击目录应展开明细"
+        _dblclick()
+        assert not panel.table.isExpanded(gi), "再次双击应折叠"
+    finally:
+        panel.close()
+        s.close()
+
+
 def test_full_display_through_worker_path(tmp_path) -> None:
     """端到端：走真实后台线程（reload → _load_day_async）加载超过 2500 条。"""
     from PySide6.QtWidgets import QApplication
