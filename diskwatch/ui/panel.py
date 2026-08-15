@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import csv
+import math
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -574,17 +575,37 @@ TREND_DAYS = 14
 BAR_GAP = 8
 BAR_W = 18
 BAR_MAX_H = 40
-CHART_H = 64
-_PLOT_TOP = 8
+CHART_H = 78
+_PLOT_TOP = 22
 _LABEL_H = 14
 
 
-class TrendChart(QWidget):
-    """近 N 天新增体积趋势图：渐变圆角柱，悬浮显示日期 / 体积 / 数量。
+def _compact_size(n: int) -> str:
+    """体积简写：30M / 1.2G / 850K，用于柱顶小标签。"""
+    if n >= 1_000_000_000:
+        return f"{n / 1e9:.1f}G"
+    if n >= 1_000_000:
+        return f"{n / 1e6:.0f}M"
+    if n >= 1_000:
+        return f"{n / 1e3:.0f}K"
+    return f"{n}B"
 
-    数据来自 DaySummary（按天聚合），柱高按当天新增字节数归一化；
-    鼠标移入柱体时高亮并弹出浮层，展示该天完整明细；
-    单击柱体发出 day_selected，宿主可切换到对应天的详情。
+
+def _compact_count(n: int) -> str:
+    """数量简写：1.2k / 34,000，用于柱顶小标签。"""
+    if n >= 100_000:
+        return f"{n / 1000:.0f}k"
+    if n >= 10_000:
+        return f"{n / 1000:.1f}k"
+    return f"{n:,}"
+
+
+class TrendChart(QWidget):
+    """近 N 天新增趋势图：渐变圆角柱，悬浮显示日期 / 体积 / 数量。
+
+    数据来自 DaySummary（按天聚合）。默认对数刻度（log10），小值柱也
+    清晰可辨，可切换回线性刻度；右上角小按钮切换。柱顶标注体积/数量
+    简写，柱太矮或与按钮重叠时自动省略。单击柱体发出 day_selected。
     """
 
     day_selected = Signal(str)
@@ -593,24 +614,66 @@ class TrendChart(QWidget):
         super().__init__(parent)
         self._data: list[tuple[str, int, int]] = []  # (day, size, count)
         self._hover: int = -1
+        self._log_scale = True
+        self._metric = "size"  # "size" 体积 / "count" 数量
+        self._btn: QPushButton | None = None  # 惰性创建（无 QApplication 的单元测试不建）
         self.setMinimumHeight(CHART_H)
         self.setMaximumHeight(CHART_H)
         self.setMouseTracking(True)
         self.setCursor(Qt.PointingHandCursor)
 
+    def _ensure_btn(self) -> None:
+        if self._btn is not None or QApplication.instance() is None:
+            return
+        btn = QPushButton(tr("对数"), self)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFocusPolicy(Qt.NoFocus)
+        btn.setStyleSheet(
+            "QPushButton { color: #a8b6cc; background: rgba(255,255,255,0.06);"
+            " border: none; border-radius: 4px; font-size: 9px; padding: 1px 6px; }"
+            " QPushButton:hover { color: #e8eef8; background: rgba(255,255,255,0.14); }"
+        )
+        btn.clicked.connect(self._toggle_scale)
+        btn.setGeometry(self.width() - 62, 3, 58, 15)
+        self._btn = btn
+
     # ---------- 数据 ----------
 
-    def set_days(self, summaries) -> None:
-        """接收 DaySummary 列表并绘制柱状图（按体积）。"""
+    def set_days(self, summaries, max_days: int = TREND_DAYS) -> None:
+        """接收 DaySummary 列表并绘制柱状图（按体积，旧→新左侧最早）。"""
         self._data = [
             (s.day, s.total_size, s.count)
-            for s in summaries[:TREND_DAYS]
+            for s in summaries[:max_days]
             if s.total_size > 0
         ]
-        self._data.reverse()  # 旧→新，左侧最早
+        self._data.reverse()
         self._hover = -1
         self.setVisible(bool(self._data))
         self.update()
+
+    def set_log_scale(self, use_log: bool) -> None:
+        """对数 / 线性刻度切换；对数下小值柱也清晰可见。"""
+        if use_log == self._log_scale:
+            return
+        self._log_scale = use_log
+        if self._btn is not None:
+            self._btn.setText(tr("对数") if use_log else tr("线性"))
+        self.update()
+
+    def set_metric(self, metric: str) -> None:
+        """柱高按 "size"（体积，默认）或 "count"（数量）归一化。"""
+        if metric not in ("size", "count") or metric == self._metric:
+            return
+        self._metric = metric
+        self.update()
+
+    def _toggle_scale(self) -> None:
+        self.set_log_scale(not self._log_scale)
+
+    def retranslate(self) -> None:
+        """语言热切换后刷新切换按钮文案。"""
+        if self._btn is not None:
+            self._btn.setText(tr("对数") if self._log_scale else tr("线性"))
 
     def _tip_text(self, i: int) -> str:
         day, size, count = self._data[i]
@@ -619,7 +682,7 @@ class TrendChart(QWidget):
     # ---------- 几何 ----------
 
     def _geometry(self) -> tuple[int, int, int, int]:
-        """返回 (柱宽, 柱距, 起始 x, 柱区高)。"""
+        """返回 (柱宽, 柱距, 起始 x, 柱区高)。天多时柱宽与柱距都自适应。"""
         n = len(self._data)
         w = self.width()
         bar_area_h = self.height() - _PLOT_TOP - _LABEL_H - 6
@@ -629,9 +692,11 @@ class TrendChart(QWidget):
         bw = BAR_W
         total = n * bw + (n - 1) * gap
         if total > w - 8:
-            bw = max(3.0, (w - 8 - (n - 1) * gap) / n)
-        x0 = (w - (n * bw + (n - 1) * gap)) / 2
-        return int(bw), gap, int(x0), bar_area_h
+            gap = 2.0
+            bw = max(2.0, (w - 8 - (n - 1) * gap) / n)
+            total = n * bw + (n - 1) * gap
+        x0 = max(0.0, (w - total) / 2)
+        return int(bw), int(gap), int(x0), bar_area_h
 
     def _index_at(self, x: int) -> int:
         bw, gap, x0, _ = self._geometry()
@@ -642,6 +707,13 @@ class TrendChart(QWidget):
             if left <= x <= left + bw:
                 return i
         return -1
+
+    def _bar_height(self, val: int, max_val: int, area_h: int) -> float:
+        """归一化柱高：对数刻度（默认）或线性。"""
+        if self._log_scale:
+            base = math.log10(max_val + 1) or 1.0
+            return max(3.0, math.log10(val + 1) / base * area_h)
+        return max(3.0, val / max_val * area_h)
 
     # ---------- 交互 ----------
 
@@ -674,6 +746,12 @@ class TrendChart(QWidget):
                 self.day_selected.emit(self._data[i][0])
         super().mousePressEvent(event)
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._ensure_btn()
+        if self._btn is not None:
+            self._btn.setGeometry(self.width() - 62, 3, 58, 15)
+
     # ---------- 绘制 ----------
 
     def paintEvent(self, event) -> None:
@@ -682,20 +760,27 @@ class TrendChart(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         bw, gap, x0, bar_area_h = self._geometry()
-        max_size = max(s for _, s, _ in self._data) or 1
+        vals = [
+            s if self._metric == "size" else c
+            for _d, s, c in self._data
+        ]
+        max_val = max(vals) or 1
         hovered = self._hover >= 0
 
         axis_font = painter.font()
         axis_font.setPointSizeF(max(7.0, axis_font.pointSizeF() - 1.5))
+        label_font = painter.font()
+        label_font.setPointSizeF(max(6.5, label_font.pointSizeF() - 2.5))
         axis_pen = QPen(QColor(TEXT_DIM))
         n_bars = len(self._data)
         # 底部只标起始 / 结束两个日期，避免相邻标签重叠
         def _show_label(i: int) -> bool:
             return i == 0 or i == n_bars - 1
 
-        for i, (day, size, _count) in enumerate(self._data):
+        for i, (day, size, count) in enumerate(self._data):
             x = x0 + i * (bw + gap)
-            bh = max(3, int(size / max_size * bar_area_h))
+            val = size if self._metric == "size" else count
+            bh = int(self._bar_height(val, max_val, bar_area_h))
             y = _PLOT_TOP + bar_area_h - bh
 
             if hovered and i != self._hover:
@@ -714,6 +799,20 @@ class TrendChart(QWidget):
                 painter.setBrush(Qt.NoBrush)
                 painter.setPen(QPen(QColor(255, 255, 255, 220), 1.2))
                 painter.drawRoundedRect(QRectF(x + 0.5, y + 0.5, bw - 1, bh - 1), 3, 3)
+
+            # 柱顶数值简写标签：柱太矮或与切换按钮重叠时省略
+            if bh >= 10:
+                text = (
+                    _compact_size(size)
+                    if self._metric == "size"
+                    else _compact_count(count)
+                )
+                lrect = QRectF(x - 24, y - 9, bw + 48, 8)
+                if self._btn is None or not self._btn.geometry().intersects(lrect.toRect()):
+                    painter.setOpacity(1.0)
+                    painter.setFont(label_font)
+                    painter.setPen(QColor(TEXT_DIM))
+                    painter.drawText(lrect, Qt.AlignHCenter, text)
 
             painter.setOpacity(1.0)
             if _show_label(i):  # 底部日期轴：只标起始 / 结束
@@ -1003,6 +1102,10 @@ class DetailPanel(QWidget):
 
     def _on_chart_day_selected(self, day: str) -> None:
         """点击趋势图柱子 → 日期选择器切到该天（触发 _on_day_changed 加载详情）。"""
+        self.select_day(day)
+
+    def select_day(self, day: str) -> None:
+        """把面板切到指定日期（外部联动入口，如数据看板点柱）。"""
         idx = self.day_box.findData(day)
         if idx >= 0:
             self.day_box.setCurrentIndex(idx)
@@ -1060,6 +1163,7 @@ class DetailPanel(QWidget):
         self.event_filter.setItemText(0, tr("新增"))
         self.event_filter.setItemText(1, tr("已删除"))
         self.event_filter.setItemText(2, tr("全部"))
+        self._chart.retranslate()
 
     def _load_day_async(self, day: str) -> None:
         keyword = self.search.text().strip()
@@ -1270,6 +1374,8 @@ class DetailPanel(QWidget):
         if isinstance(top, Exception):
             self.count_label.setText(tr("加载失败：{err}", err=top))
             return
+        if not isinstance(top, list) or not isinstance(expand_rows, list):
+            return  # 防御：非列表结果直接丢弃
         day = self.day_box.currentData()
         keyword = self.search.text().strip()
         if self._loaded_sig != (day, keyword, self._event_type):
@@ -1278,7 +1384,7 @@ class DetailPanel(QWidget):
         vbar = self.table.verticalScrollBar()
         prev_pos = vbar.value()
         self._model.set_compiled(
-            self._model.records(), top, expand_rows or []
+            self._model.records(), top, expand_rows
         )
         hh = self.table.header()
         hh.blockSignals(True)

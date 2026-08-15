@@ -18,6 +18,7 @@ from .i18n import set_language, tr
 from .scan import scan_and_backfill
 from .storage import Storage, human_size, today_str
 from .ui.ball import MiniBall
+from .ui.dashboard import DashboardPanel
 from .ui.panel import DetailPanel
 from .ui.settings import SettingsDialog
 from .ui.style import app_icon, apply_dark_theme, set_app_user_model_id
@@ -50,6 +51,7 @@ class DiskWatchApp:
         self.widget = FloatingWidget(self.storage, self.monitor, self.config)
         self.ball = MiniBall(self.storage, self.monitor, self.config)
         self.panel = DetailPanel(self.storage)
+        self.dashboard = DashboardPanel(self.storage)
         self.tray = QSystemTrayIcon(app_icon(), qt_app)
 
         self._wire()
@@ -93,8 +95,10 @@ class DiskWatchApp:
     def _wire(self) -> None:
         for surface in (self.widget, self.ball):
             surface.open_panel.connect(self.show_panel)
+            surface.open_dashboard.connect(self.show_dashboard)
             surface.open_settings.connect(self.show_settings)
             surface.request_quit.connect(self.quit)
+        self.dashboard.day_selected.connect(self._dashboard_show_day)
         self.widget.hidden_by_user.connect(self._sync_tray_actions)
         self.widget.collapse_requested.connect(self.collapse)
         self.ball.hidden_by_user.connect(self._sync_tray_actions)
@@ -128,6 +132,7 @@ class DiskWatchApp:
             lambda checked: self.collapse() if checked else self.expand()
         )
         menu.addAction(tr("详情面板…"), self.show_panel)
+        menu.addAction(tr("数据看板…"), self.show_dashboard)
         menu.addSeparator()
         self.act_errors = menu.addAction(tr("最近错误"))
         self.act_errors.triggered.connect(self._show_errors)
@@ -231,6 +236,17 @@ class DiskWatchApp:
         # 卡片也是置顶窗，再抬一次详情，避免挡在表上
         self.panel.raise_()
 
+    def show_dashboard(self) -> None:
+        self.dashboard.showNormal()
+        self.dashboard.raise_()
+        self.dashboard.activateWindow()
+        self.dashboard.raise_()
+
+    def _dashboard_show_day(self, day: str) -> None:
+        """看板点增长柱 → 打开详情面板并切到该天。"""
+        self.show_panel()
+        self.panel.select_day(day)
+
     def activate_from_second_instance(self) -> None:
         """二次启动时唤起已有界面（显示悬浮组件并置前）。"""
         self._show_surface()
@@ -293,6 +309,9 @@ class DiskWatchApp:
             if self.panel.isVisible():
                 self.panel.retranslate()
                 self.panel.reload(keep_day=True)
+            if self.dashboard.isVisible():
+                self.dashboard.retranslate()
+                self.dashboard.reload()
             # 托盘菜单文案是构建时写死的，语言变了必须重建；tooltip 同理
             self._rebuild_tray_menu()
             self.tray.setToolTip(tr("硬盘新增文件监控"))
@@ -305,6 +324,8 @@ class DiskWatchApp:
         self._restart_monitor()
         if self.panel.isVisible():
             self.panel.reload(keep_day=True)
+        if self.dashboard.isVisible():
+            self.dashboard.reload()
 
     def _restart_app(self) -> None:
         """整程序重启（托盘菜单「重启」）。"""

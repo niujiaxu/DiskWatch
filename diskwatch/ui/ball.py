@@ -31,6 +31,7 @@ RING_DAYS = 7
 class MiniBall(QWidget):
     expand_requested = Signal()
     open_panel = Signal()
+    open_dashboard = Signal()
     open_settings = Signal()
     request_quit = Signal()
     hidden_by_user = Signal()
@@ -236,6 +237,7 @@ class MiniBall(QWidget):
         menu = QMenu(self)
         menu.addAction(tr("展开卡片"), self.expand_requested.emit)
         menu.addAction(tr("详情面板…"), self.open_panel.emit)
+        menu.addAction(tr("数据看板…"), self.open_dashboard.emit)
         menu.addAction(tr("设置…"), self.open_settings.emit)
         menu.addSeparator()
         menu.addAction(tr("隐藏（保留托盘图标）"), self._hide_self)

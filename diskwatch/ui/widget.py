@@ -69,6 +69,7 @@ class FileRow(QWidget):
 
 class FloatingWidget(QWidget):
     open_panel = Signal()
+    open_dashboard = Signal()
     open_settings = Signal()
     request_quit = Signal()
     hidden_by_user = Signal()
@@ -180,10 +181,13 @@ class FloatingWidget(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
         btn_detail = QPushButton(tr("详情"), objectName="tool")
+        btn_dashboard = QPushButton(tr("看板"), objectName="tool")
         btn_setting = QPushButton(tr("设置"), objectName="tool")
         btn_detail.clicked.connect(self.open_panel.emit)
+        btn_dashboard.clicked.connect(self.open_dashboard.emit)
         btn_setting.clicked.connect(self.open_settings.emit)
         self.btn_detail = btn_detail
+        self.btn_dashboard = btn_dashboard
         self.btn_setting = btn_setting
         foot.addWidget(self.status)
         btn_row.addStretch(1)
@@ -344,6 +348,7 @@ class FloatingWidget(QWidget):
         self.btn_min.setToolTip(tr("收成迷你悬浮球"))
         self.btn_close.setToolTip(tr("隐藏组件（托盘图标可再次唤出）"))
         self.btn_detail.setText(tr("详情"))
+        self.btn_dashboard.setText(tr("看板"))
         self.btn_setting.setText(tr("设置"))
         self.empty.setText(
             tr("暂无记录。默认不监控 AppData、Program Files 等系统目录，"

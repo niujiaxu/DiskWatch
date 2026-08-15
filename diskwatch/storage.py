@@ -626,6 +626,61 @@ class Storage:
         finally:
             conn.close()
 
+    def top_folders_range(self, days: int, limit: int = 10) -> list[tuple[str, int, int]]:
+        """近 N 天（含今天）按目录聚合 TOP，体积降序，后台线程可用。"""
+        cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
+        conn = self._connect()
+        conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            cur = conn.execute(
+                "SELECT folder, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
+                "WHERE day >= ? AND deleted = 0 GROUP BY folder "
+                "ORDER BY s DESC, c DESC LIMIT ?",
+                (cutoff, limit),
+            )
+            return [(r["folder"], int(r["c"]), int(r["s"])) for r in cur.fetchall()]
+        finally:
+            conn.close()
+
+    def top_extensions_range(self, days: int, limit: int = 8) -> list[tuple[str, int, int]]:
+        """近 N 天（含今天）按扩展名聚合 TOP，体积降序，后台线程可用。"""
+        cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
+        conn = self._connect()
+        conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            cur = conn.execute(
+                "SELECT ext, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
+                "WHERE day >= ? AND deleted = 0 GROUP BY ext "
+                "ORDER BY s DESC, c DESC LIMIT ?",
+                (cutoff, limit),
+            )
+            return [
+                (r["ext"] or tr("(无扩展名)"), int(r["c"]), int(r["s"]))
+                for r in cur.fetchall()
+            ]
+        finally:
+            conn.close()
+
+    def disk_space_trend(self, days: int) -> list[tuple[str, str, int]]:
+        """近 N 天每盘剩余空间采样序列 (day, drive, free_bytes)，后台线程可用。
+
+        disk_space 只保留每天每盘最新采样，天然是趋势序列；缺采样的天不出现。
+        """
+        cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
+        conn = self._connect()
+        conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            cur = conn.execute(
+                "SELECT day, drive, free_bytes FROM disk_space "
+                "WHERE day >= ? ORDER BY day, drive",
+                (cutoff,),
+            )
+            return [
+                (r["day"], r["drive"], int(r["free_bytes"])) for r in cur.fetchall()
+            ]
+        finally:
+            conn.close()
+
     def fetch_day_view(
         self,
         day: str,
