@@ -10,6 +10,7 @@ All notable changes to DiskWatch are documented in this file.
 - 详情趋势图：默认对数刻度（小值柱清晰可辨），可切换线性；柱顶显示体积/数量简写
 
 ### Fixed
+- 趋势图柱顶数字被遮挡：柱顶标签原在柱循环内绘制，矮柱标签会被后画的相邻高柱柱身盖住；改为全部柱画完后统一置顶绘制
 - 详情面板双击目录无反应 / 只展开不能折叠：Qt 真实双击序列下 pressedIndex 被 release 清空，doubleClicked 信号奇偶次错位。改为子类化 QTreeView 覆写 mouseDoubleClickEvent，组行双击直接展开/折叠，文件行双击走 row_double_clicked，完全绕开 Qt 双击时序机制
 - 详情面板双击目录仅时间列可收缩：expandedIndexes 按 (row, column) 区分，跨列双击时 isExpanded 查不到展开状态。组行双击统一归一到列 0 再判断展开/折叠
 - 停止/重启时最后一批写入可能丢失：monitor.stop() 现在真正汇合后台消费线程（含最终 flush）后才返回，杜绝线程写已关闭连接

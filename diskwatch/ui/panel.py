@@ -773,6 +773,9 @@ class TrendChart(QWidget):
         label_font.setPointSizeF(max(6.5, label_font.pointSizeF() - 2.5))
         axis_pen = QPen(QColor(TEXT_DIM))
         n_bars = len(self._data)
+        # 柱顶标签延迟到所有柱画完再统一绘制：先画的矮柱标签会被
+        # 后画的相邻高柱柱身盖住（表现为数字显示不全/被遮挡）
+        labels: list[tuple[str, QRectF]] = []
         # 底部只标起始 / 结束两个日期，避免相邻标签重叠
         def _show_label(i: int) -> bool:
             return i == 0 or i == n_bars - 1
@@ -809,10 +812,7 @@ class TrendChart(QWidget):
                 )
                 lrect = QRectF(x - 24, y - 9, bw + 48, 8)
                 if self._btn is None or not self._btn.geometry().intersects(lrect.toRect()):
-                    painter.setOpacity(1.0)
-                    painter.setFont(label_font)
-                    painter.setPen(QColor(TEXT_DIM))
-                    painter.drawText(lrect, Qt.AlignHCenter, text)
+                    labels.append((text, lrect))
 
             painter.setOpacity(1.0)
             if _show_label(i):  # 底部日期轴：只标起始 / 结束
@@ -824,6 +824,13 @@ class TrendChart(QWidget):
                 cx = x + bw / 2
                 rect = QRectF(cx - 100, label_y, 200, _LABEL_H - 2)
                 painter.drawText(rect, Qt.AlignCenter, day[5:])  # ISO 日期取 MM-DD
+
+        # 最后统一绘制柱顶标签（置顶，不被任何柱身遮挡）
+        for text, lrect in labels:
+            painter.setOpacity(1.0)
+            painter.setFont(label_font)
+            painter.setPen(QColor(TEXT_DIM))
+            painter.drawText(lrect, Qt.AlignHCenter, text)
         painter.end()
 
 
