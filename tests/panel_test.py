@@ -342,10 +342,10 @@ def test_full_display_no_truncation(tmp_path) -> None:
 
 
 def test_double_click_group_toggles_expand(qapp, tmp_path) -> None:
-    """双击目录行展开/折叠明细（回归：Qt 内置 expandsOnDoubleClick 与
-    doubleClicked 双重触发会把展开又折叠回去，表现为双击没反应）。"""
-    from PySide6.QtCore import QEvent, QPoint
-    from PySide6.QtGui import QMouseEvent
+    """双击目录行展开/折叠明细（回归：Qt 真实双击序列下 pressedIndex 清空导致
+    doubleClicked 奇偶次错位，旧实现第一次双击无效、折叠永远错位）。"""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
 
     from diskwatch.ui.panel import DetailPanel, _Group, compile_view
@@ -377,28 +377,35 @@ def test_double_click_group_toggles_expand(qapp, tmp_path) -> None:
         assert gi is not None and gi.isValid()
         assert not panel.table.isExpanded(gi)
 
-        def _dblclick() -> None:
-            rect = panel.table.visualRect(gi)
-            assert rect.height() > 0, "组行应可见"
-            pos = rect.center()
-            for etype in (
-                QEvent.MouseButtonPress,
-                QEvent.MouseButtonRelease,
-                QEvent.MouseButtonPress,
-                QEvent.MouseButtonDblClick,
-                QEvent.MouseButtonRelease,
-            ):
-                ev = QMouseEvent(
-                    etype, QPoint(pos), QPoint(pos),
-                    Qt.LeftButton, Qt.LeftButton, Qt.NoModifier,
-                )
-                QApplication.sendEvent(panel.table.viewport(), ev)
-            QApplication.processEvents()
+        rect = panel.table.visualRect(gi)
+        assert rect.height() > 0, "组行应可见"
+        pos = rect.center()
+        # QTest.mouseDClick 走窗口系统事件路径，与真实鼠标双击一致
+        QTest.mouseDClick(panel.table.viewport(), Qt.LeftButton, Qt.NoModifier, pos, 50)
+        QApplication.processEvents()
+        assert panel.table.isExpanded(gi), "第 1 次双击应展开明细"
+        QTest.mouseDClick(panel.table.viewport(), Qt.LeftButton, Qt.NoModifier, pos, 50)
+        QApplication.processEvents()
+        assert not panel.table.isExpanded(gi), "第 2 次双击应折叠"
+        QTest.mouseDClick(panel.table.viewport(), Qt.LeftButton, Qt.NoModifier, pos, 50)
+        QApplication.processEvents()
+        assert panel.table.isExpanded(gi), "第 3 次双击应再次展开"
 
-        _dblclick()
-        assert panel.table.isExpanded(gi), "双击目录应展开明细"
-        _dblclick()
-        assert not panel.table.isExpanded(gi), "再次双击应折叠"
+        # 文件行双击 → row_double_clicked → _open_selected（打开资源管理器路径）
+        panel.table.expand(gi)
+        QApplication.processEvents()
+        child = panel._model.index(0, 0, gi)
+        crect = panel.table.visualRect(child)
+        assert crect.height() > 0
+        called: list[int] = []
+        orig = panel._open_selected
+        panel._open_selected = lambda idx=None: (called.append(1), orig(idx))[1]
+        QTest.mouseDClick(
+            panel.table.viewport(), Qt.LeftButton, Qt.NoModifier,
+            crect.center(), 50,
+        )
+        QApplication.processEvents()
+        assert called, "文件行双击应触发 _open_selected"
     finally:
         panel.close()
         s.close()

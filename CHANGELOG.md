@@ -10,7 +10,7 @@ All notable changes to DiskWatch are documented in this file.
 - 详情趋势图：默认对数刻度（小值柱清晰可辨），可切换线性；柱顶显示体积/数量简写
 
 ### Fixed
-- 详情面板双击目录无反应：Qt 内置 expandsOnDoubleClick 与 doubleClicked 信号双重触发（展开后立即被折叠回），显式禁用内置处理，展开/折叠统一走 _open_selected
+- 详情面板双击目录无反应 / 只展开不能折叠：Qt 真实双击序列下 pressedIndex 被 release 清空，doubleClicked 信号奇偶次错位。改为子类化 QTreeView 覆写 mouseDoubleClickEvent，组行双击直接展开/折叠，文件行双击走 row_double_clicked，完全绕开 Qt 双击时序机制
 
 ### Changed
 - 详情面板大表不卡顿：排序/分组编译移入后台线程（主线程仅做模型重置，10 万条从 ~8s 降到 ~4ms），自动刷新按数据版本脏检查跳过无变化重载，刷新/排序保持滚动位置

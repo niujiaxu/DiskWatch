@@ -827,6 +827,34 @@ class TrendChart(QWidget):
         painter.end()
 
 
+class _ExpandTree(QTreeView):
+    """双击统一由视图自己处理，不依赖 Qt 的 pressedIndex/doubleClicked 时序。
+
+    Qt 6 的真实双击事件序列（press → release → dblclick → release）中
+    release 会清空 pressedIndex，导致 QAbstractItemView 发出的 doubleClicked
+    信号奇偶次错位（第一次双击无效、第二次才生效）。因此：
+    - 组行：直接展开 / 折叠（与 pressedIndex 无关，行为确定）
+    - 其余行：发出 row_double_clicked 交给宿主（打开资源管理器定位）
+    """
+
+    row_double_clicked = Signal(QModelIndex)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        idx = self.indexAt(event.position().toPoint())
+        if idx.isValid() and self.model().data(idx, IS_GROUP_ROLE):
+            if self.isExpanded(idx):
+                self.collapse(idx)
+            else:
+                self.expand(idx)
+            event.accept()
+            return
+        if idx.isValid():
+            self.row_double_clicked.emit(idx)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+
 class DetailPanel(QWidget):
     _days_ready = Signal(int, object)
     _day_ready = Signal(int, object)
@@ -950,7 +978,7 @@ class DetailPanel(QWidget):
         self._chart.day_selected.connect(self._on_chart_day_selected)
         root.addWidget(self._chart)
 
-        self.table = QTreeView()
+        self.table = _ExpandTree()
         self.table.setModel(self._model)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -981,7 +1009,8 @@ class DetailPanel(QWidget):
         hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.setColumnWidth(1, 300)
-        self.table.doubleClicked.connect(self._open_selected)
+        # 双击统一由 _ExpandTree 处理：组行展开/折叠，文件行走 row_double_clicked
+        self.table.row_double_clicked.connect(self._open_selected)
         root.addWidget(self.table, 1)
 
         foot = QHBoxLayout()
