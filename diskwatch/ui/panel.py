@@ -581,13 +581,18 @@ _LABEL_H = 14
 
 
 def _compact_size(n: int) -> str:
-    """体积简写：30M / 1.2G / 850K，用于柱顶小标签。"""
+    """体积简写：1.2M / 30M / 850K，用于柱顶小标签。
+
+    用 .4g 保留有效精度（1.2MB 显示 "1.2M" 而非舍入成 "1M"），
+    自动去掉无意义的尾随零（30MB 显示 "30M" 而非 "30.0M"），
+    且不会退化成科学计数法（900KB 显示 "900K" 而非 "9e+02K"）。
+    """
     if n >= 1_000_000_000:
-        return f"{n / 1e9:.1f}G"
+        return f"{n / 1e9:.4g}G"
     if n >= 1_000_000:
-        return f"{n / 1e6:.0f}M"
+        return f"{n / 1e6:.4g}M"
     if n >= 1_000:
-        return f"{n / 1e3:.0f}K"
+        return f"{n / 1e3:.4g}K"
     return f"{n}B"
 
 

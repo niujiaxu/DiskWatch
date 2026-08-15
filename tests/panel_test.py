@@ -200,6 +200,19 @@ def test_deleted_row_timestamp_display() -> None:
     assert pmod._file_display(rec_deleted, 0, Qt.DisplayRole) == time_str
 
 
+def test_compact_size_keeps_precision() -> None:
+    """柱顶简写不得丢失小数精度（1.2MB 不能显示成 1M、3.5MB 不能变 4M）。"""
+    from diskwatch.ui.panel import _compact_size
+
+    assert _compact_size(1_200_000) == "1.2M"
+    assert _compact_size(3_500_000) == "3.5M"
+    assert _compact_size(30_000_000) == "30M"  # 尾随零去掉
+    assert _compact_size(900_000) == "900K"  # 不得退化成科学计数法
+    assert _compact_size(1_500) == "1.5K"
+    assert _compact_size(999) == "999B"
+    assert _compact_size(1_100_000_000) == "1.1G"
+
+
 def test_trend_chart_data_dimension() -> None:
     """趋势图以体积为主维度，零体积天不画柱，旧→新排序。"""
     c = TrendChart()
