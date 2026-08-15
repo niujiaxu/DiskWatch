@@ -112,8 +112,13 @@ def _dir_segments(path: str) -> list[str]:
 
 def _ancestor_dirs(path: str) -> list[str]:
     """从盘符下一层到文件父目录（由浅到深）。"""
+    return _ancestors_from(_parent_dir(path))
+
+
+def _ancestors_from(folder: str) -> list[str]:
+    """从盘符下一层到给定目录（由浅到深）。"""
     chain: list[str] = []
-    cur = _parent_dir(path)
+    cur = _norm(folder)
     while cur and not _is_drive_root(cur):
         chain.append(cur)
         parent = _norm(str(Path(cur).parent))
@@ -241,23 +246,44 @@ def _auto_group(path: str, ancestors: list[str], counts: dict[str, int]) -> Grou
 
 
 def assign_groups(records: list[FileRecord]) -> dict[str, GroupInfo]:
-    """为一批文件分配分组：path → (key, label)。"""
-    ancestors_by_path: dict[str, list[str]] = {}
-    counts: dict[str, int] = defaultdict(int)
+    """为一批文件分配分组：path → (key, label)。
 
+    分组结果只取决于「文件父目录」与「全局祖先目录计数」，二者都能按目录
+    聚合：先统计每个目录的文件数，再逐目录解析路径段/祖先链，避免对同一
+    目录反复做 Path 操作。十万级记录（一天）时比逐文件解析快一个数量级。
+    """
+    folder_counts: dict[str, int] = defaultdict(int)
     for rec in records:
-        ancs = _ancestor_dirs(rec.path)
-        ancestors_by_path[rec.path] = ancs
-        for prefix in ancs:
-            counts[prefix] += 1
+        folder_counts[rec.folder or _parent_dir(rec.path)] += 1
 
+    counts: dict[str, int] = defaultdict(int)
+    anc_cache: dict[str, list[str]] = {}
+    for folder, n in folder_counts.items():
+        ancs = anc_cache.get(folder)
+        if ancs is None:
+            ancs = _ancestors_from(folder)
+            anc_cache[folder] = ancs
+        for prefix in ancs:
+            counts[prefix] += n
+
+    by_folder: dict[str, GroupInfo] = {}
     out: dict[str, GroupInfo] = {}
     for rec in records:
-        special = _special_group(rec.path)
-        if special is not None:
-            out[rec.path] = special
-        else:
-            out[rec.path] = _auto_group(
-                rec.path, ancestors_by_path[rec.path], counts
+        folder = rec.folder or _parent_dir(rec.path)
+        # 父目录为盘根（或缺失）时兜底分组会引用文件自身路径，不能按目录记忆化
+        key = rec.path if not folder or _is_drive_root(folder) else folder
+        g = by_folder.get(key)
+        if g is None:
+            ancs = anc_cache.get(folder)
+            if ancs is None:
+                ancs = _ancestors_from(folder)
+                anc_cache[folder] = ancs
+            special = _special_group(rec.path)
+            g = (
+                special
+                if special is not None
+                else _auto_group(rec.path, ancs, counts)
             )
+            by_folder[key] = g
+        out[rec.path] = g
     return out

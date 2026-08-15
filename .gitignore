@@ -14,6 +14,11 @@ release/
 Thumbs.db
 docs/*-preview-*.png
 
+# 工具缓存（跑测试/检查后生成，不入库）
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
 # Cursor IDE 本地规则
 .cursor/
 

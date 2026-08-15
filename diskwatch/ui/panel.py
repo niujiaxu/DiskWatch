@@ -67,7 +67,6 @@ from .style import (
 
 AUTO_REFRESH_MS = 5000
 SEARCH_DEBOUNCE_MS = 280
-MAX_TABLE_ROWS = 2500
 PATH_ROLE = Qt.UserRole + 1
 IS_GROUP_ROLE = Qt.UserRole + 2
 
@@ -79,14 +78,13 @@ class _Group:
     key: str
     label: str
     files: list[FileRecord] = field(default_factory=list)
+    # 编译阶段预计算（finalize），避免展示时反复 sum/max
+    total_size: int = 0
+    latest_at: float = 0.0
 
-    @property
-    def total_size(self) -> int:
-        return sum(f.size for f in self.files)
-
-    @property
-    def latest_at(self) -> float:
-        return max((f.added_at for f in self.files), default=0.0)
+    def finalize(self) -> None:
+        self.total_size = sum(f.size for f in self.files)
+        self.latest_at = max((f.added_at for f in self.files), default=0.0)
 
 
 def _record_sort_key(rec: FileRecord, col: int):
@@ -116,6 +114,53 @@ def _top_sort_key(item: _Group | FileRecord, col: int):
             return item.total_size
         return item.label.lower()
     return _record_sort_key(item, col)
+
+
+def compile_view(
+    records: list[FileRecord],
+    sort_col: int,
+    sort_order: Qt.SortOrder,
+    grouped: bool,
+) -> tuple[list[_Group | FileRecord], list[int]]:
+    """后台线程执行：排序 + 分组，产出可直接交给模型的 (top, expand_rows)。
+
+    top 为排序后的顶层行（_Group 或提升的单文件 FileRecord）；
+    expand_rows 为分组模式下应默认展开的顶层行下标（子文件数 < 3）。
+    全部计算放在工作线程，主线程只做 beginResetModel/endResetModel。
+    """
+    sorted_files = _sort_records(records, sort_col, sort_order)
+    if not grouped:
+        return list(sorted_files), []
+
+    buckets: dict[str, _Group] = {}
+    order_keys: list[str] = []
+    labels = assign_groups(sorted_files)
+    for rec in sorted_files:
+        key, label = labels[rec.path]
+        if key not in buckets:
+            buckets[key] = _Group(key=key, label=label)
+            order_keys.append(key)
+        buckets[key].files.append(rec)
+
+    top: list[_Group | FileRecord] = []
+    for key in order_keys:
+        g = buckets[key]
+        if len(g.files) == 1:
+            # 单文件不套空壳组，直接提到顶层
+            top.append(g.files[0])
+        else:
+            g.files = _sort_records(g.files, sort_col, sort_order)
+            g.finalize()
+            top.append(g)
+
+    reverse = sort_order == Qt.DescendingOrder
+    top.sort(key=lambda item: _top_sort_key(item, sort_col), reverse=reverse)
+    expand_rows = [
+        i
+        for i, item in enumerate(top)
+        if isinstance(item, _Group) and len(item.files) < 3
+    ]
+    return top, expand_rows
 
 
 def _file_display(rec: FileRecord, col: int, role: int):
@@ -164,6 +209,8 @@ class FilesTreeModel(QAbstractItemModel):
         self._raw: list[FileRecord] = []
         # 顶层：_Group（多文件）或 FileRecord（单文件提升）
         self._top: list[_Group | FileRecord] = []
+        # 应默认展开的顶层行下标（后台编译时预计算）
+        self._expand_rows: list[int] = []
 
     @property
     def grouped(self) -> bool:
@@ -184,16 +231,38 @@ class FilesTreeModel(QAbstractItemModel):
         return len(self._raw)
 
     def set_grouped(self, grouped: bool) -> None:
+        """同步切换分组模式并重建（小数据/测试用；面板走 set_grouped_only）。"""
         if grouped == self._grouped:
             return
         self._grouped = grouped
         self._rebuild()
 
+    def set_grouped_only(self, grouped: bool) -> None:
+        """只改标志不重建，由后台线程随后重新编译视图。"""
+        if grouped == self._grouped:
+            return
+        self._grouped = grouped
+
     def set_records(self, records: list[FileRecord]) -> None:
+        """同步载入并重建（小数据/测试用；面板走 set_compiled）。"""
         self._raw = list(records)
         self._rebuild()
 
+    def set_compiled(
+        self,
+        records: list[FileRecord],
+        top: list[_Group | FileRecord],
+        expand_rows: list[int],
+    ) -> None:
+        """应用后台线程编译好的视图：只做模型重置，不重算任何内容。"""
+        self._raw = records
+        self._top = top
+        self._expand_rows = expand_rows
+        self.beginResetModel()
+        self.endResetModel()
+
     def sort_by(self, column: int, order: Qt.SortOrder) -> None:
+        """同步排序并重建（小数据/测试用；面板走 set_sort_only）。"""
         if column < 0:
             return
         same = column == self._sort_col and order == self._sort_order
@@ -203,49 +272,24 @@ class FilesTreeModel(QAbstractItemModel):
             return
         self._rebuild()
 
+    def set_sort_only(self, column: int, order: Qt.SortOrder) -> None:
+        """只改排序标志不重建，由后台线程随后重新编译视图。"""
+        if column < 0:
+            return
+        self._sort_col = column
+        self._sort_order = order
+
     def expand_rows(self) -> list[int]:
         """分组模式下应默认展开的顶层行（子文件数 < 3）。"""
-        if not self._grouped:
-            return []
-        rows = []
-        for i, item in enumerate(self._top):
-            if isinstance(item, _Group) and len(item.files) < 3:
-                rows.append(i)
-        return rows
+        return self._expand_rows
 
     def _rebuild(self) -> None:
-        self.beginResetModel()
-        sorted_files = _sort_records(self._raw, self._sort_col, self._sort_order)
-        if not self._grouped:
-            self._top = list(sorted_files)
-            self.endResetModel()
-            return
-
-        buckets: dict[str, _Group] = {}
-        order_keys: list[str] = []
-        labels = assign_groups(sorted_files)
-        for rec in sorted_files:
-            key, label = labels[rec.path]
-            if key not in buckets:
-                buckets[key] = _Group(key=key, label=label)
-                order_keys.append(key)
-            buckets[key].files.append(rec)
-
-        top: list[_Group | FileRecord] = []
-        for key in order_keys:
-            g = buckets[key]
-            if len(g.files) == 1:
-                # 单文件不套空壳组，直接提到顶层
-                top.append(g.files[0])
-            else:
-                g.files = _sort_records(g.files, self._sort_col, self._sort_order)
-                top.append(g)
-
-        reverse = self._sort_order == Qt.DescendingOrder
-        col = self._sort_col
-        self._top = sorted(
-            top, key=lambda item: _top_sort_key(item, col), reverse=reverse
+        top, expand_rows = compile_view(
+            self._raw, self._sort_col, self._sort_order, self._grouped
         )
+        self._top = top
+        self._expand_rows = expand_rows
+        self.beginResetModel()
         self.endResetModel()
 
     # ----- QAbstractItemModel -----
@@ -687,6 +731,7 @@ class TrendChart(QWidget):
 class DetailPanel(QWidget):
     _days_ready = Signal(int, object)
     _day_ready = Signal(int, object)
+    _compile_ready = Signal(int, object, object)  # (req, top|Exception, expand_rows)
 
     def __init__(self, storage: Storage) -> None:
         super().__init__(objectName="panelRoot")
@@ -702,6 +747,11 @@ class DetailPanel(QWidget):
         self._load_signature: tuple | None = None
         self._days_req = 0
         self._day_req = 0
+        self._compile_req = 0
+        # 最近一次成功加载的 (day, keyword, event_type)，排序/分组重编译据此判定
+        self._loaded_sig: tuple | None = None
+        # 当前视图对应的数据版本（storage.change_seq），自动刷新据此跳过无变化重载
+        self._data_seq = 0
         self._pending_keep_day: str | None = None
         self._fill_meta: dict | None = None
         self._event_type = "added"
@@ -712,6 +762,7 @@ class DetailPanel(QWidget):
 
         self._days_ready.connect(self._on_days_ready)
         self._day_ready.connect(self._on_day_ready)
+        self._compile_ready.connect(self._on_compile_ready)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._auto_refresh)
@@ -807,7 +858,8 @@ class DetailPanel(QWidget):
         self.table.setUniformRowHeights(True)
         self.table.setRootIsDecorated(True)
         self.table.setItemsExpandable(True)
-        self.table.setAnimated(True)
+        # 全量数据下逐行展开动画开销大，关闭；视觉影响可忽略
+        self.table.setAnimated(False)
         self.table.setIndentation(18)
 
         hh = self.table.header()
@@ -822,10 +874,6 @@ class DetailPanel(QWidget):
         hh.setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.setColumnWidth(1, 300)
         self.table.doubleClicked.connect(self._open_selected)
-        self.banner = QLabel("", objectName="banner")
-        self.banner.setWordWrap(True)
-        self.banner.hide()
-        root.addWidget(self.banner)
         root.addWidget(self.table, 1)
 
         foot = QHBoxLayout()
@@ -1012,17 +1060,6 @@ class DetailPanel(QWidget):
         self.event_filter.setItemText(0, tr("新增"))
         self.event_filter.setItemText(1, tr("已删除"))
         self.event_filter.setItemText(2, tr("全部"))
-        # 截断横幅由 _on_day_ready 重建；语言切换后的 reload 会覆盖，
-        # 这里同步一次避免短暂显示旧语言
-        meta = self._fill_meta
-        if meta and meta.get("truncated"):
-            shown = self._model.file_count()
-            self.banner.setText(
-                tr("共 {count} 条，表格仅显示前 {shown} 条。"
-                   "可在搜索框缩小范围查看其余记录。",
-                   count=f"{meta['count']:,}", shown=f"{shown:,}")
-            )
-            self.banner.show()
 
     def _load_day_async(self, day: str) -> None:
         keyword = self.search.text().strip()
@@ -1031,11 +1068,19 @@ class DetailPanel(QWidget):
         self.count_label.setText(tr("加载中…"))
 
         storage = self._storage
-        limit = MAX_TABLE_ROWS + 1
+        # 排序/分组状态在后台线程编译时固定，避免主线程重建模型
+        sort_col = self._model.sort_col
+        sort_order = self._model.sort_order
+        grouped = self._model.grouped
 
         def work() -> None:
             try:
-                payload = storage.fetch_day_view(day, keyword, limit, self._event_type)
+                payload = storage.fetch_day_view(day, keyword, None, self._event_type)
+                top, expand_rows = compile_view(
+                    payload["records"], sort_col, sort_order, grouped
+                )
+                payload["top"] = top
+                payload["expand_rows"] = expand_rows
             except Exception as exc:
                 payload = exc
             self._day_ready.emit(req, payload)
@@ -1051,7 +1096,6 @@ class DetailPanel(QWidget):
 
         data = payload
         records = data["records"]
-        truncated = data["truncated"]
         count = data["count"]
         size = data["size"]
         day_total = int(data.get("day_total", count))
@@ -1064,6 +1108,8 @@ class DetailPanel(QWidget):
         folder_key = folders[0] if folders else None
         ext_key = exts[0] if exts else None
         space_sig = tuple(spaces)
+        top = data.get("top")
+        expand_rows = data.get("expand_rows") or []
 
         signature = (
             day,
@@ -1074,17 +1120,24 @@ class DetailPanel(QWidget):
             day_total,
             folder_key,
             ext_key,
-            truncated,
             tuple((r.path, r.size, r.added_at) for r in records[:40]),
             len(records),
             space_sig,
         )
         if signature == self._load_signature and self._model.file_count() == len(records):
+            self._data_seq = int(data.get("seq", self._data_seq))
             self.count_label.setText(
-                self._status_text(len(records), count, keyword, truncated, day_total)
+                self._status_text(len(records), count, keyword, day_total)
             )
             return
         self._load_signature = signature
+
+        if top is None:
+            # 防御：直接喂 fetch_day_view 原始 payload（测试等）时主线程编译
+            top, expand_rows = compile_view(
+                records, self._model.sort_col, self._model.sort_order,
+                self._model.grouped,
+            )
 
         self.card_count.set_value(f"{count:,}")
         self.card_size.set_value(human_size(size))
@@ -1106,26 +1159,23 @@ class DetailPanel(QWidget):
         self._fill_meta = {
             "count": count,
             "keyword": keyword,
-            "truncated": truncated,
             "day_total": day_total,
         }
-        if truncated:
-            self.banner.setText(
-                tr("共 {count} 条，表格仅显示前 {shown} 条。"
-                   "可在搜索框缩小范围查看其余记录。",
-                   count=f"{count:,}", shown=f"{len(records):,}")
-            )
-            self.banner.show()
-        else:
-            self.banner.hide()
-        self._model.set_records(records)
+        self._loaded_sig = (day, keyword, event_type)
+        self._data_seq = int(data.get("seq", self._data_seq))
+
+        # 保持滚动位置：刷新/换天时用户上下文不丢
+        vbar = self.table.verticalScrollBar()
+        prev_pos = vbar.value()
+        self._model.set_compiled(records, top, expand_rows)
         hh = self.table.header()
         hh.blockSignals(True)
         hh.setSortIndicator(self._model.sort_col, self._model.sort_order)
         hh.blockSignals(False)
         self._apply_expand_policy()
+        vbar.setValue(min(prev_pos, vbar.maximum()))
         self.count_label.setText(
-            self._status_text(len(records), count, keyword, truncated, day_total)
+            self._status_text(len(records), count, keyword, day_total)
         )
 
     @staticmethod
@@ -1133,15 +1183,8 @@ class DetailPanel(QWidget):
         shown: int,
         count: int,
         keyword: str,
-        truncated: bool,
         day_total: int | None = None,
     ) -> str:
-        if truncated:
-            return tr(
-                "显示前 {shown} 条 / 筛选共 {count} 条（请再缩小关键词）",
-                shown=f"{shown:,}",
-                count=f"{count:,}",
-            )
         if keyword:
             total = count if day_total is None else day_total
             return tr(
@@ -1152,26 +1195,107 @@ class DetailPanel(QWidget):
         return tr("显示 {shown} 条", shown=f"{shown:,}")
 
     def _apply_expand_policy(self) -> None:
-        self.table.collapseAll()
-        for row in self._model.expand_rows():
-            self.table.expand(self._model.index(row, 0))
+        """展开应默认展开的小组；模型重置后其余行天然折叠，无需 collapseAll。"""
+        if not self._model.grouped:
+            return
+        rows = self._model.expand_rows()
+        if not rows:
+            return
+        view = self.table
+        view.setUpdatesEnabled(False)
+        try:
+            for row in rows:
+                view.expand(self._model.index(row, 0))
+        finally:
+            view.setUpdatesEnabled(True)
 
     def _on_group_toggled(self, checked: bool) -> None:
-        self._model.set_grouped(checked)
-        self._apply_expand_policy()
+        self._model.set_grouped_only(checked)
+        self._recompile_async()
 
     def _auto_refresh(self) -> None:
         if not self.isVisible():
             return
         day = self.day_box.currentData()
-        if day == today_str():
-            self._load_day_async(day)
+        if day != today_str():
+            return
+        # 数据没变就不重载：全量视图下避免每 5 秒一次无谓的整表重建
+        if self._storage.change_seq == self._data_seq:
+            return
+        self._load_day_async(day)
 
     def _on_sort_indicator_changed(self, logical_index: int, order: Qt.SortOrder) -> None:
         if logical_index < 0:
             return
-        self._model.sort_by(logical_index, order)
+        self._model.set_sort_only(logical_index, order)
+        self._recompile_async()
+
+    def _recompile_async(self) -> None:
+        """排序/分组变化：后台基于内存数据重编译，不重新查库。
+
+        若当前视图与最近一次加载不一致（如仍在加载中），回退到完整加载。
+        """
+        day = self.day_box.currentData()
+        keyword = self.search.text().strip()
+        if self._loaded_sig != (day, keyword, self._event_type):
+            if day:
+                self._load_day_async(day)
+            return
+
+        records = self._model.records()
+        self._compile_req += 1
+        req = self._compile_req
+        sort_col = self._model.sort_col
+        sort_order = self._model.sort_order
+        grouped = self._model.grouped
+        self.count_label.setText(tr("排序中…"))
+
+        def work() -> None:
+            try:
+                top, expand_rows = compile_view(
+                    records, sort_col, sort_order, grouped
+                )
+            except Exception as exc:
+                top = exc
+                expand_rows = None
+            self._compile_ready.emit(req, top, expand_rows)
+
+        threading.Thread(target=work, name="dw-panel-compile", daemon=True).start()
+
+    def _on_compile_ready(
+        self, req: int, top: object, expand_rows: object
+    ) -> None:
+        if req != self._compile_req or not self.isVisible():
+            return
+        if isinstance(top, Exception):
+            self.count_label.setText(tr("加载失败：{err}", err=top))
+            return
+        day = self.day_box.currentData()
+        keyword = self.search.text().strip()
+        if self._loaded_sig != (day, keyword, self._event_type):
+            return  # 视图已切走，丢弃过期结果
+
+        vbar = self.table.verticalScrollBar()
+        prev_pos = vbar.value()
+        self._model.set_compiled(
+            self._model.records(), top, expand_rows or []
+        )
+        hh = self.table.header()
+        hh.blockSignals(True)
+        hh.setSortIndicator(self._model.sort_col, self._model.sort_order)
+        hh.blockSignals(False)
         self._apply_expand_policy()
+        vbar.setValue(min(prev_pos, vbar.maximum()))
+        meta = self._fill_meta
+        if meta is not None:
+            self.count_label.setText(
+                self._status_text(
+                    self._model.file_count(),
+                    int(meta.get("count", 0)),
+                    str(meta.get("keyword", "")),
+                    int(meta.get("day_total", meta.get("count", 0))),
+                )
+            )
 
     def _apply_filter(self) -> None:
         day = self.day_box.currentData()
@@ -1263,7 +1387,6 @@ class DetailPanel(QWidget):
                             self._model.file_count(),
                             int(meta.get("count", n)),
                             str(meta.get("keyword", "")),
-                            bool(meta.get("truncated", False)),
                             int(meta.get("day_total", meta.get("count", n))),
                         )
                     )
@@ -1288,6 +1411,7 @@ class DetailPanel(QWidget):
         self._search_timer.stop()
         self._days_req += 1
         self._day_req += 1
+        self._compile_req += 1
 
 
 def _shorten(text: str, limit: int) -> str:

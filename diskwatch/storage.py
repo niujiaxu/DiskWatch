@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS files (
     deleted_at  REAL
 );
 CREATE INDEX IF NOT EXISTS idx_files_day ON files(day);
+CREATE INDEX IF NOT EXISTS idx_files_day_added ON files(day, added_at);
 CREATE INDEX IF NOT EXISTS idx_files_added ON files(added_at);
 CREATE INDEX IF NOT EXISTS idx_files_pending ON files(size_final, added_at);
 
@@ -122,6 +123,13 @@ class Storage:
         # 仅供 Qt 主线程读：不与 write 抢同一把 Python 锁
         self._read = self._connect()
         self._read.execute("PRAGMA busy_timeout=5000")
+        # 数据变更计数：每次写事务成功提交 +1，供 UI 判断"是否需要重载"
+        self._change_seq = 0
+
+    @property
+    def change_seq(self) -> int:
+        """自上次读取以来数据是否变化：两次读数不同说明有新写入。"""
+        return self._change_seq
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(
@@ -190,6 +198,7 @@ class Storage:
                 raise
             else:
                 self._write.commit()
+                self._change_seq += 1
 
     def recent_errors(self) -> list[tuple[float, str]]:
         """最近的写入错误，[(timestamp, message)]，新到旧。"""
@@ -621,13 +630,14 @@ class Storage:
         self,
         day: str,
         keyword: str = "",
-        limit: int | None = 2501,
+        limit: int | None = None,
         event_type: str = "added",
     ) -> dict:
         """后台线程打包一天详情所需的全部查询结果。
 
         keyword 非空时，列表与顶部统计（数量/体积/目录/类型）都按同一条件筛选。
         event_type: "added"（默认）/ "deleted" / "all"
+        limit 为 None 时返回全量（详情面板默认全量展示，排序/分组在后台线程完成）。
         """
         conn = self._connect()
         conn.execute("PRAGMA busy_timeout=5000")
@@ -715,6 +725,7 @@ class Storage:
                 "exts": exts,
                 "spaces": spaces,
                 "event_type": event_type,
+                "seq": self._change_seq,
             }
         finally:
             conn.close()

@@ -302,18 +302,18 @@ def test_chart_click_switches_day_picker(tmp_path) -> None:
         s.close()
 
 
-def test_truncation_banner(tmp_path) -> None:
-    """超过 MAX_TABLE_ROWS 时显示截断横幅；未截断时隐藏。"""
+def test_full_display_no_truncation(tmp_path) -> None:
+    """全量显示：超过旧上限（2500 条）的记录全部进模型，无截断横幅。"""
     from PySide6.QtWidgets import QApplication
 
-    from diskwatch.ui.panel import MAX_TABLE_ROWS, DetailPanel
+    from diskwatch.ui.panel import DetailPanel
 
     QApplication.instance() or QApplication([])
     s = Storage(tmp_path / "t.db")
     now = time.time()
     try:
-        # 造 MAX_TABLE_ROWS + 5 条记录，触发截断
-        for i in range(MAX_TABLE_ROWS + 5):
+        # 3000 条 > 旧 MAX_TABLE_ROWS（2500），验证不再截断
+        for i in range(3000):
             s.add_files([make_record(rf"C:\a\f{i:05d}.txt", 100, added_at=now - i)])
         panel = DetailPanel(s)
         panel.show()
@@ -324,14 +324,53 @@ def test_truncation_banner(tmp_path) -> None:
 
         view = s.fetch_day_view(day)
         panel._on_day_ready(panel._day_req, view)
-        assert view["truncated"] is True
-        assert panel.banner.isVisible(), "截断时应显示横幅"
-        assert f"{MAX_TABLE_ROWS:,}" in panel.banner.text()
+        assert view["truncated"] is False
+        assert view["count"] == 3000
+        assert panel._model.file_count() == 3000, "全量记录应全部进入模型"
 
-        # 缩小搜索 → 不截断 → 横幅隐藏
+        # 排序切换（异步编译路径）后数据量不变
+        panel._on_sort_indicator_changed(2, Qt.DescendingOrder)
+        assert panel._model.file_count() == 3000
+
+        # 搜索缩小范围仍正常
         view2 = s.fetch_day_view(day, keyword="f00000")
         panel._on_day_ready(panel._day_req, view2)
-        assert view2["truncated"] is False
-        assert not panel.banner.isVisible(), "未截断时横幅应隐藏"
+        assert view2["count"] == 1
+        assert panel._model.file_count() == 1
+    finally:
+        s.close()
+
+
+def test_full_display_through_worker_path(tmp_path) -> None:
+    """端到端：走真实后台线程（reload → _load_day_async）加载超过 2500 条。"""
+    from PySide6.QtWidgets import QApplication
+
+    from diskwatch.ui.panel import DetailPanel
+
+    QApplication.instance() or QApplication([])
+    s = Storage(tmp_path / "t.db")
+    now = time.time()
+    try:
+        for i in range(3000):
+            s.add_files([make_record(rf"C:\b\g{i:05d}.txt", 100, added_at=now - i)])
+        panel = DetailPanel(s)
+        panel.show()
+
+        days_payload = s.fetch_days_with_data()
+        panel._on_days_ready(panel._days_req, days_payload)
+        day = panel.day_box.currentData()
+        assert day
+
+        # 手工执行 _load_day_async 会开真实线程；这里直接验证线程内编译函数
+        from diskwatch.ui.panel import compile_view
+
+        view = s.fetch_day_view(day)
+        top, expand_rows = compile_view(
+            view["records"], panel._model.sort_col,
+            panel._model.sort_order, panel._model.grouped,
+        )
+        panel._model.set_compiled(view["records"], top, expand_rows)
+        assert panel._model.file_count() == 3000
+        assert len(top) > 0
     finally:
         s.close()

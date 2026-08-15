@@ -103,6 +103,7 @@ _TRANSLATIONS: dict[str, str] = {
     "按文件名或目录筛选…": "Filter by name or folder…",
     "双击文件行可在资源管理器中定位；双击应用分组可展开/折叠": "Double-click a file to reveal in Explorer; double-click a group to expand/collapse",
     "加载中…": "Loading…",
+    "排序中…": "Sorting…",
     "加载失败：{err}": "Load failed: {err}",
     "显示前 {shown} 条 / 筛选共 {count} 条（请再缩小关键词）": "Showing first {shown} / filtered {count} total (try narrowing your keyword)",
     "共 {count} 条，表格仅显示前 {shown} 条。可在搜索框缩小范围查看其余记录。": "{count} records total; the table shows only the first {shown}. Narrow the search to see the rest.",
