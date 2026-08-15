@@ -122,13 +122,13 @@ class CumulativeChart(QWidget):
     def _x(self, i: int) -> float:
         w = self.width()
         n = len(self._data)
-        if n <= 1:
-            return 4.0
+        if n <= 1 or w <= 8:
+            return _PLOT_LEFT
         return _PLOT_LEFT + i * (w - 8) / (n - 1)
 
     def _index_at(self, x: float) -> int:
         n = len(self._data)
-        if n <= 1:
+        if n <= 1 or self.width() <= 8:
             return 0
         i = round((x - _PLOT_LEFT) / (self.width() - 8) * (n - 1))
         return max(0, min(n - 1, i))
@@ -256,13 +256,13 @@ class SpaceTrendChart(QWidget):
 
     def _x(self, i: int) -> float:
         n = len(self._days)
-        if n <= 1:
+        if n <= 1 or self.width() <= 8:
             return _PLOT_LEFT + 2
         return _PLOT_LEFT + i * (self.width() - 8) / (n - 1)
 
     def _index_at(self, x: float) -> int:
         n = len(self._days)
-        if n <= 1:
+        if n <= 1 or self.width() <= 8:
             return 0
         i = round((x - _PLOT_LEFT) / (self.width() - 8) * (n - 1))
         return max(0, min(n - 1, i))
@@ -657,6 +657,11 @@ QPushButton#rangeBtn:checked {{
                 head.addWidget(btn)
         lay.addLayout(head)
         return card, lbl, lay
+
+    def set_storage(self, storage: Storage) -> None:
+        """换用新的数据库连接（位置变更失败回滚时由宿主调用）。"""
+        self._storage = storage
+        self.reload()
 
     # ---------- 数据 ----------
 

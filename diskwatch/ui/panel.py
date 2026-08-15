@@ -862,7 +862,7 @@ class _ExpandTree(QTreeView):
 class DetailPanel(QWidget):
     _days_ready = Signal(int, object)
     _day_ready = Signal(int, object)
-    _compile_ready = Signal(int, object, object)  # (req, top|Exception, expand_rows)
+    _compile_ready = Signal(int, object, object, object)  # (req, top|Exc, expand_rows, records)
     open_dashboard = Signal()  # 标题行「数据面板」按钮 → 宿主打开看板窗口
 
     def __init__(self, storage: Storage) -> None:
@@ -904,6 +904,11 @@ class DetailPanel(QWidget):
         self._search_timer.timeout.connect(self._apply_filter)
 
     # ---------- 构建 ----------
+
+    def set_storage(self, storage: Storage) -> None:
+        """换用新的数据库连接（位置变更失败回滚时由宿主调用）。"""
+        self._storage = storage
+        self.reload(keep_day=True)
 
     def _build(self) -> None:
         root = QVBoxLayout(self)
@@ -1405,12 +1410,13 @@ class DetailPanel(QWidget):
             except Exception as exc:
                 top = exc
                 expand_rows = None
-            self._compile_ready.emit(req, top, expand_rows)
+            # 把编译所基于的记录集一并发回，供主线程校验身份
+            self._compile_ready.emit(req, top, expand_rows, records)
 
         threading.Thread(target=work, name="dw-panel-compile", daemon=True).start()
 
     def _on_compile_ready(
-        self, req: int, top: object, expand_rows: object
+        self, req: int, top: object, expand_rows: object, records: object
     ) -> None:
         if req != self._compile_req or not self.isVisible():
             return
@@ -1419,6 +1425,10 @@ class DetailPanel(QWidget):
             return
         if not isinstance(top, list) or not isinstance(expand_rows, list):
             return  # 防御：非列表结果直接丢弃
+        if records is not self._model.records():
+            # 编译期间记录集已被新的加载替换（自动刷新/手动刷新），
+            # 基于旧快照的编译结果不能应用到新数据上，直接丢弃
+            return
         day = self.day_box.currentData()
         keyword = self.search.text().strip()
         if self._loaded_sig != (day, keyword, self._event_type):

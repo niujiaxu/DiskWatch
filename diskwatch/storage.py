@@ -184,6 +184,7 @@ class Storage:
         rollback，下一次写入会被并进这个未提交事务，进程一崩整批丢失。
         """
         with self._write_lock:
+            before = self._write.total_changes
             try:
                 yield
             except BaseException as exc:
@@ -198,7 +199,10 @@ class Storage:
                 raise
             else:
                 self._write.commit()
-                self._change_seq += 1
+                # 只有真正发生了写入（total_changes 增加）才推进数据版本，
+                # 纯 SELECT / 空操作事务（move 无匹配等）不该触发 UI 重载
+                if self._write.total_changes > before:
+                    self._change_seq += 1
 
     def recent_errors(self) -> list[tuple[float, str]]:
         """最近的写入错误，[(timestamp, message)]，新到旧。"""
@@ -280,6 +284,14 @@ class Storage:
             for p in paths:
                 p = p.rstrip("\\/")
                 if not p:
+                    continue
+                # 盘符根（如 "C:"）：整盘没有父目录语义，展开子路径会误删全盘，
+                # 只精确匹配根本身
+                if len(p) == 2 and p[1] == ":":
+                    self._write.execute(
+                        "UPDATE files SET deleted = 1, deleted_at = ? WHERE path = ?",
+                        (when, p),
+                    )
                     continue
                 esc = (p + "\\").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
                 self._write.execute(
@@ -712,14 +724,15 @@ class Storage:
             sql = f"SELECT * FROM files WHERE {where} ORDER BY added_at DESC"
             list_args = list(args)
             if limit is not None:
+                # 多取一条用于探测截断：恰好 limit 条时不该误报、也不该丢记录
                 sql += " LIMIT ?"
-                list_args.append(limit)
+                list_args.append(limit + 1)
             records = [
                 _row_to_record(r) for r in conn.execute(sql, list_args).fetchall()
             ]
-            truncated = limit is not None and len(records) >= limit
+            truncated = limit is not None and len(records) > limit
             if truncated:
-                records = records[: limit - 1]  # type: ignore[operator]
+                records = records[:limit]  # type: ignore[operator]
 
             row = conn.execute(
                 f"SELECT COUNT(*) c, COALESCE(SUM(size), 0) s FROM files WHERE {where}",

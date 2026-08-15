@@ -12,6 +12,16 @@ All notable changes to DiskWatch are documented in this file.
 ### Fixed
 - 详情面板双击目录无反应 / 只展开不能折叠：Qt 真实双击序列下 pressedIndex 被 release 清空，doubleClicked 信号奇偶次错位。改为子类化 QTreeView 覆写 mouseDoubleClickEvent，组行双击直接展开/折叠，文件行双击走 row_double_clicked，完全绕开 Qt 双击时序机制
 - 详情面板双击目录仅时间列可收缩：expandedIndexes 按 (row, column) 区分，跨列双击时 isExpanded 查不到展开状态。组行双击统一归一到列 0 再判断展开/折叠
+- 停止/重启时最后一批写入可能丢失：monitor.stop() 现在真正汇合后台消费线程（含最终 flush）后才返回，杜绝线程写已关闭连接
+- 重启失败路径丢失单实例锁：Popen 成功后才 detach 锁，失败时保持持有，避免双实例同时监控
+- 退出/重启前汇合补扫与清理线程（超时 5s），避免它们写已关闭的库
+- 切换文件位置失败时 UI 组件仍引用已关闭连接：失败回滚现在把悬浮卡片/迷你球/详情面板/看板统一 rebind 到新连接
+- 详情面板排序/分组重编译与自动刷新交叉时可能把旧快照结果应用到新数据：编译结果按记录集身份校验，过期即丢弃
+- 配置损坏防御：widget_pos/ball_pos 非数值、widget_opacity 非数字、filter_version 非整数均不再导致启动崩溃或设置对话框打不开
+- mark_deleted 对盘符根路径不再展开子路径匹配（防止误标记整盘删除）
+- fetch_day_view 的 limit 截断改为多取一条探测，恰好等于 limit 时不误报截断、不丢记录
+- 空操作写事务不再虚假推进数据版本（change_seq），避免多余的重载
+- 配置保存序列化加锁，消除 save_soon 后台线程与主线程并发改 dict 导致的保存丢失
 
 ### Changed
 - 详情面板大表不卡顿：排序/分组编译移入后台线程（主线程仅做模型重置，10 万条从 ~8s 降到 ~4ms），自动刷新按数据版本脏检查跳过无变化重载，刷新/排序保持滚动位置

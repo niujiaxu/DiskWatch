@@ -73,6 +73,11 @@ class MiniBall(QWidget):
         self._restore_geometry()
         self.refresh(initial=True)
 
+    def set_storage(self, storage: Storage) -> None:
+        """换用新的数据库连接（位置变更失败回滚时由宿主调用）。"""
+        self._storage = storage
+        self.refresh()
+
     # ---------- 数据 ----------
 
     def refresh(self, initial: bool = False) -> None:
@@ -270,13 +275,20 @@ class MiniBall(QWidget):
             Qt.WindowStaysOnTopHint, bool(self._config.get("always_on_top", True))
         )
         pos = self._config.get("ball_pos")
-        screen = QApplication.primaryScreen().availableGeometry()
-        if isinstance(pos, list) and len(pos) == 2:
-            x, y = int(pos[0]), int(pos[1])
-            if screen.contains(QPoint(x + self.SIZE // 2, y + self.SIZE // 2)):
-                self.move(x, y)
-                return
-        self.move(screen.right() - self.SIZE - 28, screen.top() + 60)
+        screen = QApplication.primaryScreen()
+        area = screen.availableGeometry() if screen is not None else None
+        if (
+            isinstance(pos, list)
+            and len(pos) == 2
+            and all(isinstance(v, (int, float)) for v in pos)
+            and area is not None
+            and area.contains(QPoint(int(pos[0]) + self.SIZE // 2, int(pos[1]) + self.SIZE // 2))
+        ):
+            self.move(int(pos[0]), int(pos[1]))
+            return
+        if area is None:
+            return
+        self.move(area.right() - self.SIZE - 28, area.top() + 60)
 
     def apply_appearance(self) -> None:
         visible = self.isVisible()

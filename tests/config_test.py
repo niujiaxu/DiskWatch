@@ -53,6 +53,46 @@ def test_corrupt_config_falls_back(monkeypatch, tmp_path) -> None:
     assert c.get("retention_days") == 90
 
 
+def test_corrupt_filter_version_does_not_crash(monkeypatch, tmp_path) -> None:
+    """合法 JSON 但 filter_version 非整数（手改/损坏）不得导致启动崩溃。"""
+    import diskwatch.config as cfg
+
+    home = _isolated(monkeypatch, tmp_path)
+    (home / "config.json").write_text(
+        json.dumps({"filter_version": "abc", "min_size_kb": 8}), encoding="utf-8"
+    )
+    c = cfg.Config()  # 构造（load）不应抛异常
+    assert c.get("min_size_kb") == 8
+    assert c.get("filter_version") == cfg.FILTER_VERSION  # 回退后已重置
+
+
+def test_corrupt_pos_values_do_not_crash_ui(qapp, monkeypatch, tmp_path) -> None:
+    """widget_pos / ball_pos 元素非数值（损坏配置）不得导致 UI 构造崩溃。"""
+    import diskwatch.config as cfg
+    from diskwatch.storage import Storage
+    from diskwatch.ui.ball import MiniBall
+    from diskwatch.ui.widget import FloatingWidget
+    from diskwatch.watcher import FileMonitor
+
+    home = _isolated(monkeypatch, tmp_path)
+    (home / "config.json").write_text(
+        json.dumps(
+            {"widget_pos": ["abc", 100], "ball_pos": [None, 300]}
+        ),
+        encoding="utf-8",
+    )
+    config = cfg.Config()
+    storage = Storage(home / "t.db")
+    try:
+        monitor = FileMonitor(config, storage)
+        w = FloatingWidget(storage, monitor, config)  # 构造即恢复几何
+        b = MiniBall(storage, monitor, config)
+        assert w.isVisible() is not None
+        assert b.isVisible() is not None
+    finally:
+        storage.close()
+
+
 def test_reset_filters(monkeypatch, tmp_path) -> None:
     import diskwatch.config as cfg
 

@@ -158,8 +158,11 @@ class FileMonitor:
             except RuntimeError:
                 pass
             self._observer = None
+        # 必须等到后台线程真正退出：consume 线程在循环结束后还会执行一次
+        # 最终 flush（可能因 SQLite busy 阻塞数秒），若在 storage.close() 之后
+        # 才写完，最后一批写入会静默丢失。所有循环都检查 _stop，必然退出。
         for t in self._threads:
-            t.join(timeout=0.8)
+            t.join()
         self._threads = []
 
     def restart(self) -> None:

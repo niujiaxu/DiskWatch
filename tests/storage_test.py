@@ -26,6 +26,68 @@ def test_add_files_dedup() -> None:
         s.close()
 
 
+def test_mark_deleted_drive_root_does_not_wipe_drive() -> None:
+    """盘符根路径标记删除时不得展开子路径匹配（误删整盘）。"""
+    tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
+    s = _storage(tmp)
+    try:
+        s.add_files(
+            [
+                make_record(r"C:\a\x.txt", 10),
+                make_record(r"C:\b\y.txt", 20),
+            ]
+        )
+        s.mark_deleted(["C:" + "\\"])  # 盘根（带尾分隔符）
+        remaining = [r for r in s.files_for_day(today_str()) if not r.deleted]
+        assert len(remaining) == 2, "盘根删除不得标记盘内文件"
+        # 精确路径仍可删除
+        s.mark_deleted([r"C:\a\x.txt"])
+        remaining = [r for r in s.files_for_day(today_str()) if not r.deleted]
+        assert [r.path for r in remaining] == [r"C:\b\y.txt"]
+    finally:
+        s.close()
+
+
+def test_fetch_day_view_limit_exact_boundary() -> None:
+    """limit 恰好等于记录数时不应误报截断、也不应丢记录。"""
+    tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
+    s = _storage(tmp)
+    day = today_str()
+    now = time.time()
+    try:
+        s.add_files(
+            [make_record(rf"C:\a\f{i}.txt", 10, added_at=now - i) for i in range(3)]
+        )
+        # 恰好 3 条、limit=3：不截断，返回全部 3 条
+        view = s.fetch_day_view(day, limit=3)
+        assert view["truncated"] is False
+        assert len(view["records"]) == 3
+        # 库中 4 条、limit=3：截断，保留前 3 条
+        s.add_files([make_record(r"C:\a\f3.txt", 10, added_at=now - 3)])
+        view = s.fetch_day_view(day, limit=3)
+        assert view["truncated"] is True
+        assert len(view["records"]) == 3
+    finally:
+        s.close()
+
+
+def test_change_seq_untouched_by_noop_tx() -> None:
+    """无实际写入的事务（move 无匹配等）不得推进数据版本。"""
+    tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
+    s = _storage(tmp)
+    try:
+        s.add_files([make_record(r"C:\a\x.txt", 10)])
+        seq = s.change_seq
+        # src 未入库且无 fallback → 事务内无任何 DML
+        s.move_file(r"C:\nowhere\a.txt", r"C:\nowhere\b.txt", None)
+        assert s.change_seq == seq, "空操作事务不应自增 change_seq"
+        # 有实际写入时仍要自增
+        s.add_files([make_record(r"C:\a\y.txt", 5)])
+        assert s.change_seq == seq + 1
+    finally:
+        s.close()
+
+
 def test_mark_deleted_and_stats() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
     s = _storage(tmp)

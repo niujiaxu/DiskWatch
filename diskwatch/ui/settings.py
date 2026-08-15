@@ -321,7 +321,12 @@ class SettingsDialog(QDialog):
         self.chk_hidden.setChecked(bool(cfg.get("ignore_hidden", True)))
         self.chk_dot_dirs.setChecked(bool(cfg.get("ignore_dot_dirs", True)))
 
-        self.slider_opacity.setValue(int(float(cfg.get("widget_opacity", 0.95)) * 100))
+        opacity = cfg.get("widget_opacity", 0.95)
+        try:
+            opacity = float(opacity)
+        except (TypeError, ValueError):
+            opacity = 0.95  # 配置损坏时回退默认，避免设置对话框打不开
+        self.slider_opacity.setValue(int(opacity * 100))
         self.chk_top.setChecked(bool(cfg.get("always_on_top", True)))
         self.chk_start_min.setChecked(bool(cfg.get("start_minimized", False)))
         self.chk_autostart.setChecked(autostart_enabled())
@@ -394,14 +399,10 @@ class SettingsDialog(QDialog):
             )
             if reply != QMessageBox.Yes:
                 return  # 用户取消：不保存任何设置，autostart 也不改
-            try:
-                # 先把当前界面里的设置写进内存，迁移动作由调用方在关闭存储后执行
-                self._pending_config_path = new_cfg
-                self._pending_db_path = new_db
-                self.paths_changed = True
-            except OSError as exc:
-                QMessageBox.warning(self, tr("无法更改位置"), str(exc))
-                return
+            # 先把当前界面里的设置写进内存，迁移动作由调用方在关闭存储后执行
+            self._pending_config_path = new_cfg
+            self._pending_db_path = new_db
+            self.paths_changed = True
 
         # 确认完成（路径迁移未取消）后才真正写注册表
         set_autostart(self.chk_autostart.isChecked())

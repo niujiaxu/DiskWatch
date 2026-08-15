@@ -329,7 +329,11 @@ class Config:
         if not isinstance(saved, dict):
             return
         self._data.update(saved)
-        if int(saved.get("filter_version", 0)) < FILTER_VERSION:
+        try:
+            ver = int(saved.get("filter_version", 0))
+        except (TypeError, ValueError):
+            ver = 0  # 配置损坏（非整数版本）时按旧版本处理
+        if ver < FILTER_VERSION:
             self.reset_filters()
             self._data["filter_version"] = FILTER_VERSION
             self.save()
@@ -356,13 +360,16 @@ class Config:
                 self._save_timer = None
 
     def _write_now(self) -> None:
+        # 序列化必须在锁内：save_soon 的后台 timer 线程与主线程的
+        # set/update 并发改 _data 时，无锁遍历 dict 会抛
+        # RuntimeError(dictionary changed size during iteration) 导致保存丢失
         with self._save_lock:
             self._save_timer = None
+            payload = json.dumps(self._data, ensure_ascii=False, indent=2)
         try:
             path = paths.config
             path.parent.mkdir(parents=True, exist_ok=True)
             # 先写临时文件再替换，避免写到一半进程退出把配置截断
-            payload = json.dumps(self._data, ensure_ascii=False, indent=2)
             tmp = path.with_suffix(path.suffix + ".tmp")
             tmp.write_text(payload, encoding="utf-8")
             tmp.replace(path)
@@ -373,10 +380,12 @@ class Config:
         return self._data.get(key, DEFAULTS.get(key, default))
 
     def set(self, key: str, value: Any) -> None:
-        self._data[key] = value
+        with self._save_lock:
+            self._data[key] = value
 
     def update(self, values: dict[str, Any]) -> None:
-        self._data.update(values)
+        with self._save_lock:
+            self._data.update(values)
 
     def reset_filters(self) -> None:
         for key in ("exclude_dirs", "exclude_exts", "exclude_names"):

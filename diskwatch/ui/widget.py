@@ -198,6 +198,11 @@ class FloatingWidget(QWidget):
 
     # ---------- 数据 ----------
 
+    def set_storage(self, storage: Storage) -> None:
+        """换用新的数据库连接（位置变更失败回滚时由宿主调用）。"""
+        self._storage = storage
+        self.refresh()
+
     def refresh(self) -> None:
         day = today_str()
         count, size = self._storage.day_stats(day)
@@ -361,14 +366,21 @@ class FloatingWidget(QWidget):
     def _restore_geometry(self) -> None:
         self.apply_appearance()
         pos = self._config.get("widget_pos")
-        screen = QApplication.primaryScreen().availableGeometry()
-        if isinstance(pos, list) and len(pos) == 2:
-            x, y = int(pos[0]), int(pos[1])
-            if screen.contains(QPoint(x + 40, y + 40)):
-                self.move(x, y)
-                return
+        screen = QApplication.primaryScreen()
+        area = screen.availableGeometry() if screen is not None else None
+        if (
+            isinstance(pos, list)
+            and len(pos) == 2
+            and all(isinstance(v, (int, float)) for v in pos)
+            and area is not None
+            and area.contains(QPoint(int(pos[0]) + 40, int(pos[1]) + 40))
+        ):
+            self.move(int(pos[0]), int(pos[1]))
+            return
+        if area is None:
+            return
         self.adjustSize()
-        self.move(screen.right() - self.width() - 28, screen.top() + 60)
+        self.move(area.right() - self.width() - 28, area.top() + 60)
 
 
 def _elide(text: str, limit: int) -> str:

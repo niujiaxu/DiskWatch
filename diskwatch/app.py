@@ -59,6 +59,9 @@ class DiskWatchApp:
 
         self._scan_notifier = _ScanNotifier()
         self._scan_notifier.done.connect(self._after_scan_refresh)
+        # 启动补扫 / 定期清理的后台线程（退出前需汇合，避免写已关闭的库）。
+        # 必须在 _purge/_start_scan 之前初始化。
+        self._background_threads: list[threading.Thread] = []
 
         self.monitor.start()
         self._purge()
@@ -294,10 +297,17 @@ class DiskWatchApp:
                 )
             except OSError as exc:
                 QMessageBox.warning(self.panel, tr("更改位置失败"), str(exc))
-                # 尽力恢复原库连接
+                # 尽力恢复：旧库已被 close，UI 组件还握着旧连接的引用，
+                # 必须全部换到新 storage，否则界面数据全部刷不出来
                 self.storage = Storage(Path(str(DB_PATH)))
                 self.monitor = FileMonitor(self.config, self.storage)
                 self.monitor.start()
+                self.widget.set_storage(self.storage)
+                self.ball.set_storage(self.storage)
+                self.panel.set_storage(self.storage)
+                self.dashboard.set_storage(self.storage)
+                self.widget.refresh()
+                self.ball.refresh()
                 return
             self._relaunch()
             return
@@ -348,13 +358,8 @@ class DiskWatchApp:
             cwd = str(exe.parent)
 
         # 先放开单实例锁，否则新进程会以为已经在运行
-        if self._instance_lock is not None:
-            try:
-                self._instance_lock.detach()
-            except Exception:
-                pass
-            self._instance_lock = None
-
+        # 注意：必须等 Popen 成功后才 detach —— 失败路径保持持有锁，
+        # 否则本进程继续运行而锁已释放，下次启动会变成双实例
         try:
             subprocess.Popen(args, cwd=cwd, creationflags=creation)
         except OSError as exc:
@@ -365,6 +370,14 @@ class DiskWatchApp:
             )
             return
 
+        if self._instance_lock is not None:
+            try:
+                self._instance_lock.detach()
+            except Exception:
+                pass
+            self._instance_lock = None
+
+        self._join_background()
         try:
             self.monitor.stop()
         except Exception as exc:
@@ -392,7 +405,9 @@ class DiskWatchApp:
                 except Exception as exc:
                     errorlog.log_exception("purge", exc)
 
-            threading.Thread(target=_run, name="dw-purge", daemon=True).start()
+            t = threading.Thread(target=_run, name="dw-purge", daemon=True)
+            t.start()
+            self._background_threads.append(t)
 
     def _start_scan(self) -> None:
         """启动补扫：后台线程拿磁盘现状对账，把漏掉的文件补进库。
@@ -415,7 +430,19 @@ class DiskWatchApp:
             # 扫描落库后再把悬浮组件刷新一次（信号跨线程排队到主线程）
             self._scan_notifier.done.emit()
 
-        threading.Thread(target=_run, name="dw-startup-scan", daemon=True).start()
+        t = threading.Thread(target=_run, name="dw-startup-scan", daemon=True)
+        t.start()
+        self._background_threads.append(t)
+
+    def _join_background(self, timeout: float = 5.0) -> None:
+        """退出/重启前汇合后台补扫/清理线程，避免它们写已关闭的库。
+
+        补扫遍历磁盘可能耗时数十秒，这里带超时尽力等待（超出则放弃，
+        后台线程对已关闭连接的写异常会被各自的 except 记录）。
+        """
+        for t in self._background_threads:
+            t.join(timeout=timeout)
+        self._background_threads = []
 
     def _after_scan_refresh(self) -> None:
         try:
@@ -457,6 +484,7 @@ class DiskWatchApp:
 
     def quit(self) -> None:
         self.config.save()
+        self._join_background()
         self.monitor.stop()
         self.storage.close()
         self.tray.hide()
