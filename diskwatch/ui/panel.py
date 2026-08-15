@@ -841,18 +841,22 @@ class _ExpandTree(QTreeView):
 
     def mouseDoubleClickEvent(self, event) -> None:
         idx = self.indexAt(event.position().toPoint())
-        if idx.isValid() and self.model().data(idx, IS_GROUP_ROLE):
-            if self.isExpanded(idx):
-                self.collapse(idx)
+        if not idx.isValid():
+            super().mouseDoubleClickEvent(event)
+            return
+        if self.model().data(idx, IS_GROUP_ROLE):
+            # 展开状态是整行级的，但 Qt 的 expandedIndexes 按 (row, column)
+            # 区分持久索引：双击不同列时若直接用 idx，isExpanded 会查不到
+            # 展开状态而永远走 expand 分支（无法收缩）。统一归一到列 0。
+            row_idx = idx.sibling(idx.row(), 0)
+            if self.isExpanded(row_idx):
+                self.collapse(row_idx)
             else:
-                self.expand(idx)
+                self.expand(row_idx)
             event.accept()
             return
-        if idx.isValid():
-            self.row_double_clicked.emit(idx)
-            event.accept()
-            return
-        super().mouseDoubleClickEvent(event)
+        self.row_double_clicked.emit(idx)
+        event.accept()
 
 
 class DetailPanel(QWidget):

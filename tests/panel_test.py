@@ -411,6 +411,64 @@ def test_double_click_group_toggles_expand(qapp, tmp_path) -> None:
         s.close()
 
 
+def test_double_click_group_any_column_toggles(qapp, tmp_path) -> None:
+    """双击目录行的任意列都应展开/折叠（回归：expandedIndexes 按 (row, column)
+    区分，跨列双击时 isExpanded 查不到展开状态，导致永远走 expand 分支）。"""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    from diskwatch.ui.panel import DetailPanel, _Group, compile_view
+
+    s = Storage(tmp_path / "t.db")
+    now = time.time()
+    s.add_files(
+        [make_record(rf"C:\BigApp\f{i}.txt", 100 + i, added_at=now - i) for i in range(4)]
+    )
+    panel = DetailPanel(s)
+    panel.show()
+    days = s.fetch_days_with_data()
+    panel._on_days_ready(panel._days_req, days)
+    day = panel.day_box.currentData()
+    view = s.fetch_day_view(day)
+    top, expand_rows = compile_view(
+        view["records"], panel._model.sort_col,
+        panel._model.sort_order, panel._model.grouped,
+    )
+    view["top"] = top
+    view["expand_rows"] = expand_rows
+    panel._on_day_ready(panel._day_req, view)
+    try:
+        gi = None
+        for i in range(panel._model.rowCount()):
+            if isinstance(panel._model._top[i], _Group):
+                gi = panel._model.index(i, 0)
+                break
+        assert gi is not None
+
+        def dbl_col(col: int) -> None:
+            rect = panel.table.visualRect(panel._model.index(gi.row(), col))
+            assert rect.height() > 0
+            QTest.mouseDClick(
+                panel.table.viewport(), Qt.LeftButton, Qt.NoModifier,
+                rect.center(), 50,
+            )
+            QApplication.processEvents()
+
+        # 跨列交替：col0 展开 → col1 折叠 → col4 展开 → col2 折叠
+        dbl_col(0)
+        assert panel.table.isExpanded(gi), "双击时间列应展开"
+        dbl_col(1)
+        assert not panel.table.isExpanded(gi), "双击文件名列应折叠"
+        dbl_col(4)
+        assert panel.table.isExpanded(gi), "双击所在目录列应展开"
+        dbl_col(2)
+        assert not panel.table.isExpanded(gi), "双击大小列应折叠"
+    finally:
+        panel.close()
+        s.close()
+
+
 def test_full_display_through_worker_path(tmp_path) -> None:
     """端到端：走真实后台线程（reload → _load_day_async）加载超过 2500 条。"""
     from PySide6.QtWidgets import QApplication
