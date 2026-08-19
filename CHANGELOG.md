@@ -10,6 +10,13 @@ All notable changes to DiskWatch are documented in this file.
 - 详情趋势图：默认对数刻度（小值柱清晰可辨），可切换线性；柱顶显示体积/数量简写
 
 ### Fixed
+- 看板 TOP 条形图 hover/tooltip 完全失效（命中判断的 x 坐标永远落在行矩形外）
+- 详情面板目录行右键无菜单（组行因缺 path 恒提前 return）；组行右键/双击展开统一归一到列 0，避免 expandedIndexes 按列区分导致无法折叠
+- 目录整体删除事件被忽略，被删子树的文件行残留为幽灵记录：新增 dir_del 事件与 storage.delete_subtree 按前缀物理删除
+- 单文件移动落回曾标删路径时 deleted_at 未清空（复活行残留旧删除时间戳）
+- 迷你球隐藏期间写入量不刷新，重新显示时误触发一次"新增"闪烁
+- 每小时清理线程对象无上限累积；路径迁移前未汇合后台线程
+- 配置保存失败（磁盘满/只读）静默无提示，改为记录日志
 - 趋势图柱顶数字"显示不全"：体积简写原来用取整格式（1.2MB 显示成 1M、3.5MB 显示成 4M），改为保留有效精度（1.2M / 3.5M / 30M），不再是舍入丢小数
 - 趋势图柱顶数字被遮挡：柱顶标签原在柱循环内绘制，矮柱标签会被后画的相邻高柱柱身盖住；改为全部柱画完后统一置顶绘制
 - 详情面板双击目录无反应 / 只展开不能折叠：Qt 真实双击序列下 pressedIndex 被 release 清空，doubleClicked 信号奇偶次错位。改为子类化 QTreeView 覆写 mouseDoubleClickEvent，组行双击直接展开/折叠，文件行双击走 row_double_clicked，完全绕开 Qt 双击时序机制
@@ -26,6 +33,10 @@ All notable changes to DiskWatch are documented in this file.
 - 配置保存序列化加锁，消除 save_soon 后台线程与主线程并发改 dict 导致的保存丢失
 
 ### Changed
+- 代码结构整理：DayPicker 拆到 ui/picker.py，自绘图表组件（柱状图/累计面积/多折线/横向条形）拆到 ui/charts.py，详情面板与看板共用
+- storage 提取公共辅助：_day_of（日归属）、_like_escape（LIKE 转义）、_event_where（事件过滤片段）、_relocate_row（移动行，顺带修正跨盘移动时 drive 列不更新）、_query_day_summaries（主线程/后台共用同一天聚合查询）
+- 详情面板提取 _apply_compiled / _day_picker_text / _restore_status_from_meta，消除三处重复块；重启与退出共用 _shutdown 关闭序列；开机自启与重启共用 launch_args() 启动命令探测
+- 启动补扫复用 filters.safe_stat，删除重复的 _dir_mtime；清理 config 无引用的历史别名
 - 详情面板大表不卡顿：排序/分组编译移入后台线程（主线程仅做模型重置，10 万条从 ~8s 降到 ~4ms），自动刷新按数据版本脏检查跳过无变化重载，刷新/排序保持滚动位置
 - 分组计算按目录聚合：同一天数万条记录时分组耗时降低约一个数量级
 - 按天取数新增 (day, added_at) 复合索引

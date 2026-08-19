@@ -202,7 +202,7 @@ def test_deleted_row_timestamp_display() -> None:
 
 def test_compact_size_keeps_precision() -> None:
     """柱顶简写不得丢失小数精度（1.2MB 不能显示成 1M、3.5MB 不能变 4M）。"""
-    from diskwatch.ui.panel import _compact_size
+    from diskwatch.ui.charts import _compact_size
 
     assert _compact_size(1_200_000) == "1.2M"
     assert _compact_size(3_500_000) == "3.5M"

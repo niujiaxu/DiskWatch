@@ -88,6 +88,29 @@ def test_change_seq_untouched_by_noop_tx() -> None:
         s.close()
 
 
+def test_delete_subtree() -> None:
+    """目录整体删除：按前缀物理删除子树所有行。"""
+    tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
+    s = _storage(tmp)
+    try:
+        s.add_files(
+            [
+                make_record(r"C:\a\x.txt", 10),
+                make_record(r"C:\a\sub\y.txt", 20),
+                make_record(r"C:\b\keep.txt", 30),
+            ]
+        )
+        s.delete_subtree(r"C:\a" + "\\")
+        remaining = [r.path for r in s.files_for_day(today_str())]
+        assert remaining == [r"C:\b\keep.txt"], remaining
+        # 盘符根只精确匹配，不得误删盘内文件
+        s.delete_subtree("C:" + "\\")
+        remaining = [r.path for r in s.files_for_day(today_str())]
+        assert remaining == [r"C:\b\keep.txt"], remaining
+    finally:
+        s.close()
+
+
 def test_mark_deleted_and_stats() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
     s = _storage(tmp)

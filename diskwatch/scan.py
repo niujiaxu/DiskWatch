@@ -15,19 +15,11 @@ import os
 import time
 
 from .config import Config
-from .filters import PathFilter
-from .storage import Storage, make_record
+from .filters import PathFilter, safe_stat
+from .storage import FileRecord, Storage, make_record
 
 SCAN_BATCH = 500
 MTIME_MARGIN = 3.0  # FAT 目录时间戳 2 秒粒度，剪枝判断留 3 秒余量
-
-
-def _dir_mtime(path: str) -> float | None:
-    """目录最近修改时间；stat 失败返回 None（保守：不剪枝）。"""
-    try:
-        return os.stat(path).st_mtime
-    except OSError:
-        return None
 
 
 def scan_and_backfill(
@@ -47,9 +39,9 @@ def scan_and_backfill(
     - 已入库且正常的行不会被覆盖（backfill_records 只插缺失、复活删除行）。
     """
     pfilter = PathFilter(config)
-    cutoff = time.time() - max(1, lookback_days) * 86400
+    cutoff = time.time() - max(1, lookback_days) * 86400  # 至少回看 1 天
     added = 0
-    batch: list = []
+    batch: list[FileRecord] = []
 
     def flush() -> None:
         nonlocal added
@@ -69,8 +61,8 @@ def scan_and_backfill(
             # 目录 mtime 只反映「直接子项」的变更；子目录里的新文件不会
             # 刷新祖先目录的 mtime，所以旧目录只能跳过直接文件 stat，
             # 子目录仍必须深入（它们的 mtime 会各自判定）。
-            old_dir = _dir_mtime(dirpath)
-            if old_dir is not None and old_dir + MTIME_MARGIN < cutoff:
+            mtime = safe_stat(dirpath)
+            if mtime is not None and mtime.st_mtime + MTIME_MARGIN < cutoff:
                 try:
                     for ent in os.scandir(dirpath):
                         try:

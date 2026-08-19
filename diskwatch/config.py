@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
 import shutil
 import threading
@@ -92,16 +93,7 @@ class Paths:
 paths = Paths()
 
 
-# 兼容旧代码里的名字
-def get_config_path() -> Path:
-    return paths.config
-
-
-def get_db_path() -> Path:
-    return paths.db
-
-
-# 许多地方写 CONFIG_PATH / DB_PATH：做成动态查找的薄封装
+# 兼容旧代码里的 DB_PATH 写法：做成动态查找的薄封装
 class _PathProxy:
     def __init__(self, getter) -> None:
         self._getter = getter
@@ -125,13 +117,7 @@ class _PathProxy:
         return self._getter() / other
 
 
-CONFIG_PATH = _PathProxy(get_config_path)
-DB_PATH = _PathProxy(get_db_path)
-
-
-def data_dir() -> Path:
-    """历史兼容：返回默认 AppData 主目录。"""
-    return default_home()
+DB_PATH = _PathProxy(lambda: paths.db)
 
 
 def migrate_file(src: Path, dst: Path) -> None:
@@ -373,8 +359,10 @@ class Config:
             tmp = path.with_suffix(path.suffix + ".tmp")
             tmp.write_text(payload, encoding="utf-8")
             tmp.replace(path)
-        except OSError:
-            pass
+        except OSError as exc:
+            # 不能静默吞掉：磁盘满/只读时用户点保存应知道失败。
+            # 用 logging 而非 errorlog（后者 import 本模块，会循环导入）。
+            logging.getLogger("diskwatch").warning("config save failed: %s", exc)
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, DEFAULTS.get(key, default))

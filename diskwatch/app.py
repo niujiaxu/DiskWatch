@@ -12,6 +12,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from . import APP_NAME, VERSION
+from .autostart import launch_args
 from .config import DB_PATH, Config, apply_paths, default_home, paths
 from .errorlog import errorlog, setup_logging
 from .i18n import set_language, tr
@@ -285,7 +286,9 @@ class DiskWatchApp:
         if pending:
             cfg_path, db_path = pending
             try:
-                # 必须先关掉数据库连接，否则 Windows 上拷贝/替换会失败
+                # 必须先关掉数据库连接，否则 Windows 上拷贝/替换会失败；
+                # 关闭前先汇合后台补扫/清理线程，避免它们写已关闭的库
+                self._join_background()
                 self.monitor.stop()
                 self.storage.close()
                 apply_paths(Path(cfg_path), Path(db_path), migrate=True)
@@ -346,16 +349,7 @@ class DiskWatchApp:
     def _relaunch(self) -> None:
         """重新拉起自身，然后退出当前实例。兼容源码运行与便携版 exe。"""
         creation = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        exe = Path(sys.executable)
-        if exe.name.lower() in ("python.exe", "pythonw.exe"):
-            pythonw = exe.with_name("pythonw.exe")
-            runner = pythonw if pythonw.exists() else exe
-            entry = Path(__file__).resolve().parent.parent / "run.pyw"
-            args = [str(runner), str(entry)]
-            cwd = str(entry.parent)
-        else:
-            args = [str(exe)]
-            cwd = str(exe.parent)
+        args, cwd = launch_args()
 
         # 先放开单实例锁，否则新进程会以为已经在运行
         # 注意：必须等 Popen 成功后才 detach —— 失败路径保持持有锁，
@@ -377,6 +371,10 @@ class DiskWatchApp:
                 pass
             self._instance_lock = None
 
+        self._shutdown()
+
+    def _shutdown(self) -> None:
+        """统一的关闭序列：汇合后台线程 → 停监控 → 关库 → 收起托盘 → 退出。"""
         self._join_background()
         try:
             self.monitor.stop()
@@ -407,6 +405,10 @@ class DiskWatchApp:
 
             t = threading.Thread(target=_run, name="dw-purge", daemon=True)
             t.start()
+            # 只保留仍在运行的线程：每小时定时触发一次，不清理会无限累积
+            self._background_threads = [
+                t for t in self._background_threads if t.is_alive()
+            ]
             self._background_threads.append(t)
 
     def _start_scan(self) -> None:
@@ -484,11 +486,7 @@ class DiskWatchApp:
 
     def quit(self) -> None:
         self.config.save()
-        self._join_background()
-        self.monitor.stop()
-        self.storage.close()
-        self.tray.hide()
-        self.qt_app.quit()
+        self._shutdown()
 
 
 def _ping_running_instance() -> bool:

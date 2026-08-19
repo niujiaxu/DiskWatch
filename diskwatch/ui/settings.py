@@ -29,7 +29,7 @@ from ..config import Config, default_home, paths
 from ..i18n import SUPPORTED_LOCALES, tr
 from ..storage import Storage
 from ..watcher import list_drives
-from .panel import DayPicker
+from .picker import DayPicker
 from .style import PANEL_QSS, apply_window_icon, enable_dark_titlebar
 
 

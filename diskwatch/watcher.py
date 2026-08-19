@@ -100,7 +100,11 @@ class _Handler(FileSystemEventHandler):
         self._monitor.submit(("move", event.src_path, event.dest_path))
 
     def on_deleted(self, event) -> None:
-        if not event.is_directory:
+        if event.is_directory:
+            # 目录整体删除：依赖每个子文件各自发 on_deleted 并不可靠
+            # （网络盘、事件洪峰丢事件时只到目录级通知），直接按子树删除
+            self._monitor.submit(("dir_del", event.src_path))
+        else:
             self._monitor.submit(("del", event.src_path))
 
 
@@ -225,6 +229,7 @@ class FileMonitor:
         deletes: list[str] = []
         moves: list[tuple[str, str, FileRecord | None]] = []
         dir_moves: list[tuple[str, str]] = []
+        dir_dels: list[str] = []
         last_flush = time.monotonic()
 
         while not self._stop.is_set():
@@ -249,6 +254,8 @@ class FileMonitor:
                     dir_moves.append((item[1], item[2]))
                 elif kind == "del":
                     deletes.append(item[1])
+                elif kind == "dir_del":
+                    dir_dels.append(item[1])
 
             due = (
                 time.monotonic() - last_flush >= FLUSH_INTERVAL
@@ -256,13 +263,14 @@ class FileMonitor:
                 or len(deletes) >= FLUSH_BATCH
                 or len(moves) >= FLUSH_BATCH
                 or len(dir_moves) >= FLUSH_BATCH
+                or len(dir_dels) >= FLUSH_BATCH
             )
             if due:
-                self._flush(pending, deletes, moves, dir_moves)
-                pending, deletes, moves, dir_moves = [], [], [], []
+                self._flush(pending, deletes, moves, dir_moves, dir_dels)
+                pending, deletes, moves, dir_moves, dir_dels = [], [], [], [], []
                 last_flush = time.monotonic()
 
-        self._flush(pending, deletes, moves, dir_moves)
+        self._flush(pending, deletes, moves, dir_moves, dir_dels)
 
     def _flush(
         self,
@@ -270,6 +278,7 @@ class FileMonitor:
         deletes: list[str],
         moves: list[tuple[str, str, FileRecord | None]],
         dir_moves: list[tuple[str, str]],
+        dir_dels: list[str],
     ) -> None:
         try:
             if pending:
@@ -286,6 +295,8 @@ class FileMonitor:
             for src, dst in dir_moves:
                 if src != dst:
                     self._storage.move_subtree(src, dst)
+            for src in dir_dels:
+                self._storage.delete_subtree(src)
         except Exception as exc:
             # 后台线程里绝不能因为单批失败而退出
             errorlog.log_exception("flush", exc)

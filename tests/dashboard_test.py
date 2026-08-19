@@ -170,6 +170,22 @@ def test_top_bars(qapp) -> None:
     c.grab()
 
 
+def test_top_bars_row_hover_hit(qapp) -> None:
+    """横向条形 hover 命中：每行 y 区间都应命中（回归：旧实现 contains(4, y)
+    因 x=4 永远落在行矩形左边界 6 之外，hover/tooltip 完全失效）。"""
+    c = TopBarsChart()
+    c.resize(420, 120)
+    c.set_items(
+        [(r"C:\AppA", 3, 90_000_000), (r"C:\AppB", 1, 1_000), (r"C:\AppC", 2, 500)]
+    )
+    for i in range(3):
+        rect = c._row_rect(i)
+        mid_y = rect.center().y()
+        assert c._row_at(mid_y) == i, f"第 {i} 行中心应命中"
+    assert c._row_at(-5) == -1
+    assert c._row_at(10_000) == -1
+
+
 # ---------------------------------------------------------------------------
 # 窗口冒烟
 # ---------------------------------------------------------------------------

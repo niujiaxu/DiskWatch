@@ -113,6 +113,9 @@ class MiniBall(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        # 隐藏期间的写入不会更新 _size_total，重新显示时先对齐基线，
+        # 否则第一次 refresh 会把隐藏期间的累积当成"刚刚新增"误闪一次
+        self.refresh(initial=True)
         self._timer.start(REFRESH_MS)
 
     def hideEvent(self, event) -> None:

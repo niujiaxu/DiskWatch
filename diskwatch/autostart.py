@@ -11,15 +11,24 @@ from . import APP_NAME
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
-def _launch_command() -> str:
+def launch_args() -> tuple[list[str], str]:
+    """重启自身用的 (命令行参数, 工作目录)。
+
+    打包成 exe 后直接指向自身；源码运行时用同目录的 pythonw 拉起
+    run.pyw，避免弹控制台。开机自启与「重启」菜单共用同一探测逻辑。
+    """
     entry = Path(__file__).resolve().parent.parent / "run.pyw"
     exe = Path(sys.executable)
-    # 打包成 exe 后直接指向自身；否则用同目录的 pythonw 避免弹控制台
     if exe.name.lower() not in ("python.exe", "pythonw.exe"):
-        return f'"{exe}"'
+        return [str(exe)], str(exe.parent)
     pythonw = exe.with_name("pythonw.exe")
     runner = pythonw if pythonw.exists() else exe
-    return f'"{runner}" "{entry}"'
+    return [str(runner), str(entry)], str(entry.parent)
+
+
+def _launch_command() -> str:
+    args, _cwd = launch_args()
+    return " ".join(f'"{a}"' for a in args)
 
 
 def is_enabled() -> bool:

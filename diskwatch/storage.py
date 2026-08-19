@@ -83,11 +83,62 @@ class DaySummary:
     day: str
     count: int
     total_size: int
-    total_free: int | None = None  # None=当天无空间采样；0=磁盘已满
+    # 当天所有采样盘的剩余字节合计；None=当天无采样，0=磁盘已满
+    total_free: int | None = None
 
 
 def today_str() -> str:
     return date.today().isoformat()
+
+
+def _day_of(added_at: float) -> str:
+    """时间戳 → 归属日字符串（与入库时的 day 列口径一致）。"""
+    return datetime.fromtimestamp(added_at).date().isoformat()
+
+
+def _like_escape(s: str) -> str:
+    """LIKE 模式的字面量转义：先转义反斜杠，再转义 % 和 _（顺序不可换）。"""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _event_where(event_type: str) -> str:
+    """事件类型 → 行过滤片段（与 day 条件 AND 拼接；"all" 用恒真式）。"""
+    if event_type == "deleted":
+        return "deleted = 1"
+    if event_type == "all":
+        return "1 = 1"
+    return "deleted = 0"
+
+
+def _query_day_summaries(conn: sqlite3.Connection, limit: int) -> list[DaySummary]:
+    """按天聚合摘要（新增数/体积/剩余空间），主线程与后台线程共用同一查询。"""
+    cur = conn.execute(
+        """
+        WITH days AS (
+            SELECT DISTINCT day FROM files WHERE deleted = 0
+            UNION
+            SELECT DISTINCT day FROM disk_space
+        )
+        SELECT d.day,
+               COALESCE(f.c, 0) AS c,
+               COALESCE(f.s, 0) AS s,
+               ds.free AS free
+        FROM days d
+        LEFT JOIN (SELECT day, COUNT(*) c, COALESCE(SUM(size), 0) s
+                   FROM files WHERE deleted = 0 GROUP BY day) f ON f.day = d.day
+        LEFT JOIN (SELECT day, SUM(free_bytes) free
+                   FROM disk_space GROUP BY day) ds ON ds.day = d.day
+        ORDER BY d.day DESC LIMIT ?
+        """,
+        (limit,),
+    )
+    return [
+        DaySummary(
+            r["day"], int(r["c"]), int(r["s"]),
+            int(r["free"]) if r["free"] is not None else None,
+        )
+        for r in cur.fetchall()
+    ]
 
 
 def make_record(path: str, size: int, added_at: float | None = None) -> FileRecord:
@@ -220,7 +271,7 @@ class Storage:
                 r.folder,
                 r.size,
                 r.added_at,
-                datetime.fromtimestamp(r.added_at).date().isoformat(),
+                _day_of(r.added_at),
                 1 if r.size > 0 else 0,
             )
             for r in records
@@ -260,7 +311,7 @@ class Storage:
                 r.folder,
                 r.size,
                 r.added_at,
-                datetime.fromtimestamp(r.added_at).date().isoformat(),
+                _day_of(r.added_at),
                 1 if r.size > 0 else 0,
             )
             for r in records
@@ -293,7 +344,7 @@ class Storage:
                         (when, p),
                     )
                     continue
-                esc = (p + "\\").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                esc = _like_escape(p + "\\")
                 self._write.execute(
                     "UPDATE files SET deleted = 1, deleted_at = ? WHERE path = ? OR path LIKE ? ESCAPE '\\'",
                     (when, p, esc + "%"),
@@ -306,6 +357,21 @@ class Storage:
             self._write.executemany(
                 "DELETE FROM files WHERE path = ?", [(p,) for p in paths]
             )
+
+    def _relocate_row(self, old: str, new: str) -> None:
+        """把行从 old 平移到 new：重算派生字段（含跨盘移动时的 drive），复位 deleted。"""
+        self._write.execute(
+            "UPDATE files SET path = ?, name = ?, folder = ?, ext = ?, "
+            "drive = ?, deleted = 0, deleted_at = NULL WHERE path = ?",
+            (
+                new,
+                Path(new).name,
+                str(Path(new).parent),
+                Path(new).suffix.lower(),
+                (os.path.splitdrive(new)[0] or "").upper(),
+                old,
+            ),
+        )
 
     def move_file(self, src: str, dst: str, fallback: FileRecord | None) -> None:
         """处理单文件改名 / 移动（watchdog 的 on_moved 是唯一事件，不补发 on_created）。
@@ -326,10 +392,7 @@ class Storage:
             if tracked:
                 self._write.execute("DELETE FROM files WHERE path = ?", (dst,))
                 # 文件既然搬到了 dst 就还活着，重置 deleted，防止同批级联标删先执行。
-                self._write.execute(
-                    "UPDATE files SET path = ?, name = ?, folder = ?, ext = ?, deleted = 0, deleted_at = NULL WHERE path = ?",
-                    (dst, Path(dst).name, str(Path(dst).parent), Path(dst).suffix.lower(), src),
-                )
+                self._relocate_row(src, dst)
             elif fallback is not None:
                 self._write.execute(
                     """
@@ -340,7 +403,8 @@ class Storage:
                         added_at   = excluded.added_at,
                         day        = excluded.day,
                         size_final = excluded.size_final,
-                        deleted    = 0
+                        deleted    = 0,
+                        deleted_at = NULL
                     """,
                     (
                         fallback.path,
@@ -350,7 +414,7 @@ class Storage:
                         fallback.folder,
                         fallback.size,
                         fallback.added_at,
-                        datetime.fromtimestamp(fallback.added_at).date().isoformat(),
+                        _day_of(fallback.added_at),
                         1 if fallback.size > 0 else 0,
                     ),
                 )
@@ -369,8 +433,7 @@ class Storage:
             return
         prefix = src + "\\"
         nprefix = dst + "\\"
-        # LIKE 通配符转义：路径里的 % _ 都要当字面量
-        esc = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        esc = _like_escape(prefix)
         with self._write_tx():
             # SELECT 必须和后续 UPDATE 在同一个锁内：_write 连接被多个
             # 后台线程共用，锁外读会与写入并发，读到不一致快照。
@@ -394,10 +457,27 @@ class Storage:
                     self._write.execute("DELETE FROM files WHERE path = ?", (old,))
                 else:
                     # 目录搬到新路径后子文件仍存在，重置 deleted，防级联标删竞态
-                    self._write.execute(
-                        "UPDATE files SET path = ?, name = ?, folder = ?, ext = ?, deleted = 0, deleted_at = NULL WHERE path = ?",
-                        (new, Path(new).name, str(Path(new).parent), Path(new).suffix.lower(), old),
-                    )
+                    self._relocate_row(old, new)
+
+    def delete_subtree(self, src: str) -> None:
+        """目录整体删除：物理删除该目录及其子文件的所有行。
+
+        子文件各自的 on_deleted 事件并不可靠（网络盘/事件洪峰可能只到
+        目录级通知），按前缀删除避免留下磁盘上已不存在的幽灵记录。
+        """
+        src = src.rstrip("\\/")
+        if not src:
+            return
+        with self._write_tx():
+            if len(src) == 2 and src[1] == ":":
+                # 盘符根没有子树语义，只精确匹配
+                self._write.execute("DELETE FROM files WHERE path = ?", (src,))
+                return
+            esc = _like_escape(src + "\\")
+            self._write.execute(
+                "DELETE FROM files WHERE path = ? OR path LIKE ? ESCAPE '\\'",
+                (src, esc + "%"),
+            )
 
     def record_disk_space(self, samples: list[tuple[str, str, int, int]]) -> None:
         """(day, drive, free_bytes, total_bytes) 按天+盘符 upsert，只保留最新采样。"""
@@ -514,33 +594,7 @@ class Storage:
         return [_row_to_record(r) for r in cur.fetchall()]
 
     def days_with_data(self, limit: int = 60) -> list[DaySummary]:
-        cur = self._read.execute(
-            """
-            WITH days AS (
-                SELECT DISTINCT day FROM files WHERE deleted = 0
-                UNION
-                SELECT DISTINCT day FROM disk_space
-            )
-            SELECT d.day,
-                   COALESCE(f.c, 0) AS c,
-                   COALESCE(f.s, 0) AS s,
-                   ds.free AS free
-            FROM days d
-            LEFT JOIN (SELECT day, COUNT(*) c, COALESCE(SUM(size), 0) s
-                       FROM files WHERE deleted = 0 GROUP BY day) f ON f.day = d.day
-            LEFT JOIN (SELECT day, SUM(free_bytes) free
-                       FROM disk_space GROUP BY day) ds ON ds.day = d.day
-            ORDER BY d.day DESC LIMIT ?
-            """,
-            (limit,),
-        )
-        return [
-            DaySummary(
-                r["day"], int(r["c"]), int(r["s"]),
-                int(r["free"]) if r["free"] is not None else None,
-            )
-            for r in cur.fetchall()
-        ]
+        return _query_day_summaries(self._read, limit)
 
     def top_folders(self, day: str, limit: int = 5) -> list[tuple[str, int, int]]:
         cur = self._read.execute(
@@ -608,33 +662,7 @@ class Storage:
         conn = self._connect()
         conn.execute("PRAGMA busy_timeout=5000")
         try:
-            cur = conn.execute(
-                """
-                WITH days AS (
-                    SELECT DISTINCT day FROM files WHERE deleted = 0
-                    UNION
-                    SELECT DISTINCT day FROM disk_space
-                )
-                SELECT d.day,
-                       COALESCE(f.c, 0) AS c,
-                       COALESCE(f.s, 0) AS s,
-                       ds.free AS free
-                FROM days d
-                LEFT JOIN (SELECT day, COUNT(*) c, COALESCE(SUM(size), 0) s
-                           FROM files WHERE deleted = 0 GROUP BY day) f ON f.day = d.day
-                LEFT JOIN (SELECT day, SUM(free_bytes) free
-                           FROM disk_space GROUP BY day) ds ON ds.day = d.day
-                ORDER BY d.day DESC LIMIT ?
-                """,
-                (limit,),
-            )
-            return [
-                DaySummary(
-                    r["day"], int(r["c"]), int(r["s"]),
-                    int(r["free"]) if r["free"] is not None else None,
-                )
-                for r in cur.fetchall()
-            ]
+            return _query_day_summaries(conn, limit)
         finally:
             conn.close()
 
@@ -709,12 +737,7 @@ class Storage:
         conn = self._connect()
         conn.execute("PRAGMA busy_timeout=5000")
         try:
-            if event_type == "deleted":
-                where = "day = ? AND deleted = 1"
-            elif event_type == "all":
-                where = "day = ?"
-            else:
-                where = "day = ? AND deleted = 0"
+            where = f"day = ? AND {_event_where(event_type)}"
             args: list = [day]
             if keyword:
                 where += " AND (LOWER(name) LIKE ? OR LOWER(folder) LIKE ?)"
@@ -742,12 +765,7 @@ class Storage:
 
             day_total = count
             if keyword:
-                if event_type == "deleted":
-                    dt_where = "day = ? AND deleted = 1"
-                elif event_type == "all":
-                    dt_where = "day = ?"
-                else:
-                    dt_where = "day = ? AND deleted = 0"
+                dt_where = f"day = ? AND {_event_where(event_type)}"
                 day_total = int(
                     conn.execute(
                         f"SELECT COUNT(*) c FROM files WHERE {dt_where}",
@@ -820,4 +838,5 @@ def human_size(num: float) -> str:
                 return f"{int(num)} {unit}"
             return f"{num:.1f} {unit}"
         num /= 1024
-    return f"{num:.1f} TB"
+    # 循环在 unit == "TB" 时必然返回，此处不可达
+    raise AssertionError("unreachable")
