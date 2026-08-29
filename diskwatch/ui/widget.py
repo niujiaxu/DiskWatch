@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from ..i18n import tr
 from ..storage import Storage, human_size, today_str
 from ..watcher import FileMonitor, open_in_explorer
-from .style import BG_BOTTOM, BG_TOP, BORDER, OK, WARN, WIDGET_QSS
+from .style import theme_tokens, widget_qss
 
 REFRESH_MS = 2000
 # 视口大约显示这么多行；超出用滚轮 / 细滚动条浏览
@@ -87,7 +87,7 @@ class FloatingWidget(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedWidth(272)
-        self.setStyleSheet(WIDGET_QSS)
+        self.apply_theme()
         self._signature: tuple | None = None
         self._build()
         self._restore_geometry()
@@ -108,7 +108,7 @@ class FloatingWidget(QWidget):
         head = QHBoxLayout()
         head.setSpacing(6)
         self.dot = QLabel("●", objectName="dot")
-        self.title = QLabel(tr("今日新增文件"), objectName="title")
+        self.title = QLabel(tr("今日空间变化"), objectName="title")
         btn_min = QPushButton("－", objectName="close")
         btn_min.setFixedSize(28, 28)
         btn_min.setToolTip(tr("收成迷你悬浮球"))
@@ -129,7 +129,7 @@ class FloatingWidget(QWidget):
         num = QHBoxLayout()
         num.setSpacing(6)
         self.count = QLabel("0", objectName="count")
-        unit = QLabel(tr("个"), objectName="unit")
+        unit = QLabel("", objectName="unit")
         unit.setAlignment(Qt.AlignBottom)
         self.unit = unit
         num.addWidget(self.count)
@@ -168,8 +168,7 @@ class FloatingWidget(QWidget):
         root.addWidget(self.scroll)
 
         self.empty = QLabel(
-            tr("暂无记录。默认不监控 AppData、Program Files 等系统目录，"
-               "可在「设置 → 过滤规则」里调整。"),
+            tr("暂无空间变化。普通文件会全部记录并自动分类。"),
             objectName="sub",
         )
         self.empty.setWordWrap(True)
@@ -206,6 +205,11 @@ class FloatingWidget(QWidget):
     def refresh(self) -> None:
         day = today_str()
         count, size = self._storage.day_stats(day)
+        day_start = datetime.combine(datetime.now().date(), datetime.min.time()).timestamp()
+        summaries = self._storage.attribution_summary(day_start, datetime.now().timestamp())
+        attributed = sum(item.attributed_delta for item in summaries)
+        actual = sum(item.actual_delta for item in summaries)
+        attribution_pct = min(100, round(abs(attributed) / abs(actual) * 100)) if actual else 0
         recent = self._storage.recent_files(day, RECENT_MAX)
         spaces = self._storage.disk_space_for_day(day)
         _, dropped, pending = self._monitor.stats()
@@ -215,6 +219,8 @@ class FloatingWidget(QWidget):
             day,
             count,
             size,
+            attributed,
+            actual,
             roots,
             dropped,
             pending,
@@ -225,8 +231,9 @@ class FloatingWidget(QWidget):
             return
         self._signature = signature
 
-        self.count.setText(f"{count:,}")
-        self.total_size.setText(human_size(size))
+        sign = "+" if attributed >= 0 else "−"
+        self.count.setText(sign + human_size(abs(attributed)))
+        self.total_size.setText(tr("已归因 {pct}%", pct=attribution_pct))
 
         # 保留滚动位置，避免刷新时列表被弹回顶部
         bar = self.scroll.verticalScrollBar()
@@ -254,8 +261,9 @@ class FloatingWidget(QWidget):
             parts.append(tr(" · 丢弃 {dropped}", dropped=dropped))
         self.status.setText("".join(parts))
         self.dot.setText("●" if roots else "○")
+        t = theme_tokens()
         self.dot.setStyleSheet(
-            f"color:{OK.name()};" if roots else f"color:{WARN.name()};"
+            f"color:{t.success};" if roots else f"color:{t.warning};"
         )
 
         bar.setValue(scroll_pos)
@@ -272,17 +280,23 @@ class FloatingWidget(QWidget):
     # ---------- 外观 ----------
 
     def paintEvent(self, event) -> None:
+        t = theme_tokens()
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         path = QPainterPath()
         path.addRoundedRect(rect, 14, 14)
         grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
-        grad.setColorAt(0.0, BG_TOP)
-        grad.setColorAt(1.0, BG_BOTTOM)
+        grad.setColorAt(0.0, t.color("floating_top"))
+        grad.setColorAt(1.0, t.color("floating_bottom"))
         p.fillPath(path, grad)
-        p.setPen(QPen(BORDER, 1))
+        p.setPen(QPen(t.color("border"), 1))
         p.drawPath(path)
+
+    def apply_theme(self) -> None:
+        self.setStyleSheet(widget_qss())
+        self._signature = None
+        self.update()
 
     # ---------- 交互 ----------
 
@@ -347,8 +361,8 @@ class FloatingWidget(QWidget):
             self.show()
 
     def retranslate(self) -> None:
-        self.title.setText(tr("今日新增文件"))
-        self.unit.setText(tr("个"))
+        self.title.setText(tr("今日空间变化"))
+        self.unit.setText("")
         self.sep_label.setText(tr("最近"))
         self.btn_min.setToolTip(tr("收成迷你悬浮球"))
         self.btn_close.setToolTip(tr("隐藏组件（托盘图标可再次唤出）"))
@@ -356,8 +370,7 @@ class FloatingWidget(QWidget):
         self.btn_dashboard.setText(tr("看板"))
         self.btn_setting.setText(tr("设置"))
         self.empty.setText(
-            tr("暂无记录。默认不监控 AppData、Program Files 等系统目录，"
-               "可在「设置 → 过滤规则」里调整。")
+            tr("暂无空间变化。普通文件会全部记录并自动分类。")
         )
         # 状态行文案是 i18n 的；签名不含语言，必须先清掉才会重刷
         self._signature = None

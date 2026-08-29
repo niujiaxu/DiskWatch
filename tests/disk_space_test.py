@@ -59,6 +59,7 @@ def test_purge_older_than() -> None:
         storage.record_disk_space([(day, "C:", 1, 2), ("2020-01-01", "C:", 3, 4)])
         storage.purge_older_than(30)
         assert bool(storage.disk_space_for_day(day))
-        assert not storage.disk_space_for_day("2020-01-01")
+        # 每日磁盘汇总长期保留，原始采样才按保留期清理。
+        assert bool(storage.disk_space_for_day("2020-01-01"))
     finally:
         storage.close()

@@ -11,8 +11,10 @@ if (-not (Test-Path $Python)) {
     throw "Missing .venv. Run start.bat once first."
 }
 
-Write-Host "[*] Ensuring PyInstaller..."
-& $Python -m pip install -q "pyinstaller>=6.0"
+& $Python -c "import PyInstaller" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    throw "Missing PyInstaller. Install requirements-dev.txt before building."
+}
 
 foreach ($dir in @("build", "dist\DiskWatch")) {
     $p = Join-Path $Root $dir
@@ -27,6 +29,29 @@ $Dist = Join-Path $Root "dist\DiskWatch"
 if (-not (Test-Path (Join-Path $Dist "DiskWatch.exe"))) {
     throw "DiskWatch.exe not found in dist\DiskWatch"
 }
+
+Write-Host "[*] Running packaged import self-test..."
+$SelfTestLog = Join-Path $Root "build\packaged-self-test.log"
+$oldSelfTest = $env:DISKWATCH_SELF_TEST
+$oldSelfTestLog = $env:DISKWATCH_SELF_TEST_LOG
+try {
+    $env:DISKWATCH_SELF_TEST = "1"
+    $env:DISKWATCH_SELF_TEST_LOG = $SelfTestLog
+    $process = Start-Process -FilePath (Join-Path $Dist "DiskWatch.exe") `
+        -Wait -PassThru -WindowStyle Hidden
+    if ($process.ExitCode -ne 0) {
+        $detail = if (Test-Path $SelfTestLog) {
+            [System.IO.File]::ReadAllText($SelfTestLog)
+        } else {
+            "No self-test log was produced."
+        }
+        throw "Packaged self-test failed ($($process.ExitCode)): $detail"
+    }
+} finally {
+    $env:DISKWATCH_SELF_TEST = $oldSelfTest
+    $env:DISKWATCH_SELF_TEST_LOG = $oldSelfTestLog
+}
+Write-Host "[*] Packaged self-test passed."
 
 # ASCII launcher name only - Chinese filenames get corrupted under PS 5.1 UTF-8 scripts.
 $bat = @"

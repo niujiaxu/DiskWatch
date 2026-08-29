@@ -1,4 +1,4 @@
-"""DiskWatch - 桌面悬浮组件，实时记录硬盘上每天新增的文件。"""
+"""DiskWatch - 解释磁盘空间变化去向的本地桌面工具。"""
 
 APP_NAME = "DiskWatch"
-VERSION = "1.2.1"
+VERSION = "2.0.0"

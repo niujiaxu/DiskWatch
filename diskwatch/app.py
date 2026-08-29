@@ -18,19 +18,22 @@ from .errorlog import errorlog, setup_logging
 from .i18n import set_language, tr
 from .scan import scan_and_backfill
 from .storage import Storage, human_size, today_str
+from .ui.activity import ActivityPanel
 from .ui.ball import MiniBall
 from .ui.dashboard import DashboardPanel
-from .ui.panel import DetailPanel
+from .ui.main_window import MainWindow
 from .ui.settings import SettingsDialog
-from .ui.style import app_icon, apply_dark_theme, set_app_user_model_id
+from .ui.style import app_icon, install_theme, set_app_user_model_id
 from .ui.widget import FloatingWidget
+from .usn import recover_from_usn
 from .watcher import FileMonitor
 
 
 class _ScanNotifier(QObject):
     """跨线程通知：后台补扫线程完成 → 主线程刷新悬浮组件。"""
 
-    done = Signal()
+    progress = Signal(int, int, str)
+    done = Signal(int, bool)
 
 
 PURGE_INTERVAL_MS = 60 * 60 * 1000  # 每小时清一次过期数据
@@ -44,6 +47,7 @@ class DiskWatchApp:
         # logging 必须在最前：后面的 storage / monitor 一旦出错就靠它记录
         setup_logging()
         self.config = Config()
+        self.theme = install_theme(qt_app, self.config.get("theme_mode", "system"))
         # 语言在创建任何 UI 前设置，所有 tr() 从此按此语言渲染（重启生效）
         set_language(self.config.get("language", "zh_CN"))
         self.storage = Storage(Path(str(DB_PATH)))
@@ -51,8 +55,9 @@ class DiskWatchApp:
 
         self.widget = FloatingWidget(self.storage, self.monitor, self.config)
         self.ball = MiniBall(self.storage, self.monitor, self.config)
-        self.panel = DetailPanel(self.storage)
+        self.panel = ActivityPanel(self.storage)
         self.dashboard = DashboardPanel(self.storage)
+        self.main_window = MainWindow(self.dashboard, self.panel)
         self.tray = QSystemTrayIcon(app_icon(), qt_app)
 
         self._wire()
@@ -60,6 +65,8 @@ class DiskWatchApp:
 
         self._scan_notifier = _ScanNotifier()
         self._scan_notifier.done.connect(self._after_scan_refresh)
+        self._scan_notifier.progress.connect(self.main_window.show_scan_progress)
+        self._scan_cancel = threading.Event()
         # 启动补扫 / 定期清理的后台线程（退出前需汇合，避免写已关闭的库）。
         # 必须在 _purge/_start_scan 之前初始化。
         self._background_threads: list[threading.Thread] = []
@@ -88,7 +95,7 @@ class DiskWatchApp:
 
         if self.monitor.errors:
             self.tray.showMessage(
-                tr("硬盘新增文件监控"),
+                tr("DiskWatch 磁盘空间监控"),
                 tr("部分位置监控失败：\n") + "\n".join(self.monitor.errors[:3]),
                 QSystemTrayIcon.Warning,
                 5000,
@@ -104,6 +111,8 @@ class DiskWatchApp:
             surface.request_quit.connect(self.quit)
         self.dashboard.day_selected.connect(self._dashboard_show_day)
         self.panel.open_dashboard.connect(self.show_dashboard)
+        self.main_window.settings_requested.connect(self.show_settings)
+        self.main_window.scan_cancel_requested.connect(self._cancel_scan)
         self.widget.hidden_by_user.connect(self._sync_tray_actions)
         self.widget.collapse_requested.connect(self.collapse)
         self.ball.hidden_by_user.connect(self._sync_tray_actions)
@@ -120,7 +129,7 @@ class DiskWatchApp:
         self._rebuild_tray_menu()
         # 错误信号 → 实时更新菜单文案（ERROR/WARNING 时显示数字），只连一次
         errorlog.bus.error_recorded.connect(self._refresh_errors_action)
-        self.tray.setToolTip(tr("硬盘新增文件监控"))
+        self.tray.setToolTip(tr("DiskWatch 磁盘空间监控"))
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
         self._sync_tray_actions()
@@ -137,7 +146,7 @@ class DiskWatchApp:
             lambda checked: self.collapse() if checked else self.expand()
         )
         menu.addAction(tr("详情面板…"), self.show_panel)
-        menu.addAction(tr("数据看板…"), self.show_dashboard)
+        menu.addAction(tr("概览…"), self.show_dashboard)
         menu.addSeparator()
         self.act_errors = menu.addAction(tr("最近错误"))
         self.act_errors.triggered.connect(self._show_errors)
@@ -234,18 +243,10 @@ class DiskWatchApp:
         self.act_ball.setChecked(self._collapsed())
 
     def show_panel(self) -> None:
-        # 最小化后再点「详情」，仅 show()/raise_() 不会从任务栏恢复
-        self.panel.showNormal()
-        self.panel.raise_()
-        self.panel.activateWindow()
-        # 卡片也是置顶窗，再抬一次详情，避免挡在表上
-        self.panel.raise_()
+        self.main_window.show_activity()
 
     def show_dashboard(self) -> None:
-        self.dashboard.showNormal()
-        self.dashboard.raise_()
-        self.dashboard.activateWindow()
-        self.dashboard.raise_()
+        self.main_window.show_overview()
 
     def _dashboard_show_day(self, day: str) -> None:
         """看板点增长柱 → 打开详情面板并切到该天。"""
@@ -270,7 +271,9 @@ class DiskWatchApp:
         self.activate_from_second_instance()
 
     def show_settings(self) -> None:
-        dlg = SettingsDialog(self.config, self.storage, self.panel)
+        dlg = SettingsDialog(
+            self.config, self.storage, self.panel, monitor=self.monitor
+        )
         if not dlg.exec():
             return
         values = dlg.result_values()
@@ -279,6 +282,7 @@ class DiskWatchApp:
 
         self.config.update(values)
         self.config.save()
+        install_theme(self.qt_app, values.get("theme_mode", "system"))
 
         # 路径变更需要重启，重启后新语言也会自动生效；
         # 先处理路径，避免被下面的语言分支提前 return 吞掉。
@@ -320,15 +324,16 @@ class DiskWatchApp:
             set_language(new_lang)
             self.widget.retranslate()
             self.ball.retranslate()
+            self.panel.retranslate()
+            self.dashboard.retranslate()
+            self.main_window.retranslate()
             if self.panel.isVisible():
-                self.panel.retranslate()
                 self.panel.reload(keep_day=True)
             if self.dashboard.isVisible():
-                self.dashboard.retranslate()
                 self.dashboard.reload()
             # 托盘菜单文案是构建时写死的，语言变了必须重建；tooltip 同理
             self._rebuild_tray_menu()
-            self.tray.setToolTip(tr("硬盘新增文件监控"))
+            self.tray.setToolTip(tr("DiskWatch 磁盘空间监控"))
             self._tip_signature = None
             self._restart_monitor()
             return
@@ -376,6 +381,8 @@ class DiskWatchApp:
     def _shutdown(self) -> None:
         """统一的关闭序列：汇合后台线程 → 停监控 → 关库 → 收起托盘 → 退出。"""
         self._join_background()
+        self.dashboard.wait_for_idle()
+        self.panel.wait_for_idle()
         try:
             self.monitor.stop()
         except Exception as exc:
@@ -412,29 +419,63 @@ class DiskWatchApp:
             self._background_threads.append(t)
 
     def _start_scan(self) -> None:
-        """启动补扫：后台线程拿磁盘现状对账，把漏掉的文件补进库。
-
-        不阻塞启动；扫描与实时 watcher 共用同一套过滤规则。
-        """
-        if not self.config.get("scan_on_startup", True):
+        """优先 USN 增量恢复；不可用时仅按配置做受控目录补扫。"""
+        mode = str(self.config.get("startup_recovery", "usn"))
+        if mode == "disabled":
             return
+        self._scan_cancel.clear()
 
         def _run() -> None:
+            added = 0
             try:
-                scan_and_backfill(
-                    self.config,
-                    self.storage,
-                    self.monitor.roots,
-                    lookback_days=int(self.config.get("scan_lookback_days", 3)),
-                )
+                scan_roots: list[str] = []
+                if mode == "usn":
+                    report = recover_from_usn(
+                        self.config, self.storage, self.monitor.roots
+                    )
+                    if report.fallback_roots and self.config.get("scan_on_startup", True):
+                        scan_roots = self._fallback_scan_roots(report.fallback_roots)
+                elif mode == "scan":
+                    scan_roots = self._fallback_scan_roots(self.monitor.roots)
+                if scan_roots:
+                    self._scan_notifier.progress.emit(0, 0, "")
+                    added = scan_and_backfill(
+                        self.config,
+                        self.storage,
+                        scan_roots,
+                        lookback_days=int(self.config.get("scan_lookback_days", 3)),
+                        cancel_event=self._scan_cancel,
+                        progress=self._scan_notifier.progress.emit,
+                    )
             except Exception as exc:
-                errorlog.log_exception("scan", exc)
+                errorlog.log_exception("startup-recovery", exc)
             # 扫描落库后再把悬浮组件刷新一次（信号跨线程排队到主线程）
-            self._scan_notifier.done.emit()
+            self._scan_notifier.done.emit(added, self._scan_cancel.is_set())
 
         t = threading.Thread(target=_run, name="dw-startup-scan", daemon=True)
         t.start()
         self._background_threads.append(t)
+
+    def _fallback_scan_roots(self, roots) -> list[str]:
+        scope = str(self.config.get("scan_scope", "user_dirs"))
+        if scope == "disabled":
+            return []
+        if scope == "watched_roots":
+            return list(dict.fromkeys(str(root) for root in roots))
+        home = Path.home()
+        candidates = [
+            home / name
+            for name in ("Desktop", "Downloads", "Documents", "Pictures", "Videos")
+        ]
+        candidates.extend(Path(path) for path in self.config.get("watch_folders", []))
+        root_drives = {
+            Path(str(root)).drive.upper() for root in roots if Path(str(root)).drive
+        }
+        return [
+            str(path)
+            for path in dict.fromkeys(candidates)
+            if path.exists() and (not root_drives or path.drive.upper() in root_drives)
+        ]
 
     def _join_background(self, timeout: float = 5.0) -> None:
         """退出/重启前汇合后台补扫/清理线程，避免它们写已关闭的库。
@@ -442,14 +483,20 @@ class DiskWatchApp:
         补扫遍历磁盘可能耗时数十秒，这里带超时尽力等待（超出则放弃，
         后台线程对已关闭连接的写异常会被各自的 except 记录）。
         """
+        self._scan_cancel.set()
         for t in self._background_threads:
             t.join(timeout=timeout)
         self._background_threads = []
 
-    def _after_scan_refresh(self) -> None:
+    def _cancel_scan(self) -> None:
+        self._scan_cancel.set()
+
+    def _after_scan_refresh(self, added: int = 0, cancelled: bool = False) -> None:
         try:
             self.widget.refresh()
             self.ball.refresh()
+            if self.main_window.scan_strip.isVisible():
+                self.main_window.finish_scan(added, cancelled)
         except Exception as exc:
             errorlog.log_exception("scan-refresh", exc)
 
@@ -459,7 +506,7 @@ class DiskWatchApp:
             return
         self._tip_signature = (count, size)
         self.tray.setToolTip(
-            tr("硬盘新增文件监控")
+            tr("DiskWatch 磁盘空间监控")
             + "\n"
             + tr(
                 "今日新增 {count} 个文件 · {size}",
@@ -472,7 +519,7 @@ class DiskWatchApp:
         QMessageBox.information(
             self.panel,
             tr("关于 {name}", name=APP_NAME),
-            f"{tr('硬盘新增文件监控')} v{VERSION}\n\n"
+            f"{tr('DiskWatch 磁盘空间监控')} v{VERSION}\n\n"
             + tr("实时记录硬盘上每天新增了哪些文件。")
             + "\n"
             + tr("数据库：{db}", db=paths.db)
@@ -513,7 +560,7 @@ def main() -> int:
     qt_app.setQuitOnLastWindowClosed(False)
     icon = app_icon()
     qt_app.setWindowIcon(icon)
-    apply_dark_theme(qt_app)
+    install_theme(qt_app, Config().get("theme_mode", "system"))
 
     # 早期就需要语言（下述消息框），且保证所有 UI 构造时语言已就绪
     set_language(Config().get("language", "zh_CN"))
@@ -525,7 +572,7 @@ def main() -> int:
             return 0
         QMessageBox.information(
             None,
-            tr("硬盘新增文件监控"),
+            tr("DiskWatch 磁盘空间监控"),
             tr("{name} 已经在运行了（见系统托盘）。", name=APP_NAME),
         )
         return 0
@@ -533,7 +580,7 @@ def main() -> int:
     if not QSystemTrayIcon.isSystemTrayAvailable():
         QMessageBox.critical(
             None,
-            tr("硬盘新增文件监控"),
+            tr("DiskWatch 磁盘空间监控"),
             tr("当前系统没有可用的托盘区，无法运行。"),
         )
         return 1

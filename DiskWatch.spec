@@ -1,6 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 # DiskWatch portable build — onedir, windowed, Windows x64.
 
+from pathlib import Path
+
 block_cipher = None
 
 hiddenimports = [
@@ -78,6 +80,17 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+# Qt 6 on supported Windows versions intentionally links to the system ICU shim
+# (System32\icuuc.dll). A polluted PATH can make PyInstaller pick an unrelated
+# Poppler/Conda ICU build instead; that package builds successfully but QtCore
+# fails at runtime with ERROR_PROC_NOT_FOUND. Never bundle those accidental DLLs.
+_system_icu = {"icuuc.dll", "icudt.dll"}
+a.binaries = [
+    entry for entry in a.binaries
+    if Path(entry[0]).name.lower() not in _system_icu
+    and not Path(entry[0]).name.lower().startswith("icudt")
+]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

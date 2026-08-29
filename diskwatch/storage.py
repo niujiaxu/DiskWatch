@@ -1,4 +1,4 @@
-"""SQLite 持久化：记录新增文件、按日汇总、清理过期数据。
+"""SQLite 持久化：空间变化账本、分层汇总、磁盘采样与历史清理。
 
 读写分连接：WAL 下写库不堵 UI 读；后台写线程独占 write 连接。
 """
@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sqlite3
 import threading
 import time
@@ -14,6 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Protocol
 
 from .errorlog import errorlog
 from .i18n import tr
@@ -46,13 +48,92 @@ CREATE TABLE IF NOT EXISTS disk_space (
     PRIMARY KEY (day, drive)
 );
 
+CREATE TABLE IF NOT EXISTS file_state (
+    path          TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    ext           TEXT,
+    drive         TEXT,
+    folder        TEXT,
+    size          INTEGER NOT NULL DEFAULT 0,
+    category      TEXT NOT NULL DEFAULT 'unclassified',
+    exists_now    INTEGER NOT NULL DEFAULT 1,
+    first_seen_at REAL NOT NULL,
+    last_seen_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_file_state_drive ON file_state(drive, exists_now);
+CREATE INDEX IF NOT EXISTS idx_file_state_category ON file_state(category, exists_now);
+
+CREATE TABLE IF NOT EXISTS space_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    path          TEXT NOT NULL,
+    old_path      TEXT,
+    name          TEXT NOT NULL,
+    ext           TEXT,
+    drive         TEXT,
+    folder        TEXT,
+    category      TEXT NOT NULL DEFAULT 'unclassified',
+    event_type    TEXT NOT NULL,
+    old_size      INTEGER NOT NULL DEFAULT 0,
+    new_size      INTEGER NOT NULL DEFAULT 0,
+    delta_bytes   INTEGER NOT NULL DEFAULT 0,
+    occurred_at   REAL NOT NULL,
+    day           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_space_events_time ON space_events(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_space_events_day_drive ON space_events(day, drive);
+CREATE INDEX IF NOT EXISTS idx_space_events_category ON space_events(day, category);
+CREATE INDEX IF NOT EXISTS idx_space_events_path ON space_events(path, occurred_at);
+
+CREATE TABLE IF NOT EXISTS space_hourly (
+    hour           TEXT NOT NULL,
+    drive          TEXT NOT NULL,
+    category       TEXT NOT NULL,
+    occupied_bytes INTEGER NOT NULL DEFAULT 0,
+    released_bytes INTEGER NOT NULL DEFAULT 0,
+    net_bytes      INTEGER NOT NULL DEFAULT 0,
+    event_count    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (hour, drive, category)
+);
+CREATE INDEX IF NOT EXISTS idx_space_hourly_drive_hour
+    ON space_hourly(drive, hour);
+
+CREATE TABLE IF NOT EXISTS space_daily (
+    day            TEXT NOT NULL,
+    drive          TEXT NOT NULL,
+    category       TEXT NOT NULL,
+    occupied_bytes INTEGER NOT NULL DEFAULT 0,
+    released_bytes INTEGER NOT NULL DEFAULT 0,
+    net_bytes      INTEGER NOT NULL DEFAULT 0,
+    event_count    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, drive, category)
+);
+CREATE INDEX IF NOT EXISTS idx_space_daily_drive_day
+    ON space_daily(drive, day);
+
+CREATE TABLE IF NOT EXISTS disk_samples (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    day         TEXT NOT NULL,
+    drive       TEXT NOT NULL,
+    free_bytes  INTEGER NOT NULL,
+    total_bytes INTEGER NOT NULL,
+    sampled_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_disk_samples_drive_time
+    ON disk_samples(drive, sampled_at);
+CREATE INDEX IF NOT EXISTS idx_disk_samples_day_drive
+    ON disk_samples(day, drive, sampled_at);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
 """
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 3
+
+
+class _SqlExecutor(Protocol):
+    def execute(self, sql: str, parameters=()) -> sqlite3.Cursor: ...
 
 
 @dataclass(frozen=True)
@@ -64,6 +145,7 @@ class FileRecord:
     folder: str
     size: int
     added_at: float
+    category: str = "unclassified"
     deleted: bool = False
     deleted_at: float | None = None
 
@@ -85,6 +167,45 @@ class DaySummary:
     total_size: int
     # 当天所有采样盘的剩余字节合计；None=当天无采样，0=磁盘已满
     total_free: int | None = None
+
+
+@dataclass(frozen=True)
+class SpaceEvent:
+    id: int
+    path: str
+    old_path: str | None
+    drive: str
+    category: str
+    event_type: str
+    old_size: int
+    new_size: int
+    delta_bytes: int
+    occurred_at: float
+
+
+@dataclass(frozen=True)
+class SpaceDaySummary:
+    day: str
+    occupied_bytes: int
+    released_bytes: int
+    net_bytes: int
+    event_count: int
+
+
+@dataclass(frozen=True)
+class DiskSample:
+    drive: str
+    free_bytes: int
+    total_bytes: int
+    sampled_at: float
+
+
+@dataclass(frozen=True)
+class AttributionSummary:
+    drive: str
+    actual_delta: int
+    attributed_delta: int
+    unattributed_delta: int
 
 
 def today_str() -> str:
@@ -110,7 +231,7 @@ def _event_where(event_type: str) -> str:
     return "deleted = 0"
 
 
-def _query_day_summaries(conn: sqlite3.Connection, limit: int) -> list[DaySummary]:
+def _query_day_summaries(conn: _SqlExecutor, limit: int) -> list[DaySummary]:
     """按天聚合摘要（新增数/体积/剩余空间），主线程与后台线程共用同一查询。"""
     cur = conn.execute(
         """
@@ -141,7 +262,12 @@ def _query_day_summaries(conn: sqlite3.Connection, limit: int) -> list[DaySummar
     ]
 
 
-def make_record(path: str, size: int, added_at: float | None = None) -> FileRecord:
+def make_record(
+    path: str,
+    size: int,
+    added_at: float | None = None,
+    category: str = "unclassified",
+) -> FileRecord:
     p = Path(path)
     drive = (os.path.splitdrive(path)[0] or "").upper()
     return FileRecord(
@@ -152,7 +278,59 @@ def make_record(path: str, size: int, added_at: float | None = None) -> FileReco
         folder=str(p.parent),
         size=size,
         added_at=added_at if added_at is not None else time.time(),
+        category=category,
     )
+
+
+class _ReadPool:
+    """每个读取线程一条连接，避免跨线程复用 sqlite3.Connection。"""
+
+    def __init__(self, factory) -> None:
+        self._factory = factory
+        self._lock = threading.Lock()
+        self._connections: dict[int, sqlite3.Connection] = {}
+        self._closed = False
+
+    def _connection(self) -> sqlite3.Connection:
+        thread_id = threading.get_ident()
+        with self._lock:
+            if self._closed:
+                raise sqlite3.ProgrammingError("storage is closed")
+            connection = self._connections.get(thread_id)
+            if connection is None:
+                connection = self._factory()
+                connection.execute("PRAGMA busy_timeout=5000")
+                self._connections[thread_id] = connection
+            return connection
+
+    def execute(self, sql: str, parameters=()):
+        return self._connection().execute(sql, parameters)
+
+    def release_current_thread(self) -> None:
+        """关闭并移除当前线程的读连接。
+
+        UI 主线程会长期复用连接；短生命周期后台线程应在退出前调用，
+        防止线程结束后连接仍被池持有。
+        """
+        thread_id = threading.get_ident()
+        with self._lock:
+            connection = self._connections.pop(thread_id, None)
+        if connection is not None:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                pass
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            connections = list(self._connections.values())
+            self._connections.clear()
+        for connection in connections:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                pass
 
 
 class Storage:
@@ -160,20 +338,31 @@ class Storage:
 
     def __init__(self, db_path: Path) -> None:
         self._path = db_path
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        db_existed = self._path.exists() and self._path.stat().st_size > 0
+        self.last_migration_backup: Path | None = None
         self._write_lock = threading.Lock()
         self._write = self._connect()
         self._write.execute("PRAGMA journal_mode=WAL")
         self._write.execute("PRAGMA synchronous=NORMAL")
         self._write.execute("PRAGMA busy_timeout=5000")
-        with self._write_lock:
-            self._write.executescript(SCHEMA)
-            self._write.commit()
-            self._migrate_schema()
+        try:
+            with self._write_lock:
+                if db_existed:
+                    self._backup_before_migration()
+                self._write.executescript(SCHEMA)
+                self._write.commit()
+                self._migrate_schema()
+        except Exception:
+            try:
+                self._write.close()
+            finally:
+                self._restore_migration_backup()
+            raise
         # 写入异常（被 SQLite 抛出的）会进这里，供 UI 展示与排错
         self._write_errors: deque[tuple[float, str]] = deque(maxlen=20)
-        # 仅供 Qt 主线程读：不与 write 抢同一把 Python 锁
-        self._read = self._connect()
-        self._read.execute("PRAGMA busy_timeout=5000")
+        # UI 与聚合后台线程各自使用读连接，避免跨线程复用造成原生崩溃。
+        self._read = _ReadPool(self._connect)
         # 数据变更计数：每次写事务成功提交 +1，供 UI 判断"是否需要重载"
         self._change_seq = 0
 
@@ -181,6 +370,10 @@ class Storage:
     def change_seq(self) -> int:
         """自上次读取以来数据是否变化：两次读数不同说明有新写入。"""
         return self._change_seq
+
+    @property
+    def path(self) -> Path:
+        return self._path
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(
@@ -197,28 +390,110 @@ class Storage:
                 self._write.close()
             except sqlite3.Error:
                 pass
-        try:
-            self._read.close()
-        except sqlite3.Error:
-            pass
+        self._read.close()
+
+    def release_reader(self) -> None:
+        """释放调用线程持有的只读连接，供短生命周期后台任务使用。"""
+        self._read.release_current_thread()
 
     # ---------- 迁移 ----------
 
-    def _migrate_schema(self) -> None:
+    def _current_schema_version(self) -> int:
         try:
             row = self._write.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'"
             ).fetchone()
-            ver = int(row["value"]) if row else 0
-        except (ValueError, TypeError):
-            ver = 0
-        if ver < _SCHEMA_VERSION:
+            return int(row["value"]) if row else 0
+        except (sqlite3.Error, ValueError, TypeError):
+            return 0
+
+    def _backup_before_migration(self) -> None:
+        """结构升级前创建一次 SQLite 一致性备份。"""
+        version = self._current_schema_version()
+        if version >= _SCHEMA_VERSION:
+            return
+        backup = self._path.with_name(
+            f"{self._path.name}.migration-v{version}-to-v{_SCHEMA_VERSION}.bak"
+        )
+        if not backup.exists():
+            target = sqlite3.connect(str(backup))
+            try:
+                self._write.backup(target)
+            finally:
+                target.close()
+        self.last_migration_backup = backup
+
+    def _restore_migration_backup(self) -> None:
+        """结构升级失败时恢复原库；备份文件保留供人工检查。"""
+        backup = self.last_migration_backup
+        if backup is None or not backup.exists():
+            return
+        for suffix in ("-wal", "-shm", "-journal"):
+            sidecar = Path(str(self._path) + suffix)
+            try:
+                sidecar.unlink(missing_ok=True)
+            except OSError:
+                pass
+        shutil.copy2(backup, self._path)
+
+    def _migrate_schema(self) -> None:
+        ver = self._current_schema_version()
+        if ver < 1:
             try:
                 self._write.execute(
                     "ALTER TABLE files ADD COLUMN deleted_at REAL"
                 )
             except sqlite3.OperationalError:
                 pass  # 列已存在（可能旧 DB 碰巧有）
+        if ver < 2:
+            # 旧 files 表继续服务当前 UI；file_state 从其最新状态初始化。
+            # 不补造历史 space_events，避免把升级前全部存量误算为今日新增。
+            self._write.execute(
+                """
+                INSERT OR IGNORE INTO file_state (
+                    path, name, ext, drive, folder, size, category,
+                    exists_now, first_seen_at, last_seen_at
+                )
+                SELECT path, name, ext, drive, folder, size, 'unclassified',
+                       CASE WHEN deleted = 0 THEN 1 ELSE 0 END,
+                       added_at, COALESCE(deleted_at, added_at)
+                FROM files
+                """
+            )
+        if ver < 3:
+            # v2 已有精确事件：迁移时只做汇总，不伪造原始事件。
+            for table, bucket in (
+                ("space_hourly", "strftime('%Y-%m-%dT%H:00', occurred_at, 'unixepoch', 'localtime')"),
+                ("space_daily", "day"),
+            ):
+                column = "hour" if table == "space_hourly" else "day"
+                self._write.execute(
+                    f"""
+                    INSERT OR IGNORE INTO {table} (
+                        {column}, drive, category, occupied_bytes,
+                        released_bytes, net_bytes, event_count
+                    )
+                    SELECT {bucket}, COALESCE(drive, ''), category,
+                           SUM(CASE WHEN delta_bytes > 0 THEN delta_bytes ELSE 0 END),
+                           SUM(CASE WHEN delta_bytes < 0 THEN -delta_bytes ELSE 0 END),
+                           SUM(delta_bytes), COUNT(*)
+                    FROM space_events
+                    GROUP BY {bucket}, COALESCE(drive, ''), category
+                    """
+                )
+            self._write.execute(
+                """
+                INSERT INTO disk_samples (day, drive, free_bytes, total_bytes, sampled_at)
+                SELECT day, drive, free_bytes, total_bytes, sampled_at
+                FROM disk_space
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM disk_samples s
+                    WHERE s.drive = disk_space.drive
+                      AND s.sampled_at = disk_space.sampled_at
+                )
+                """
+            )
+        if ver < _SCHEMA_VERSION:
             self._write.execute(
                 "INSERT OR REPLACE INTO meta VALUES ('schema_version', ?)",
                 (str(_SCHEMA_VERSION),),
@@ -259,29 +534,112 @@ class Storage:
         """最近的写入错误，[(timestamp, message)]，新到旧。"""
         return list(self._write_errors)[::-1]
 
-    def add_files(self, records: list[FileRecord]) -> int:
-        if not records:
-            return 0
-        rows = [
+    def _insert_space_event_locked(
+        self,
+        record: FileRecord,
+        event_type: str,
+        old_size: int,
+        new_size: int,
+        occurred_at: float,
+        *,
+        old_path: str | None = None,
+        drive: str | None = None,
+        delta_bytes: int | None = None,
+    ) -> None:
+        delta = new_size - old_size if delta_bytes is None else delta_bytes
+        day = _day_of(occurred_at)
+        self._write.execute(
+            """
+            INSERT INTO space_events (
+                path, old_path, name, ext, drive, folder, category, event_type,
+                old_size, new_size, delta_bytes, occurred_at, day
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
             (
-                r.path,
-                r.name,
-                r.ext,
-                r.drive,
-                r.folder,
-                r.size,
-                r.added_at,
-                _day_of(r.added_at),
-                1 if r.size > 0 else 0,
+                record.path,
+                old_path,
+                record.name,
+                record.ext,
+                drive if drive is not None else record.drive,
+                record.folder,
+                record.category,
+                event_type,
+                old_size,
+                new_size,
+                delta,
+                occurred_at,
+                day,
+            ),
+        )
+        hour = datetime.fromtimestamp(occurred_at).strftime("%Y-%m-%dT%H:00")
+        occupied = max(delta, 0)
+        released = max(-delta, 0)
+        event_drive = drive if drive is not None else record.drive
+        for table, column, bucket in (
+            ("space_hourly", "hour", hour),
+            ("space_daily", "day", day),
+        ):
+            self._write.execute(
+                f"""
+                INSERT INTO {table} (
+                    {column}, drive, category, occupied_bytes,
+                    released_bytes, net_bytes, event_count
+                ) VALUES (?, ?, ?, ?, ?, ?, 1)
+                ON CONFLICT({column}, drive, category) DO UPDATE SET
+                    occupied_bytes = occupied_bytes + excluded.occupied_bytes,
+                    released_bytes = released_bytes + excluded.released_bytes,
+                    net_bytes = net_bytes + excluded.net_bytes,
+                    event_count = event_count + 1
+                """,
+                (bucket, event_drive, record.category, occupied, released, delta),
             )
-            for r in records
-        ]
-        with self._write_tx():
-            cur = self._write.executemany(
+
+    def _observe_record_locked(
+        self,
+        record: FileRecord,
+        *,
+        event_type: str | None = None,
+        occurred_at: float | None = None,
+    ) -> bool:
+        """在同一事务内更新兼容表、当前状态和空间账本。"""
+        when = occurred_at if occurred_at is not None else record.added_at
+        state = self._write.execute(
+            "SELECT size, category, exists_now, first_seen_at FROM file_state WHERE path = ?",
+            (record.path,),
+        ).fetchone()
+        was_present = bool(state and state["exists_now"])
+        old_size = int(state["size"]) if was_present else 0
+        category = record.category
+        if category == "unclassified" and state is not None:
+            category = str(state["category"] or category)
+            record = FileRecord(
+                path=record.path,
+                name=record.name,
+                ext=record.ext,
+                drive=record.drive,
+                folder=record.folder,
+                size=record.size,
+                added_at=record.added_at,
+                category=category,
+            )
+
+        if was_present:
+            self._write.execute(
+                "UPDATE files SET size = ?, size_final = ?, deleted = 0, deleted_at = NULL "
+                "WHERE path = ?",
+                (record.size, 1 if record.size > 0 else 0, record.path),
+            )
+        else:
+            self._write.execute(
                 """
-                INSERT INTO files (path, name, ext, drive, folder, size, added_at, day, size_final, deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                INSERT INTO files (
+                    path, name, ext, drive, folder, size, added_at, day, size_final, deleted
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                 ON CONFLICT(path) DO UPDATE SET
+                    name       = excluded.name,
+                    ext        = excluded.ext,
+                    drive      = excluded.drive,
+                    folder     = excluded.folder,
                     size       = excluded.size,
                     added_at   = excluded.added_at,
                     day        = excluded.day,
@@ -289,9 +647,84 @@ class Storage:
                     deleted    = 0,
                     deleted_at = NULL
                 """,
-                rows,
+                (
+                    record.path,
+                    record.name,
+                    record.ext,
+                    record.drive,
+                    record.folder,
+                    record.size,
+                    record.added_at,
+                    _day_of(record.added_at),
+                    1 if record.size > 0 else 0,
+                ),
             )
-            return cur.rowcount
+
+        first_seen = float(state["first_seen_at"]) if state is not None else when
+        self._write.execute(
+            """
+            INSERT INTO file_state (
+                path, name, ext, drive, folder, size, category,
+                exists_now, first_seen_at, last_seen_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+                name         = excluded.name,
+                ext          = excluded.ext,
+                drive        = excluded.drive,
+                folder       = excluded.folder,
+                size         = excluded.size,
+                category     = excluded.category,
+                exists_now   = 1,
+                last_seen_at = excluded.last_seen_at
+            """,
+            (
+                record.path,
+                record.name,
+                record.ext,
+                record.drive,
+                record.folder,
+                record.size,
+                category,
+                first_seen,
+                when,
+            ),
+        )
+
+        delta = record.size - old_size
+        if event_type is None:
+            if state is None:
+                event_type = "created"
+            elif not was_present:
+                event_type = "recreated"
+            elif delta:
+                event_type = "modified"
+        if event_type and (not was_present or delta or event_type in {"created", "recreated"}):
+            self._insert_space_event_locked(
+                record, event_type, old_size, record.size, when
+            )
+            return True
+        return bool(delta)
+
+    def add_files(
+        self,
+        records: list[FileRecord],
+        *,
+        event_type: str | None = None,
+        occurred_at: float | None = None,
+    ) -> int:
+        if not records:
+            return 0
+        with self._write_tx():
+            changed = 0
+            for record in records:
+                changed += int(
+                    self._observe_record_locked(
+                        record,
+                        event_type=event_type,
+                        occurred_at=occurred_at,
+                    )
+                )
+            return changed
 
     def backfill_records(self, records: list[FileRecord]) -> int:
         """启动补扫专用：只插入缺失路径，绝不覆盖已有行的统计。
@@ -302,30 +735,17 @@ class Storage:
         """
         if not records:
             return 0
-        rows = [
-            (
-                r.path,
-                r.name,
-                r.ext,
-                r.drive,
-                r.folder,
-                r.size,
-                r.added_at,
-                _day_of(r.added_at),
-                1 if r.size > 0 else 0,
-            )
-            for r in records
-        ]
         with self._write_tx():
-            cur = self._write.executemany(
-                """
-                INSERT INTO files (path, name, ext, drive, folder, size, added_at, day, size_final, deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-                ON CONFLICT(path) DO UPDATE SET deleted = 0, deleted_at = NULL
-                """,
-                rows,
-            )
-            return cur.rowcount
+            changed = 0
+            for record in records:
+                state = self._write.execute(
+                    "SELECT exists_now FROM file_state WHERE path = ?", (record.path,)
+                ).fetchone()
+                if state is None or not state["exists_now"]:
+                    changed += int(
+                        self._observe_record_locked(record, event_type="recovered")
+                    )
+            return changed
 
     def mark_deleted(self, paths: list[str], deleted_at: float | None = None) -> None:
         if not paths:
@@ -333,22 +753,53 @@ class Storage:
         when = deleted_at if deleted_at is not None else time.time()
         with self._write_tx():
             for p in paths:
-                p = p.rstrip("\\/")
-                if not p:
-                    continue
-                # 盘符根（如 "C:"）：整盘没有父目录语义，展开子路径会误删全盘，
-                # 只精确匹配根本身
-                if len(p) == 2 and p[1] == ":":
-                    self._write.execute(
-                        "UPDATE files SET deleted = 1, deleted_at = ? WHERE path = ?",
-                        (when, p),
-                    )
-                    continue
-                esc = _like_escape(p + "\\")
-                self._write.execute(
-                    "UPDATE files SET deleted = 1, deleted_at = ? WHERE path = ? OR path LIKE ? ESCAPE '\\'",
-                    (when, p, esc + "%"),
-                )
+                self._mark_deleted_locked(p, when)
+
+    def _mark_deleted_locked(self, path: str, when: float) -> int:
+        path = path.rstrip("\\/")
+        if not path:
+            return 0
+        if len(path) == 2 and path[1] == ":":
+            rows = self._write.execute(
+                "SELECT * FROM file_state WHERE path = ? AND exists_now = 1", (path,)
+            ).fetchall()
+        else:
+            esc = _like_escape(path + "\\")
+            rows = self._write.execute(
+                "SELECT * FROM file_state WHERE exists_now = 1 "
+                "AND (path = ? OR path LIKE ? ESCAPE '\\')",
+                (path, esc + "%"),
+            ).fetchall()
+        for row in rows:
+            record = FileRecord(
+                path=row["path"],
+                name=row["name"],
+                ext=row["ext"] or "",
+                drive=row["drive"] or "",
+                folder=row["folder"] or "",
+                size=0,
+                added_at=when,
+                category=row["category"] or "unclassified",
+            )
+            old_size = int(row["size"])
+            self._insert_space_event_locked(
+                record,
+                "deleted",
+                old_size,
+                0,
+                when,
+                delta_bytes=-old_size,
+            )
+            self._write.execute(
+                "UPDATE file_state SET exists_now = 0, last_seen_at = ? "
+                "WHERE path = ?",
+                (when, row["path"]),
+            )
+            self._write.execute(
+                "UPDATE files SET deleted = 1, deleted_at = ?, size_final = 1 WHERE path = ?",
+                (when, row["path"]),
+            )
+        return len(rows)
 
     def delete_paths(self, paths: list[str]) -> None:
         if not paths:
@@ -356,6 +807,9 @@ class Storage:
         with self._write_tx():
             self._write.executemany(
                 "DELETE FROM files WHERE path = ?", [(p,) for p in paths]
+            )
+            self._write.executemany(
+                "DELETE FROM file_state WHERE path = ?", [(p,) for p in paths]
             )
 
     def _relocate_row(self, old: str, new: str) -> None:
@@ -373,6 +827,117 @@ class Storage:
             ),
         )
 
+    def _move_state_locked(
+        self,
+        src: str,
+        dst: str,
+        fallback: FileRecord | None,
+        when: float,
+    ) -> bool:
+        state = self._write.execute(
+            "SELECT * FROM file_state WHERE path = ?", (src,)
+        ).fetchone()
+        if state is None:
+            if fallback is None:
+                return False
+            self._observe_record_locked(fallback, event_type="created", occurred_at=when)
+            return True
+
+        # 目标若已被 watchdog 先当作 created 记录，先冲销它，再把源状态搬过去。
+        # 这样同盘目录移动即使事件乱序，空间净变化仍为 0。
+        self._mark_deleted_locked(dst, when)
+        category = (
+            fallback.category
+            if fallback is not None and fallback.category != "unclassified"
+            else str(state["category"] or "unclassified")
+        )
+        size = int(state["size"])
+        was_present = bool(state["exists_now"])
+        target = FileRecord(
+            path=dst,
+            name=Path(dst).name,
+            ext=Path(dst).suffix.lower(),
+            drive=(os.path.splitdrive(dst)[0] or "").upper(),
+            folder=str(Path(dst).parent),
+            size=size,
+            added_at=when,
+            category=category,
+        )
+        source_drive = str(state["drive"] or "")
+        if not was_present:
+            self._insert_space_event_locked(
+                target,
+                "recreated",
+                0,
+                size,
+                when,
+                old_path=src,
+                delta_bytes=size,
+            )
+        elif source_drive == target.drive:
+            self._insert_space_event_locked(
+                target,
+                "moved",
+                size,
+                size,
+                when,
+                old_path=src,
+                delta_bytes=0,
+            )
+        else:
+            source = FileRecord(
+                path=src,
+                name=state["name"],
+                ext=state["ext"] or "",
+                drive=source_drive,
+                folder=state["folder"] or "",
+                size=0,
+                added_at=when,
+                category=category,
+            )
+            self._insert_space_event_locked(
+                source,
+                "moved_out",
+                size,
+                0,
+                when,
+                old_path=src,
+                drive=source_drive,
+                delta_bytes=-size,
+            )
+            self._insert_space_event_locked(
+                target,
+                "moved_in",
+                0,
+                size,
+                when,
+                old_path=src,
+                delta_bytes=size,
+            )
+
+        self._write.execute("DELETE FROM files WHERE path = ?", (dst,))
+        self._write.execute("DELETE FROM file_state WHERE path = ?", (dst,))
+        self._relocate_row(src, dst)
+        self._write.execute(
+            """
+            UPDATE file_state SET
+                path = ?, name = ?, ext = ?, drive = ?, folder = ?,
+                category = ?, exists_now = 1, last_seen_at = ?
+            WHERE path = ?
+            """,
+            (
+                target.path,
+                target.name,
+                target.ext,
+                target.drive,
+                target.folder,
+                category,
+                when,
+                src,
+            ),
+        )
+        return True
+
     def move_file(self, src: str, dst: str, fallback: FileRecord | None) -> None:
         """处理单文件改名 / 移动（watchdog 的 on_moved 是唯一事件，不补发 on_created）。
 
@@ -386,38 +951,7 @@ class Storage:
         if src == dst:
             return
         with self._write_tx():
-            tracked = self._write.execute(
-                "SELECT 1 FROM files WHERE path = ?", (src,)
-            ).fetchone()
-            if tracked:
-                self._write.execute("DELETE FROM files WHERE path = ?", (dst,))
-                # 文件既然搬到了 dst 就还活着，重置 deleted，防止同批级联标删先执行。
-                self._relocate_row(src, dst)
-            elif fallback is not None:
-                self._write.execute(
-                    """
-                    INSERT INTO files (path, name, ext, drive, folder, size, added_at, day, size_final, deleted)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-                    ON CONFLICT(path) DO UPDATE SET
-                        size       = excluded.size,
-                        added_at   = excluded.added_at,
-                        day        = excluded.day,
-                        size_final = excluded.size_final,
-                        deleted    = 0,
-                        deleted_at = NULL
-                    """,
-                    (
-                        fallback.path,
-                        fallback.name,
-                        fallback.ext,
-                        fallback.drive,
-                        fallback.folder,
-                        fallback.size,
-                        fallback.added_at,
-                        _day_of(fallback.added_at),
-                        1 if fallback.size > 0 else 0,
-                    ),
-                )
+            self._move_state_locked(src, dst, fallback, time.time())
 
     def move_subtree(self, src: str, dst: str) -> None:
         """目录整体移动（watchdog 的 DirMovedEvent）。
@@ -438,7 +972,8 @@ class Storage:
             # SELECT 必须和后续 UPDATE 在同一个锁内：_write 连接被多个
             # 后台线程共用，锁外读会与写入并发，读到不一致快照。
             rows = self._write.execute(
-                "SELECT path FROM files WHERE path = ? OR path LIKE ? ESCAPE '\\'",
+                "SELECT path FROM file_state WHERE exists_now = 1 "
+                "AND (path = ? OR path LIKE ? ESCAPE '\\')",
                 (src, esc + "%"),
             ).fetchall()
             if not rows:
@@ -450,17 +985,10 @@ class Storage:
             for old, new in mapping:
                 if new == old:
                     continue
-                if self._write.execute(
-                    "SELECT 1 FROM files WHERE path = ?", (new,)
-                ).fetchone():
-                    # 新路径已有行（on_created 补发的）→ 旧行是残留
-                    self._write.execute("DELETE FROM files WHERE path = ?", (old,))
-                else:
-                    # 目录搬到新路径后子文件仍存在，重置 deleted，防级联标删竞态
-                    self._relocate_row(old, new)
+                self._move_state_locked(old, new, None, time.time())
 
     def delete_subtree(self, src: str) -> None:
-        """目录整体删除：物理删除该目录及其子文件的所有行。
+        """目录整体删除：标记状态并保留历史账本。
 
         子文件各自的 on_deleted 事件并不可靠（网络盘/事件洪峰可能只到
         目录级通知），按前缀删除避免留下磁盘上已不存在的幽灵记录。
@@ -469,22 +997,26 @@ class Storage:
         if not src:
             return
         with self._write_tx():
-            if len(src) == 2 and src[1] == ":":
-                # 盘符根没有子树语义，只精确匹配
-                self._write.execute("DELETE FROM files WHERE path = ?", (src,))
-                return
-            esc = _like_escape(src + "\\")
-            self._write.execute(
-                "DELETE FROM files WHERE path = ? OR path LIKE ? ESCAPE '\\'",
-                (src, esc + "%"),
-            )
+            self._mark_deleted_locked(src, time.time())
 
-    def record_disk_space(self, samples: list[tuple[str, str, int, int]]) -> None:
-        """(day, drive, free_bytes, total_bytes) 按天+盘符 upsert，只保留最新采样。"""
+    def record_disk_space(
+        self,
+        samples: list[tuple[str, str, int, int]],
+        *,
+        sampled_at: float | None = None,
+    ) -> None:
+        """保存完整采样序列，同时维护旧 UI 使用的每日最新值。"""
         if not samples:
             return
-        now = time.time()
+        now = sampled_at if sampled_at is not None else time.time()
         with self._write_tx():
+            self._write.executemany(
+                """
+                INSERT INTO disk_samples (day, drive, free_bytes, total_bytes, sampled_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [(d, dv, f, t, now) for d, dv, f, t in samples],
+            )
             self._write.executemany(
                 """
                 INSERT INTO disk_space (day, drive, free_bytes, total_bytes, sampled_at)
@@ -511,33 +1043,424 @@ class Storage:
         if not sizes and not missing:
             return
         with self._write_tx():
-            if sizes:
-                self._write.executemany(
-                    "UPDATE files SET size = ?, size_final = 1 WHERE path = ?",
-                    [(v, k) for k, v in sizes.items()],
+            now = time.time()
+            for path, size in sizes.items():
+                state = self._write.execute(
+                    "SELECT * FROM file_state WHERE path = ? AND exists_now = 1",
+                    (path,),
+                ).fetchone()
+                if state is None:
+                    continue
+                record = FileRecord(
+                    path=path,
+                    name=state["name"],
+                    ext=state["ext"] or "",
+                    drive=state["drive"] or "",
+                    folder=state["folder"] or "",
+                    size=size,
+                    added_at=now,
+                    category=state["category"] or "unclassified",
                 )
-            if missing:
-                self._write.executemany(
-                    "UPDATE files SET deleted = 1, size_final = 1 WHERE path = ?",
-                    [(p,) for p in missing],
+                self._observe_record_locked(
+                    record, event_type="modified", occurred_at=now
                 )
+                self._write.execute(
+                    "UPDATE files SET size_final = 1 WHERE path = ?", (path,)
+                )
+            for path in missing:
+                self._mark_deleted_locked(path, now)
 
     def purge_older_than(self, days: int) -> int:
         if days <= 0:
             return 0
         cutoff = (date.today() - timedelta(days=days)).isoformat()
+        hourly_cutoff = (date.today() - timedelta(days=365)).isoformat() + "T00:00"
         with self._write_tx():
-            cur = self._write.execute("DELETE FROM files WHERE day < ?", (cutoff,))
-            self._write.execute("DELETE FROM disk_space WHERE day < ?", (cutoff,))
-            return cur.rowcount
+            removed_files = 0
+            for table in ("files", "space_events", "disk_samples"):
+                cur = self._write.execute(
+                    f"DELETE FROM {table} WHERE day < ?", (cutoff,)
+                )
+                if table == "files":
+                    removed_files = max(0, cur.rowcount)
+            self._write.execute(
+                "DELETE FROM space_hourly WHERE hour < ?", (hourly_cutoff,)
+            )
+            # disk_space 与 space_daily 是长期每日汇总，不随原始保留期删除。
+            return removed_files
 
     def clear_all(self) -> None:
         with self._write_tx():
             self._write.execute("DELETE FROM files")
             self._write.execute("DELETE FROM disk_space")
+            self._write.execute("DELETE FROM file_state")
+            self._write.execute("DELETE FROM space_events")
+            self._write.execute("DELETE FROM disk_samples")
+            self._write.execute("DELETE FROM space_hourly")
+            self._write.execute("DELETE FROM space_daily")
             # 不做 VACUUM：会长时间锁库，点「清空」时容易把界面卡死
 
     # ---------- 读（UI 主线程，不抢 write 锁）----------
+
+    def space_events(
+        self,
+        *,
+        since: float | None = None,
+        until: float | None = None,
+        drive: str | None = None,
+        category: str | None = None,
+        event_type: str | None = None,
+        keyword: str | None = None,
+        focus_only: bool = False,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[SpaceEvent]:
+        where = ["1 = 1"]
+        args: list[object] = []
+        if since is not None:
+            where.append("occurred_at >= ?")
+            args.append(since)
+        if until is not None:
+            where.append("occurred_at <= ?")
+            args.append(until)
+        if drive:
+            where.append("drive = ?")
+            args.append(drive.upper())
+        if category:
+            where.append("category = ?")
+            args.append(category)
+        if event_type:
+            where.append("event_type = ?")
+            args.append(event_type)
+        if keyword:
+            where.append("path LIKE ? ESCAPE '\\'")
+            args.append("%" + _like_escape(keyword) + "%")
+        if focus_only:
+            where.append("category IN ('user', 'download')")
+        args.extend((max(1, limit), max(0, offset)))
+        rows = self._read.execute(
+            "SELECT id, path, old_path, drive, category, event_type, old_size, "
+            "new_size, delta_bytes, occurred_at FROM space_events WHERE "
+            + " AND ".join(where)
+            + " ORDER BY occurred_at DESC, id DESC LIMIT ? OFFSET ?",
+            args,
+        ).fetchall()
+        return [
+            SpaceEvent(
+                id=int(r["id"]),
+                path=r["path"],
+                old_path=r["old_path"],
+                drive=r["drive"] or "",
+                category=r["category"],
+                event_type=r["event_type"],
+                old_size=int(r["old_size"]),
+                new_size=int(r["new_size"]),
+                delta_bytes=int(r["delta_bytes"]),
+                occurred_at=float(r["occurred_at"]),
+            )
+            for r in rows
+        ]
+
+    def space_event_count(
+        self,
+        *,
+        since: float | None = None,
+        until: float | None = None,
+        drive: str | None = None,
+        category: str | None = None,
+        event_type: str | None = None,
+        keyword: str | None = None,
+        focus_only: bool = False,
+    ) -> int:
+        where, args = self._space_event_where(
+            since, until, drive, category, event_type, keyword, focus_only
+        )
+        row = self._read.execute(
+            "SELECT COUNT(*) count FROM space_events WHERE " + " AND ".join(where),
+            args,
+        ).fetchone()
+        return int(row["count"])
+
+    def file_event_history(self, path: str, *, limit: int = 100) -> list[SpaceEvent]:
+        """返回一个文件跨重命名路径的大小变化历史，最新事件在前。"""
+        aliases = {path}
+        found: dict[int, sqlite3.Row] = {}
+        # 一次移动只增加一个旧路径；循环可追溯连续多次重命名。
+        for _ in range(16):
+            placeholders = ",".join("?" for _ in aliases)
+            args = [*aliases, *aliases, max(limit * 2, 100)]
+            rows = self._read.execute(
+                "SELECT id, path, old_path, drive, category, event_type, "
+                "old_size, new_size, delta_bytes, occurred_at FROM space_events "
+                f"WHERE path IN ({placeholders}) OR old_path IN ({placeholders}) "
+                "ORDER BY occurred_at DESC, id DESC LIMIT ?",
+                args,
+            ).fetchall()
+            before = len(aliases)
+            for row in rows:
+                found[int(row["id"])] = row
+                aliases.add(str(row["path"]))
+                if row["old_path"]:
+                    aliases.add(str(row["old_path"]))
+            if len(aliases) == before:
+                break
+        ordered = sorted(
+            found.values(),
+            key=lambda row: (float(row["occurred_at"]), int(row["id"])),
+            reverse=True,
+        )[: max(1, limit)]
+        return [self._space_event_from_row(row) for row in ordered]
+
+    @staticmethod
+    def _space_event_from_row(row: sqlite3.Row) -> SpaceEvent:
+        return SpaceEvent(
+            id=int(row["id"]),
+            path=str(row["path"]),
+            old_path=row["old_path"],
+            drive=str(row["drive"] or ""),
+            category=str(row["category"]),
+            event_type=str(row["event_type"]),
+            old_size=int(row["old_size"]),
+            new_size=int(row["new_size"]),
+            delta_bytes=int(row["delta_bytes"]),
+            occurred_at=float(row["occurred_at"]),
+        )
+
+    @staticmethod
+    def _space_event_where(
+        since: float | None,
+        until: float | None,
+        drive: str | None,
+        category: str | None,
+        event_type: str | None,
+        keyword: str | None,
+        focus_only: bool = False,
+    ) -> tuple[list[str], list[object]]:
+        where = ["1 = 1"]
+        args: list[object] = []
+        for value, clause in ((since, "occurred_at >= ?"), (until, "occurred_at <= ?")):
+            if value is not None:
+                where.append(clause)
+                args.append(value)
+        if drive:
+            where.append("drive = ?")
+            args.append(drive.upper())
+        if category:
+            where.append("category = ?")
+            args.append(category)
+        if event_type:
+            where.append("event_type = ?")
+            args.append(event_type)
+        if keyword:
+            where.append("path LIKE ? ESCAPE '\\'")
+            args.append("%" + _like_escape(keyword) + "%")
+        if focus_only:
+            where.append("category IN ('user', 'download')")
+        return where, args
+
+    def space_event_filter_values(self) -> tuple[list[str], list[str]]:
+        drives = [
+            str(row["drive"])
+            for row in self._read.execute(
+                "SELECT DISTINCT drive FROM space_events WHERE drive <> '' ORDER BY drive"
+            ).fetchall()
+        ]
+        categories = [
+            str(row["category"])
+            for row in self._read.execute(
+                "SELECT DISTINCT category FROM space_events ORDER BY category"
+            ).fetchall()
+        ]
+        return drives, categories
+
+    def database_metrics(self) -> dict[str, int | float]:
+        """返回设置页需要的体积、写入速率与每日增长估算。"""
+        total_bytes = 0
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                total_bytes += Path(str(self.path) + suffix).stat().st_size
+            except OSError:
+                pass
+        total_events = self.space_event_count()
+        now = time.time()
+        events_24h = self.space_event_count(since=now - 86400)
+        events_60s = self.space_event_count(since=now - 60)
+        bytes_per_event = total_bytes / max(total_events, 1)
+        return {
+            "size_bytes": total_bytes,
+            "events_24h": events_24h,
+            "write_rate": events_60s / 60.0,
+            "estimated_daily_bytes": int(bytes_per_event * events_24h),
+        }
+
+    def category_space_totals(
+        self, since: float, until: float, *, limit: int = 8
+    ) -> list[tuple[str, int]]:
+        since_day = datetime.fromtimestamp(since).date().isoformat()
+        until_day = datetime.fromtimestamp(until).date().isoformat()
+        rows = self._read.execute(
+            "SELECT category, COALESCE(SUM(net_bytes), 0) delta "
+            "FROM space_daily WHERE day >= ? AND day <= ? "
+            "GROUP BY category ORDER BY ABS(delta) DESC LIMIT ?",
+            (since_day, until_day, max(1, limit)),
+        ).fetchall()
+        return [(str(row["category"]), int(row["delta"])) for row in rows]
+
+    def space_day_summaries(self, days: int) -> list[SpaceDaySummary]:
+        """近 N 天空间账本汇总，按新到旧返回，供概览时间线使用。"""
+        cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
+        rows = self._read.execute(
+            "SELECT day, COALESCE(SUM(occupied_bytes), 0) occupied, "
+            "COALESCE(SUM(released_bytes), 0) released, "
+            "COALESCE(SUM(net_bytes), 0) net, "
+            "COALESCE(SUM(event_count), 0) events "
+            "FROM space_daily WHERE day >= ? GROUP BY day ORDER BY day DESC LIMIT ?",
+            (cutoff, max(1, days)),
+        ).fetchall()
+        return [
+            SpaceDaySummary(
+                day=str(row["day"]),
+                occupied_bytes=int(row["occupied"]),
+                released_bytes=int(row["released"]),
+                net_bytes=int(row["net"]),
+                event_count=int(row["events"]),
+            )
+            for row in rows
+        ]
+
+    def top_space_folders(
+        self, days: int, limit: int = 10
+    ) -> list[tuple[str, int, int]]:
+        """在原始账本保留窗口内按目录汇总净变化，绝对影响从大到小。"""
+        cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
+        rows = self._read.execute(
+            "SELECT folder, COUNT(*) events, COALESCE(SUM(delta_bytes), 0) net "
+            "FROM space_events WHERE day >= ? GROUP BY folder "
+            "HAVING net <> 0 ORDER BY ABS(net) DESC, events DESC LIMIT ?",
+            (cutoff, max(1, limit)),
+        ).fetchall()
+        return [
+            (str(row["folder"]), int(row["events"]), int(row["net"]))
+            for row in rows
+        ]
+
+    def disk_samples(
+        self,
+        *,
+        since: float | None = None,
+        until: float | None = None,
+        drive: str | None = None,
+    ) -> list[DiskSample]:
+        where = ["1 = 1"]
+        args: list[object] = []
+        if since is not None:
+            where.append("sampled_at >= ?")
+            args.append(since)
+        if until is not None:
+            where.append("sampled_at <= ?")
+            args.append(until)
+        if drive:
+            where.append("drive = ?")
+            args.append(drive.upper())
+        rows = self._read.execute(
+            "SELECT drive, free_bytes, total_bytes, sampled_at FROM disk_samples WHERE "
+            + " AND ".join(where)
+            + " ORDER BY sampled_at, id",
+            args,
+        ).fetchall()
+        return [
+            DiskSample(
+                drive=r["drive"],
+                free_bytes=int(r["free_bytes"]),
+                total_bytes=int(r["total_bytes"]),
+                sampled_at=float(r["sampled_at"]),
+            )
+            for r in rows
+        ]
+
+    def attribution_summary(
+        self,
+        since: float,
+        until: float,
+        *,
+        drive: str | None = None,
+    ) -> list[AttributionSummary]:
+        """实际占用增加、文件已归因增加及两者差值，按盘返回。"""
+        sample_args: list[object] = [since, until]
+        event_args: list[object] = [since, until]
+        sample_drive = ""
+        event_drive = ""
+        if drive:
+            sample_drive = " AND drive = ?"
+            event_drive = " AND drive = ?"
+            sample_args.append(drive.upper())
+            event_args.append(drive.upper())
+        sample_rows = self._read.execute(
+            "SELECT drive, free_bytes, sampled_at FROM disk_samples "
+            "WHERE sampled_at >= ? AND sampled_at <= ?" + sample_drive
+            + " ORDER BY drive, sampled_at, id",
+            sample_args,
+        ).fetchall()
+        endpoints: dict[str, tuple[int, int]] = {}
+        for row in sample_rows:
+            key = row["drive"]
+            free = int(row["free_bytes"])
+            if key not in endpoints:
+                endpoints[key] = (free, free)
+            else:
+                endpoints[key] = (endpoints[key][0], free)
+        event_rows = self._read.execute(
+            "SELECT drive, COALESCE(SUM(delta_bytes), 0) delta FROM space_events "
+            "WHERE occurred_at >= ? AND occurred_at <= ?" + event_drive
+            + " GROUP BY drive",
+            event_args,
+        ).fetchall()
+        attributed = {r["drive"] or "": int(r["delta"]) for r in event_rows}
+        drives = sorted(set(endpoints) | set(attributed))
+        result: list[AttributionSummary] = []
+        for key in drives:
+            first, last = endpoints.get(key, (0, 0))
+            actual = first - last if key in endpoints else 0
+            known = attributed.get(key, 0)
+            result.append(AttributionSummary(key, actual, known, actual - known))
+        return result
+
+    def daily_attribution_summary(
+        self, since_day: str, until_day: str
+    ) -> list[AttributionSummary]:
+        """基于长期每日汇总计算看板口径，不依赖已清理的原始事件。"""
+        sample_rows = self._read.execute(
+            "SELECT day, drive, free_bytes FROM disk_space "
+            "WHERE day >= ? AND day <= ? ORDER BY drive, day",
+            (since_day, until_day),
+        ).fetchall()
+        endpoints: dict[str, tuple[int, int]] = {}
+        for row in sample_rows:
+            key = str(row["drive"])
+            free = int(row["free_bytes"])
+            if key not in endpoints:
+                endpoints[key] = (free, free)
+            else:
+                endpoints[key] = (endpoints[key][0], free)
+        event_rows = self._read.execute(
+            "SELECT drive, COALESCE(SUM(net_bytes), 0) delta FROM space_daily "
+            "WHERE day >= ? AND day <= ? GROUP BY drive",
+            (since_day, until_day),
+        ).fetchall()
+        attributed = {str(row["drive"]): int(row["delta"]) for row in event_rows}
+        drives = sorted(set(endpoints) | set(attributed))
+        return [
+            AttributionSummary(
+                drive,
+                endpoints[drive][0] - endpoints[drive][1] if drive in endpoints else 0,
+                attributed.get(drive, 0),
+                (
+                    endpoints[drive][0] - endpoints[drive][1]
+                    if drive in endpoints else 0
+                ) - attributed.get(drive, 0),
+            )
+            for drive in drives
+        ]
 
     def disk_space_for_day(self, day: str) -> list[tuple[str, int, int]]:
         """某天记录的磁盘剩余空间：[(drive, free_bytes, total_bytes)]，按盘符排序。"""

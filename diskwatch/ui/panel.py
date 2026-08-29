@@ -44,13 +44,7 @@ from ..storage import FileRecord, Storage, human_size, today_str
 from ..watcher import open_in_explorer
 from .charts import TrendChart
 from .picker import DayPicker
-from .style import (
-    DIM_FG,
-    GROUP_FG,
-    PANEL_QSS,
-    apply_window_icon,
-    enable_dark_titlebar,
-)
+from .style import apply_window_icon, enable_titlebar, panel_qss, theme_tokens
 
 AUTO_REFRESH_MS = 5000
 SEARCH_DEBOUNCE_MS = 280
@@ -165,11 +159,11 @@ def _file_display(rec: FileRecord, col: int, role: int):
             return rec.folder
         return None
     if role == Qt.ForegroundRole and rec.deleted:
-        return DIM_FG
+        return theme_tokens().color("text_muted")
     if role == Qt.TextAlignmentRole and col == 2:
         return int(Qt.AlignRight | Qt.AlignVCenter)
     if role == Qt.ForegroundRole and rec.size == 0:
-        return DIM_FG
+        return theme_tokens().color("text_muted")
     if role == Qt.ToolTipRole and col == 1:
         return rec.path
     if role == PATH_ROLE:
@@ -353,7 +347,7 @@ class FilesTreeModel(QAbstractItemModel):
         if role == Qt.TextAlignmentRole and col == 2:
             return int(Qt.AlignRight | Qt.AlignVCenter)
         if role == Qt.ForegroundRole:
-            return GROUP_FG
+            return theme_tokens().color("text")
         if role == Qt.FontRole:
             font = QFont()
             font.setBold(True)
@@ -436,7 +430,7 @@ class DetailPanel(QWidget):
         self.setWindowFlags(self.windowFlags() | Qt.Window)
         # setWindowFlags 会重建原生窗口，图标必须放在其后
         apply_window_icon(self)
-        self.setStyleSheet(PANEL_QSS)
+        self.apply_theme()
         self.resize(1040, 680)
 
         self._load_signature: tuple | None = None
@@ -484,7 +478,7 @@ class DetailPanel(QWidget):
         self.lbl_title = QLabel(tr("新增文件明细"), objectName="h1")
         title_row.addWidget(self.lbl_title)
         title_row.addStretch(1)
-        btn_dashboard = QPushButton(tr("数据面板"))
+        btn_dashboard = QPushButton(tr("概览"))
         btn_dashboard.clicked.connect(self.open_dashboard.emit)
         self.btn_dashboard = btn_dashboard
         btn_export = QPushButton(tr("导出 CSV"))
@@ -737,7 +731,7 @@ class DetailPanel(QWidget):
         self.setWindowTitle(tr("硬盘新增文件 · 详情"))
         self.lbl_title.setText(tr("新增文件明细"))
         self.lbl_date.setText(tr("日期"))
-        self.btn_dashboard.setText(tr("数据面板"))
+        self.btn_dashboard.setText(tr("概览"))
         self.btn_export.setText(tr("导出 CSV"))
         self.btn_refresh.setText(tr("刷新"))
         self.card_count._title.setText(tr("新增文件"))
@@ -1099,12 +1093,20 @@ class DetailPanel(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         apply_window_icon(self)
-        enable_dark_titlebar(self)
+        enable_titlebar(self)
         self._load_signature = None
         self.count_label.setText(tr("加载中…"))
         # 先让窗口画出来，再启动后台加载，避免点「详情」瞬间整卡
         QTimer.singleShot(0, lambda: self.reload(keep_day=True))
         self._timer.start(AUTO_REFRESH_MS)
+
+    def apply_theme(self) -> None:
+        self.setStyleSheet(panel_qss())
+        for child in self.findChildren(QWidget):
+            hook = getattr(child, "apply_theme", None)
+            if callable(hook):
+                hook()
+        self.update()
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)

@@ -1,8 +1,8 @@
-"""数据看板：从多个角度观察数据增长。
+"""空间概览：对照磁盘实际变化与文件空间账本。
 
 独立顶层窗（风格对齐详情面板，纯自绘图表）：
-- 增长趋势：每日新增体积 / 数量柱状图（线性 / 对数可切），点柱可跳详情
-- 累计增长：累计体积面积折线图（看增长斜率与高峰拐点）
+- 每日已归因变化：净占用 / 事件数柱状图，点柱可跳活动页
+- 累计已归因净变化：空间账本累计折线
 - 磁盘剩余空间：各盘剩余空间折线（看空间消耗速度）
 - TOP 目录 / TOP 文件类型：近 N 天合计横向条形图
 
@@ -13,6 +13,8 @@
 from __future__ import annotations
 
 import threading
+import time
+from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -30,12 +32,11 @@ from ..i18n import tr
 from ..storage import Storage, human_size
 from .charts import CumulativeChart, SpaceTrendChart, TopBarsChart, TrendChart
 from .style import (
-    ACCENT,
-    PANEL_QSS,
-    TEXT,
-    TEXT_DIM,
     apply_window_icon,
-    enable_dark_titlebar,
+    enable_titlebar,
+    panel_qss,
+    range_button_qss,
+    theme_tokens,
 )
 
 RANGES = (7, 14, 30, 90)
@@ -45,10 +46,10 @@ DASH_REFRESH_MS = 5000
 
 # 卡片标题 key → 中文原文（retranslate 用）
 _CARD_TITLES = {
-    "growth": "增长趋势",
-    "cum": "累计增长",
-    "space": "磁盘剩余空间",
-    "exts": "TOP 文件类型",
+    "growth": "每日已归因变化",
+    "cum": "累计已归因净变化",
+    "space": "24 小时磁盘剩余空间",
+    "exts": "分类空间变化",
     "folders": "TOP 目录",
 }
 
@@ -58,26 +59,14 @@ class DashboardPanel(QWidget):
     _ready = Signal(int, object)
     day_selected = Signal(str)  # 点增长柱 → 宿主打开详情面板并切到该天
 
-    _RANGE_BTN_QSS = f"""
-QPushButton#rangeBtn {{
-    color: {TEXT_DIM}; background: rgba(255,255,255,0.06);
-    border: none; border-radius: 6px;
-    padding: 4px 10px; font-size: 11px;
-}}
-QPushButton#rangeBtn:hover {{ background: rgba(255,255,255,0.12); color: {TEXT}; }}
-QPushButton#rangeBtn:checked {{
-    background: {ACCENT.name()}; color: #ffffff;
-}}
-"""
-
     def __init__(self, storage: Storage) -> None:
         super().__init__(objectName="panelRoot")
         self._storage = storage
-        self.setWindowTitle(tr("硬盘新增文件 · 数据看板"))
+        self.setWindowTitle(tr("DiskWatch · 概览"))
         # 普通顶层窗即可，不要强制置顶（避免盖住其它软件）
         self.setWindowFlags(self.windowFlags() | Qt.Window)
         apply_window_icon(self)
-        self.setStyleSheet(PANEL_QSS + self._RANGE_BTN_QSS)
+        self.apply_theme()
         self.resize(1080, 760)
 
         self._range = 14
@@ -87,6 +76,8 @@ QPushButton#rangeBtn:checked {{
         self._range_btns: list[tuple[int, QPushButton]] = []
         self._metric_btns: dict[str, QPushButton] = {}
         self._card_titles: dict[str, QLabel] = {}
+        self._workers: list[threading.Thread] = []
+        self._workers_lock = threading.Lock()
 
         self._build()
 
@@ -105,7 +96,7 @@ QPushButton#rangeBtn:checked {{
         # 标题行：标题 + 范围按钮组 + 刷新
         title_row = QHBoxLayout()
         title_row.setSpacing(10)
-        self.lbl_title = QLabel(tr("数据看板"), objectName="h1")
+        self.lbl_title = QLabel(tr("概览"), objectName="h1")
         title_row.addWidget(self.lbl_title)
         title_row.addStretch(1)
         for d in RANGES:
@@ -121,6 +112,13 @@ QPushButton#rangeBtn:checked {{
         title_row.addWidget(btn_refresh)
         root.addLayout(title_row)
 
+        metrics = QHBoxLayout()
+        metrics.setSpacing(12)
+        self.metric_actual = self._metric_card(metrics, tr("磁盘实际变化"))
+        self.metric_attributed = self._metric_card(metrics, tr("已归因变化"))
+        self.metric_unattributed = self._metric_card(metrics, tr("未归因变化"))
+        root.addLayout(metrics)
+
         # 滚动区：两列卡片
         self._scroll_area = QScrollArea(objectName="recentScroll")
         self._scroll_area.setWidgetResizable(True)
@@ -132,38 +130,43 @@ QPushButton#rangeBtn:checked {{
         grid.setContentsMargins(0, 0, 4, 0)
         grid.setSpacing(12)
 
-        # 增长趋势（体积/数量 + 线性/对数）
+        # 每日已归因净变化（净变化/事件数 + 线性/对数）
         self._chart_growth = TrendChart(self)
         self._chart_growth.day_selected.connect(self.day_selected.emit)
         growth, growth_lbl, growth_lay = self._card(
             "growth",
-            tr("增长趋势"),
+            tr("每日已归因变化"),
             extra_buttons=[
-                ("size", tr("体积")),
-                ("count", tr("数量")),
+                ("size", tr("净变化")),
+                ("count", tr("事件数")),
             ],
         )
         self._card_titles["growth"] = growth_lbl
         growth_lay.addWidget(self._chart_growth)
         grid.addWidget(growth, 0, 0)
 
-        # 累计增长
+        # 累计已归因净变化
         self._chart_cum = CumulativeChart(self)
-        cum, cum_lbl, cum_lay = self._card("cum", tr("累计增长"))
+        cum, cum_lbl, cum_lay = self._card("cum", tr("累计已归因净变化"))
         self._card_titles["cum"] = cum_lbl
         cum_lay.addWidget(self._chart_cum)
         grid.addWidget(cum, 0, 1)
 
         # 磁盘剩余空间
         self._chart_space = SpaceTrendChart(self)
-        space, space_lbl, space_lay = self._card("space", tr("磁盘剩余空间"))
+        space, space_lbl, space_lay = self._card(
+            "space", tr("24 小时磁盘剩余空间")
+        )
         self._card_titles["space"] = space_lbl
+        self.space_current = QLabel("", objectName="dim")
+        self.space_current.setWordWrap(True)
+        space_lay.addWidget(self.space_current)
         space_lay.addWidget(self._chart_space)
         grid.addWidget(space, 1, 0)
 
         # TOP 文件类型
         self._chart_exts = TopBarsChart(self)
-        exts, exts_lbl, exts_lay = self._card("exts", tr("TOP 文件类型"))
+        exts, exts_lbl, exts_lay = self._card("exts", tr("分类空间变化"))
         self._card_titles["exts"] = exts_lbl
         exts_lay.addWidget(self._chart_exts)
         grid.addWidget(exts, 1, 1)
@@ -189,6 +192,17 @@ QPushButton#rangeBtn:checked {{
         self.count_label = QLabel("", objectName="dim")
         foot.addWidget(self.count_label)
         root.addLayout(foot)
+
+    def _metric_card(self, row: QHBoxLayout, title: str) -> QLabel:
+        card = QFrame(objectName="card")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(3)
+        lay.addWidget(QLabel(title, objectName="dim"))
+        value = QLabel("0 B", objectName="statValue")
+        lay.addWidget(value)
+        row.addWidget(card, 1)
+        return value
 
     def _card(
         self,
@@ -254,19 +268,37 @@ QPushButton#rangeBtn:checked {{
         def work() -> None:
             bundle: object
             try:
+                now = time.time()
                 bundle = {
                     "days": days,
-                    "trend": storage.fetch_days_with_data(days),
-                    "folders": storage.top_folders_range(days, TOP_FOLDER_LIMIT),
-                    "exts": storage.top_extensions_range(days, TOP_EXT_LIMIT),
-                    "spaces": storage.disk_space_trend(days),
+                    "trend": storage.space_day_summaries(days),
+                    "folders": storage.top_space_folders(days, TOP_FOLDER_LIMIT),
+                    "recent_spaces": storage.disk_samples(since=now - 86400),
+                    "attribution": storage.daily_attribution_summary(
+                        (date.today() - timedelta(days=days - 1)).isoformat(),
+                        date.today().isoformat(),
+                    ),
+                    "categories": storage.category_space_totals(
+                        now - days * 86400, now, limit=TOP_EXT_LIMIT
+                    ),
                     "seq": storage.change_seq,
                 }
             except Exception as exc:
                 bundle = exc
-            self._ready.emit(req, bundle)
+            finally:
+                storage.release_reader()
+            try:
+                self._ready.emit(req, bundle)
+            finally:
+                current = threading.current_thread()
+                with self._workers_lock:
+                    if current in self._workers:
+                        self._workers.remove(current)
 
-        threading.Thread(target=work, name="dw-dashboard", daemon=True).start()
+        worker = threading.Thread(target=work, name="dw-dashboard", daemon=True)
+        with self._workers_lock:
+            self._workers.append(worker)
+        worker.start()
 
     def _on_ready(self, req: int, payload: object) -> None:
         if req != self._req or not self.isVisible():
@@ -279,25 +311,63 @@ QPushButton#rangeBtn:checked {{
 
         self._data_seq = int(payload.get("seq", self._data_seq))
         trend = payload["trend"]
-        self._chart_growth.set_days(trend, self._range)
-        self._chart_cum.set_days(trend, self._range)
+        self._chart_growth.set_space_days(trend, self._range)
+        self._chart_cum.set_space_days(trend, self._range)
 
         series: dict[str, list[tuple[str, int]]] = {}
-        for day, drive, free in payload["spaces"]:
-            series.setdefault(drive, []).append((day, free))
+        latest_free: dict[str, int] = {}
+        for sample in payload["recent_spaces"]:
+            sample_label = datetime.fromtimestamp(sample.sampled_at).strftime(
+                "%m-%d %H:%M:%S.%f"
+            )
+            series.setdefault(sample.drive, []).append(
+                (sample_label, sample.free_bytes)
+            )
+            latest_free[sample.drive] = sample.free_bytes
         self._chart_space.set_series(series)
+        self.space_current.setText(
+            "  ·  ".join(
+                tr("{drive} 当前剩余 {free}", drive=drive, free=human_size(free))
+                for drive, free in sorted(latest_free.items())
+            )
+        )
 
-        self._chart_folders.set_items(payload["folders"], "size")
-        self._chart_exts.set_items(payload["exts"], "size")
+        folders = [
+            (f"{folder}  {_signed_space(delta)}", count, abs(delta))
+            for folder, count, delta in payload.get("folders", [])
+        ]
+        self._chart_folders.set_items(folders, "size")
+        categories = [
+            (f"{_category_label(key)}  {_signed_space(delta)}", 0, abs(delta))
+            for key, delta in payload.get("categories", [])
+        ]
+        self._chart_exts.set_items(categories, "size")
 
-        total_size = sum(s.total_size for s in trend)
-        total_count = sum(s.count for s in trend)
+        attribution = payload.get("attribution", [])
+        actual = sum(item.actual_delta for item in attribution)
+        attributed = sum(item.attributed_delta for item in attribution)
+        unattributed = sum(item.unattributed_delta for item in attribution)
+        self.metric_actual.setText(_signed_space(actual))
+        self.metric_attributed.setText(_signed_space(attributed))
+        self.metric_unattributed.setText(_signed_space(unattributed))
+        t = theme_tokens()
+        for label, value in (
+            (self.metric_actual, actual),
+            (self.metric_attributed, attributed),
+            (self.metric_unattributed, unattributed),
+        ):
+            label.setStyleSheet(
+                f"color: {t.warning if value > 0 else t.success if value < 0 else t.text};"
+            )
+
+        net_change = sum(s.net_bytes for s in trend)
+        total_count = sum(s.event_count for s in trend)
         self.count_label.setText(
             tr(
-                "近 {days} 天：新增 {count} 个文件 · {size}",
+                "近 {days} 天：记录 {count} 个空间事件 · 已归因 {size}",
                 days=payload["days"],
                 count=f"{total_count:,}",
-                size=human_size(total_size),
+                size=_signed_space(net_change),
             )
         )
 
@@ -314,20 +384,46 @@ QPushButton#rangeBtn:checked {{
     def showEvent(self, event) -> None:
         super().showEvent(event)
         apply_window_icon(self)
-        enable_dark_titlebar(self)
+        enable_titlebar(self)
         self.count_label.setText(tr("加载中…"))
         # 先让窗口画出来，再启动后台加载
         QTimer.singleShot(0, self.reload)
         self._timer.start(DASH_REFRESH_MS)
+
+    def apply_theme(self) -> None:
+        self.setStyleSheet(panel_qss() + range_button_qss())
+        for chart in self.findChildren(QWidget):
+            hook = getattr(chart, "apply_theme", None)
+            if callable(hook):
+                hook()
+            chart.update()
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
         self._timer.stop()
         self._req += 1
 
+    def closeEvent(self, event) -> None:
+        self._req += 1
+        self.wait_for_idle()
+        super().closeEvent(event)
+
+    def wait_for_idle(self, timeout: float = 5.0) -> None:
+        deadline = time.monotonic() + timeout
+        while True:
+            with self._workers_lock:
+                workers = list(self._workers)
+            if not workers:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            for worker in workers:
+                worker.join(timeout=min(remaining, 0.5))
+
     def retranslate(self) -> None:
-        self.setWindowTitle(tr("硬盘新增文件 · 数据看板"))
-        self.lbl_title.setText(tr("数据看板"))
+        self.setWindowTitle(tr("DiskWatch · 概览"))
+        self.lbl_title.setText(tr("概览"))
         self.btn_refresh.setText(tr("刷新"))
         self.hint.setText(tr("单击增长柱可打开该天的详情"))
         self._chart_growth.retranslate()
@@ -336,5 +432,26 @@ QPushButton#rangeBtn:checked {{
         for key, label in self._card_titles.items():
             label.setText(tr(_CARD_TITLES[key]))
         if "size" in self._metric_btns:
-            self._metric_btns["size"].setText(tr("体积"))
-            self._metric_btns["count"].setText(tr("数量"))
+            self._metric_btns["size"].setText(tr("净变化"))
+            self._metric_btns["count"].setText(tr("事件数"))
+
+
+def _signed_space(value: int) -> str:
+    if value == 0:
+        return "0 B"
+    return ("+" if value > 0 else "−") + human_size(abs(value))
+
+
+def _category_label(key: str) -> str:
+    labels = {
+        "user": "用户文件",
+        "download": "下载文件",
+        "system": "系统与更新",
+        "software": "软件安装",
+        "cache": "应用缓存",
+        "temporary": "临时文件",
+        "development": "开发产物",
+        "vm_container": "虚拟机和容器",
+        "unclassified": "未分类",
+    }
+    return tr(labels.get(key, "未分类"))

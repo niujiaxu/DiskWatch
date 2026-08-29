@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication, QPushButton, QToolTip, QWidget
 
 from ..i18n import tr
 from ..storage import human_size
-from .style import ACCENT, ACCENT_2, OK, TEXT, TEXT_DIM, WARN
+from .style import ACCENT, ACCENT_2, OK, TEXT, TEXT_DIM, WARN, theme_tokens
 
 TREND_DAYS = 14
 BAR_GAP = 8
@@ -49,6 +49,12 @@ def _compact_count(n: int) -> str:
     return f"{n:,}"
 
 
+def _signed_size(n: int) -> str:
+    if n == 0:
+        return "0 B"
+    return ("+" if n > 0 else "−") + human_size(abs(n))
+
+
 class TrendChart(QWidget):
     """近 N 天新增趋势图：渐变圆角柱，悬浮显示日期 / 体积 / 数量。
 
@@ -65,6 +71,7 @@ class TrendChart(QWidget):
         self._hover: int = -1
         self._log_scale = True
         self._metric = "size"  # "size" 体积 / "count" 数量
+        self._signed = False
         self._btn: QPushButton | None = None  # 惰性创建（无 QApplication 的单元测试不建）
         self.setMinimumHeight(CHART_H)
         self.setMaximumHeight(CHART_H)
@@ -77,14 +84,23 @@ class TrendChart(QWidget):
         btn = QPushButton(tr("对数"), self)
         btn.setCursor(Qt.PointingHandCursor)
         btn.setFocusPolicy(Qt.NoFocus)
-        btn.setStyleSheet(
-            "QPushButton { color: #a8b6cc; background: rgba(255,255,255,0.06);"
-            " border: none; border-radius: 4px; font-size: 9px; padding: 1px 6px; }"
-            " QPushButton:hover { color: #e8eef8; background: rgba(255,255,255,0.14); }"
-        )
+        btn.setStyleSheet(self._button_qss())
         btn.clicked.connect(self._toggle_scale)
         btn.setGeometry(self.width() - 62, 3, 58, 15)
         self._btn = btn
+
+    def _button_qss(self) -> str:
+        t = theme_tokens()
+        return (
+            f"QPushButton {{ color: {t.text_dim}; background: {t.button};"
+            " border: none; border-radius: 5px; font-size: 9px; padding: 1px 6px; }"
+            f" QPushButton:hover {{ color: {t.text}; background: {t.button_hover}; }}"
+        )
+
+    def apply_theme(self) -> None:
+        if self._btn is not None:
+            self._btn.setStyleSheet(self._button_qss())
+        self.update()
 
     # ---------- 数据 ----------
 
@@ -95,6 +111,20 @@ class TrendChart(QWidget):
             for s in summaries[:max_days]
             if s.total_size > 0
         ]
+        self._signed = False
+        self._data.reverse()
+        self._hover = -1
+        self.setVisible(bool(self._data))
+        self.update()
+
+    def set_space_days(self, summaries, max_days: int = TREND_DAYS) -> None:
+        """接收空间账本日汇总，净占用为正、净释放为负。"""
+        self._data = [
+            (s.day, s.net_bytes, s.event_count)
+            for s in summaries[:max_days]
+            if s.net_bytes != 0 or s.event_count > 0
+        ]
+        self._signed = True
         self._data.reverse()
         self._hover = -1
         self.setVisible(bool(self._data))
@@ -126,7 +156,12 @@ class TrendChart(QWidget):
 
     def _tip_text(self, i: int) -> str:
         day, size, count = self._data[i]
-        return f"{day}  ·  {human_size(size)}  ·  {tr('{count} 个文件', count=count)}"
+        size_text = _signed_size(size) if self._signed else human_size(size)
+        count_text = (
+            tr("{count} 个空间事件", count=count)
+            if self._signed else tr("{count} 个文件", count=count)
+        )
+        return f"{day}  ·  {size_text}  ·  {count_text}"
 
     # ---------- 几何 ----------
 
@@ -213,7 +248,23 @@ class TrendChart(QWidget):
             s if self._metric == "size" else c
             for _d, s, c in self._data
         ]
-        max_val = max(vals) or 1
+        signed_view = self._signed and self._metric == "size"
+        positive = [value for value in vals if value > 0]
+        negative = [abs(value) for value in vals if value < 0]
+        if signed_view and positive and negative:
+            positive_area = max(3, bar_area_h // 2 - 1)
+            negative_area = max(3, bar_area_h - positive_area - 1)
+            baseline = _PLOT_TOP + positive_area
+        elif signed_view and negative:
+            positive_area = 0
+            negative_area = bar_area_h
+            baseline = _PLOT_TOP
+        else:
+            positive_area = bar_area_h
+            negative_area = 0
+            baseline = _PLOT_TOP + bar_area_h
+        max_positive = max(positive, default=1)
+        max_negative = max(negative, default=1)
         hovered = self._hover >= 0
 
         axis_font = painter.font()
@@ -229,19 +280,37 @@ class TrendChart(QWidget):
         def _show_label(i: int) -> bool:
             return i == 0 or i == n_bars - 1
 
+        if signed_view:
+            baseline_pen = theme_tokens().color("text_dim")
+            baseline_pen.setAlpha(45)
+            painter.setPen(QPen(baseline_pen, 1.0))
+            painter.drawLine(0, baseline, self.width(), baseline)
+
         for i, (day, size, count) in enumerate(self._data):
             x = x0 + i * (bw + gap)
             val = size if self._metric == "size" else count
-            bh = int(self._bar_height(val, max_val, bar_area_h))
-            y = _PLOT_TOP + bar_area_h - bh
+            if val < 0 and signed_view:
+                bh = int(self._bar_height(abs(val), max_negative, negative_area))
+                y = baseline
+            else:
+                bh = int(self._bar_height(abs(val), max_positive, positive_area))
+                y = baseline - bh
 
             if hovered and i != self._hover:
                 painter.setOpacity(0.45)
             else:
                 painter.setOpacity(1.0)
+            color = (
+                theme_tokens().color("success")
+                if val < 0 and signed_view else
+                theme_tokens().color("warning")
+                if val > 0 and signed_view else ACCENT
+            )
             grad = QLinearGradient(x, y, x, y + bh)
-            grad.setColorAt(0.0, ACCENT_2)
-            grad.setColorAt(1.0, ACCENT)
+            top_color = QColor(color)
+            top_color = top_color.lighter(115)
+            grad.setColorAt(0.0, top_color)
+            grad.setColorAt(1.0, color)
             painter.setBrush(grad)
             painter.setPen(Qt.NoPen)
             painter.drawRoundedRect(QRectF(x, y, bw, bh), 3, 3)
@@ -249,17 +318,22 @@ class TrendChart(QWidget):
             if i == self._hover:
                 painter.setOpacity(1.0)
                 painter.setBrush(Qt.NoBrush)
-                painter.setPen(QPen(QColor(255, 255, 255, 220), 1.2))
+                painter.setPen(QPen(theme_tokens().color("text"), 1.2))
                 painter.drawRoundedRect(QRectF(x + 0.5, y + 0.5, bw - 1, bh - 1), 3, 3)
 
             # 柱顶数值简写标签：柱太矮或与切换按钮重叠时省略
             if bh >= 10:
                 text = (
-                    _compact_size(size)
+                    (("+" if size > 0 else "−") + _compact_size(abs(size)))
+                    if self._signed and self._metric == "size"
+                    else _compact_size(size)
                     if self._metric == "size"
                     else _compact_count(count)
                 )
-                lrect = QRectF(x - 24, y - 9, bw + 48, 8)
+                label_y = y - 9 if val >= 0 else min(
+                    _PLOT_TOP + bar_area_h - 8, y + bh + 1
+                )
+                lrect = QRectF(x - 24, label_y, bw + 48, 8)
                 if self._btn is None or not self._btn.geometry().intersects(lrect.toRect()):
                     labels.append((text, lrect))
 
@@ -288,8 +362,8 @@ _LINE_COLORS = (
     OK,
     WARN,
     ACCENT,
-    QColor(212, 176, 244),
-    QColor(240, 210, 120),
+    QColor(125, 141, 164),
+    QColor(177, 133, 72),
 )
 
 _PLOT_LEFT = 4
@@ -319,6 +393,7 @@ class CumulativeChart(QWidget):
         super().__init__(parent)
         self._data: list[tuple[str, int]] = []  # (day, cumulative) 旧→新
         self._hover: int = -1
+        self._signed = False
         self.setMinimumHeight(120)
         self.setMouseTracking(True)
 
@@ -334,6 +409,20 @@ class CumulativeChart(QWidget):
             total += s.total_size
             out.append((s.day, total))
         self._data = out
+        self._signed = False
+        self._hover = -1
+        self.setVisible(bool(self._data))
+        self.update()
+
+    def set_space_days(self, summaries, max_days: int = 90) -> None:
+        """按空间账本净变化计算累计已归因变化。"""
+        total = 0
+        out: list[tuple[str, int]] = []
+        for summary in reversed(summaries[:max_days]):
+            total += summary.net_bytes
+            out.append((summary.day, total))
+        self._data = out
+        self._signed = True
         self._hover = -1
         self.setVisible(bool(self._data))
         self.update()
@@ -342,7 +431,7 @@ class CumulativeChart(QWidget):
         w = self.width()
         n = len(self._data)
         if n <= 1 or w <= 8:
-            return _PLOT_LEFT
+            return w / 2
         return _PLOT_LEFT + i * (w - 8) / (n - 1)
 
     def _index_at(self, x: float) -> int:
@@ -357,7 +446,7 @@ class CumulativeChart(QWidget):
         return tr(
             "截至 {day} · 累计 {size}",
             day=day,
-            size=human_size(cum),
+            size=_signed_size(cum) if self._signed else human_size(cum),
         )
 
     def mouseMoveEvent(self, event) -> None:
@@ -390,29 +479,46 @@ class CumulativeChart(QWidget):
         w, h = self.width(), self.height()
         area_bottom = h - _LABEL_H - 4
         area_top = 6
-        max_cum = self._data[-1][1] or 1
+        values = [value for _day, value in self._data]
+        low = min(0, *values)
+        high = max(0, *values)
+        if high == low:
+            high = low + 1
         n = len(self._data)
 
         def _y(cum: int) -> float:
-            return area_bottom - cum / max_cum * (area_bottom - area_top)
+            return area_bottom - (cum - low) / (high - low) * (area_bottom - area_top)
+
+        baseline = _y(0)
+        line_color = (
+            theme_tokens().color("success")
+            if self._signed and self._data[-1][1] < 0
+            else theme_tokens().color("warning")
+            if self._signed and self._data[-1][1] > 0
+            else ACCENT
+        )
 
         # 面积填充
         path = QPainterPath()
         path.moveTo(self._x(0), _y(self._data[0][1]))
         for i in range(1, n):
             path.lineTo(self._x(i), _y(self._data[i][1]))
-        path.lineTo(self._x(n - 1), area_bottom)
-        path.lineTo(self._x(0), area_bottom)
+        path.lineTo(self._x(n - 1), baseline)
+        path.lineTo(self._x(0), baseline)
         path.closeSubpath()
         grad = QLinearGradient(0, area_top, 0, area_bottom)
-        grad.setColorAt(0.0, QColor(ACCENT.red(), ACCENT.green(), ACCENT.blue(), 90))
-        grad.setColorAt(1.0, QColor(ACCENT.red(), ACCENT.green(), ACCENT.blue(), 12))
+        grad.setColorAt(
+            0.0, QColor(line_color.red(), line_color.green(), line_color.blue(), 90)
+        )
+        grad.setColorAt(
+            1.0, QColor(line_color.red(), line_color.green(), line_color.blue(), 12)
+        )
         painter.setPen(Qt.NoPen)
         painter.setBrush(grad)
         painter.drawPath(path)
 
         # 折线
-        pen = QPen(ACCENT, 1.5)
+        pen = QPen(line_color, 1.5)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
         for i in range(1, n):
@@ -423,14 +529,17 @@ class CumulativeChart(QWidget):
 
         # 末点圆点 + 累计值标注
         lx, ly = int(self._x(n - 1)), int(_y(self._data[-1][1]))
-        painter.setBrush(ACCENT)
-        painter.setPen(QPen(QColor(255, 255, 255, 220), 1.0))
+        painter.setBrush(line_color)
+        painter.setPen(QPen(theme_tokens().color("surface"), 1.0))
         painter.drawEllipse(QPoint(lx, ly), 3, 3)
         font = painter.font()
         font.setPointSizeF(max(7.0, font.pointSizeF() - 1.5))
         painter.setFont(font)
         painter.setPen(QColor(TEXT_DIM))
-        label = human_size(self._data[-1][1])
+        label = (
+            _signed_size(self._data[-1][1])
+            if self._signed else human_size(self._data[-1][1])
+        )
         painter.drawText(
             QRectF(min(lx + 6, w - 110), max(2.0, ly - 8), 104, 12),
             Qt.AlignLeft | Qt.AlignVCenter,
@@ -440,16 +549,26 @@ class CumulativeChart(QWidget):
         # hover 竖线
         if self._hover >= 0:
             hx = int(self._x(self._hover))
-            painter.setPen(QPen(QColor(255, 255, 255, 60), 1.0))
+            guide = theme_tokens().color("text_dim")
+            guide.setAlpha(60)
+            painter.setPen(QPen(guide, 1.0))
             painter.drawLine(hx, area_top, hx, area_bottom)
 
         # 首尾日期轴
         axis_pen = QPen(QColor(TEXT_DIM))
-        for i in (0, n - 1):
+        for i in ((0,) if n == 1 else (0, n - 1)):
             painter.setFont(font)
             painter.setPen(axis_pen)
-            rect = QRectF(self._x(i) - 100, h - _LABEL_H + 2, 200, _LABEL_H - 2)
-            painter.drawText(rect, Qt.AlignCenter, _day_short(self._data[i][0]))
+            if n == 1:
+                rect = QRectF(0, h - _LABEL_H + 2, w, _LABEL_H - 2)
+                align = Qt.AlignCenter
+            elif i == 0:
+                rect = QRectF(0, h - _LABEL_H + 2, 100, _LABEL_H - 2)
+                align = Qt.AlignLeft | Qt.AlignVCenter
+            else:
+                rect = QRectF(w - 100, h - _LABEL_H + 2, 100, _LABEL_H - 2)
+                align = Qt.AlignRight | Qt.AlignVCenter
+            painter.drawText(rect, align, _day_short(self._data[i][0]))
         painter.end()
 
 
@@ -522,7 +641,7 @@ class SpaceTrendChart(QWidget):
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        _w, h = self.width(), self.height()
+        w, h = self.width(), self.height()
         area_bottom = h - _LABEL_H - 4
         area_top = 8
         n = len(self._days)
@@ -554,7 +673,9 @@ class SpaceTrendChart(QWidget):
         # hover 竖线
         if self._hover >= 0:
             hx = int(self._x(self._hover))
-            painter.setPen(QPen(QColor(255, 255, 255, 60), 1.0))
+            guide = theme_tokens().color("text_dim")
+            guide.setAlpha(60)
+            painter.setPen(QPen(guide, 1.0))
             painter.drawLine(hx, area_top, hx, area_bottom)
 
         # 左上角图例（与色板等长；盘数超过色板数时颜色循环但图例不截断）
@@ -576,8 +697,13 @@ class SpaceTrendChart(QWidget):
             for i in (0, n - 1):
                 painter.setFont(font)
                 painter.setPen(QColor(TEXT_DIM))
-                rect = QRectF(self._x(i) - 100, h - _LABEL_H + 2, 200, _LABEL_H - 2)
-                painter.drawText(rect, Qt.AlignCenter, _day_short(self._days[i]))
+                if i == 0:
+                    rect = QRectF(0, h - _LABEL_H + 2, 100, _LABEL_H - 2)
+                    align = Qt.AlignLeft | Qt.AlignVCenter
+                else:
+                    rect = QRectF(w - 100, h - _LABEL_H + 2, 100, _LABEL_H - 2)
+                    align = Qt.AlignRight | Qt.AlignVCenter
+                painter.drawText(rect, align, _day_short(self._days[i]))
         painter.end()
 
 
@@ -670,7 +796,9 @@ class TopBarsChart(QWidget):
 
             if i == self._hover:
                 painter.setPen(Qt.NoPen)
-                painter.setBrush(QColor(255, 255, 255, 10))
+                hover = theme_tokens().color("text")
+                hover.setAlpha(10)
+                painter.setBrush(hover)
                 painter.drawRoundedRect(rect, 5, 5)
 
             # label

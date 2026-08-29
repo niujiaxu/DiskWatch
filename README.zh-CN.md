@@ -5,103 +5,89 @@
 </p>
 
 <p align="center">
-  <strong>今天硬盘上新长了哪些文件、一共多大？</strong><br/>
-  <sub>Windows 桌面悬浮组件 · 实时记录新增文件 · 数据只留本机 · 不联网</sub>
+  <strong>解释磁盘空间去了哪里。</strong><br/>
+  <sub>全量记录普通文件的空间变化，本地归因，不读取文件内容。</sub>
 </p>
+
+## 它能回答什么
+
+DiskWatch 同时观察文件变化和磁盘剩余空间，把两条数据线对在一起：
+
+```text
+C: 可用空间减少    8.4 GB
+已归因             7.9 GB
+未归因             0.5 GB
+```
+
+- **磁盘实际变化**：定时读取文件系统提供的剩余空间数值。
+- **已归因变化**：创建、增长、缩小、删除和跨盘移动产生的真实字节差。
+- **未归因变化**：实际变化与文件账本之间的差值。
+- 同盘移动净变化为 0；跨盘移动在源盘记释放、目标盘记占用。
+
+## 当前功能
+
+- **全量采集**：普通缓存、临时文件、AppData 和开发产物不再直接丢弃，而是记录后分类。
+- **安全边界**：始终排除 DiskWatch 自身数据库/WAL/日志、设备路径和非普通文件，避免反馈循环。
+- **自动分类**：用户文件、下载、系统与更新、软件安装、应用缓存、临时文件、开发产物、虚拟机与容器、未分类；高级设置可添加优先匹配的路径规则。
+- **空间变化账本**：保存旧大小、新大小、字节差、事件类型、分类、磁盘和时间。
+- **连续写入合并**：同一路径停止写入约 6 秒后读取最终元数据，减少重复事件和 SQLite 写入。
+- **磁盘采样**：每 5 分钟记录一次剩余空间，支持实际/已归因/未归因对照。
+- **启动恢复**：NTFS 优先使用 USN Change Journal 游标；不可用时按所选范围补扫，且只读元数据；界面显示进度并可随时取消。
+- **分页活动页**：每页最多 200 条，支持日期、全部/关注、磁盘、分类、事件类型、路径搜索，以及按分类/目录分组折叠。
+- **CSV 导出**：按当前筛选条件在后台分批导出，不把全部数据一次载入内存。
+- **分层保留**：原始事件默认 30 天；小时汇总一年；每日汇总长期保留。
+- **运行诊断**：显示原始、已处理、合并、丢弃、队列数量、写入速率、数据库大小/预计每日增长和 USN 状态。
+- **统一主窗口**：概览和文件活动使用同一窗口，托盘和悬浮组件都打开该窗口。
+- **浅色/深色/跟随系统**：运行时即时切换，Windows 原生标题栏同步变化。
+- **悬浮卡片与迷你胶囊**：显示今日净空间变化和归因率，而不是只显示文件数量。
+- **中英双语、单实例、开机启动、可自定义数据库位置**。
+
+## 界面
+
+当前界面截图由仓库内的离屏渲染脚本生成，不会打开资源管理器，也不会读取真实用户数据库。
 
 <p align="center">
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/latest"><img src="https://img.shields.io/github/v/release/niujiaxu/DiskWatch?style=for-the-badge&label=release" alt="release" /></a>
-  <a href="https://github.com/niujiaxu/DiskWatch/stargazers"><img src="https://img.shields.io/github/stars/niujiaxu/DiskWatch?style=for-the-badge" alt="stars" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="license" /></a>
+  <img src="docs/main-dark-preview.png" alt="深色主窗口" width="760" />
 </p>
+<p align="center"><sub>深色主题：概览与空间归因</sub></p>
 
 <p align="center">
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/latest"><strong>⬇ 下载便携版 .exe</strong></a>
-  &nbsp;·&nbsp;
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.2.1/DiskWatch-1.2.1-win64-portable.zip">v1.2.1 直链</a>
-  &nbsp;·&nbsp;
-  <a href="#-快速开始">快速开始</a>
+  <img src="docs/main-light-preview.png" alt="浅色主窗口" width="760" />
 </p>
+<p align="center"><sub>浅色主题：文件活动</sub></p>
 
----
+## 扫盘会伤硬盘吗
 
-## 界面一览
+DiskWatch 不读取文件内容，只读取目录项、文件大小、时间和属性等元数据。正常实时监控由文件系统事件驱动，不会持续遍历整盘。
 
-<p align="center">
-  <img src="docs/widget-preview.png" alt="悬浮卡片" width="320" />
-  &nbsp;&nbsp;
-  <img src="docs/ball-preview.png" alt="迷你球" width="140" />
-</p>
+- NTFS 启动恢复只读取 USN Journal 元数据。
+- USN 不可用时，默认仅补扫桌面、下载、文档、图片和视频等用户目录；也可明确改成全部监控根目录。
+- 目录补扫在线程中以较低优先级运行，主窗口显示已扫描目录/文件数并提供取消按钮。
+- 可在“设置 → 监控”关闭启动恢复或目录补扫。
+- 大量解压或构建时会合并同路径修改；活动表固定分页，避免 UI 一次加载几十万行。
 
-<p align="center"><sub>悬浮卡片 · 迷你球</sub></p>
+机械硬盘仍会因目录补扫产生寻道，因此默认不做传统全盘补扫。需要全盘对账时应在设置中明确选择监控范围。
 
-<p align="center">
-  <img src="docs/panel-preview.png" alt="详情面板" width="720" />
-</p>
+合成 10 万事件基准、控制策略和适用边界见[性能与磁盘影响](docs/performance.md)。
 
-<p align="center"><sub>详情面板 — 按天、搜索、排序、按应用分组、事件类型、趋势图、导出</sub></p>
+## 隐私
 
-<p align="center">
-  <img src="docs/settings-preview.png" alt="设置" width="560" />
-</p>
-
-<p align="center"><sub>设置 — 监控范围、过滤、外观、数据路径</sub></p>
-
----
-
-## 为什么做它
-
-安装包、解压、下载、AI 改工程……硬盘每天都在冒出**成百上千个你没空看的新文件**。
-
-多数工具要么甩一长串变更列表（太吵），要么动手整理你的文件夹（太越界）。  
-DiskWatch 只干一件事：
-
-> **盯住「今天新建了什么」，摊在桌面上，把噪音挡在外面。**
-
-不联网、不挪文件，只给你**看见**的能力。
-
-| | 变更列表类 | 自动整理类 | **DiskWatch** |
-|--|:--:|:--:|:--:|
-| 实时捕获创建 | ✅ | ✅ | ✅ |
-| 今日数量 + 体积 | ❌ | ❌ | ✅ |
-| 悬浮卡片 / 迷你球 | ❌ | ❌ | ✅ |
-| 智能降噪 | 弱 | — | ✅ |
-| 本地历史 + CSV | ❌ | ❌ | ✅ |
-| 会挪你的文件 | ❌ | ✅ | ❌ 绝不 |
-
----
-
-## 亮点
-
-- **实时监控** — 听 Windows 目录通知，不做全盘扫描
-- **悬浮卡片** — 半透明科技蓝玻璃、可拖、可置顶，最近文件可滚动
-- **迷你球** — 今日总大小 + 进度环（今日占近 7 天合计体积；悬停看占比）
-- **详情面板** — 虚拟树表不卡；可勾选 **按应用分组**（同一路径根如 `Tencent Files` 收成一组）/ 按天 / 搜索（统计与表格一致）/ 排序 / 导出 / 资源管理器定位
-- **事件类型切换** — 新增 / 已删除 / 全部，删除行标色并显示删除时间
-- **趋势图** — 近 14 天每日新增数量迷你柱状图
-- **右键菜单** — 打开 / 资源管理器定位 / 复制路径 / 复制文件名
-- **中英双语** — 设置里改语言即时生效，无需重启
-- **智能过滤** — 默认跳过 `AppData`、`Program Files`、缓存、`.git` / `.venv`…；一键应用开发目录过滤预设
-- **启动补扫** — 程序没在跑期间的新文件，启动时按磁盘对账补回（目录 mtime 剪枝加速）
-- **视觉** — 卡片 / 球 / 详情 / 设置统一冷科技蓝配色
-- **单实例** — 再点一次启动会唤起已有界面
-- **便携运行** — 解压即用；可选开机自启
-- **隐私** — 数据在 `%APPDATA%\DiskWatch\`，零联网
-
----
+- 不读取或上传文件内容。
+- 不发送文件名、路径、统计或数据库到网络。
+- 数据默认保存在 `%APPDATA%\DiskWatch\diskwatch.db`。
+- 配置默认保存在 `%APPDATA%\DiskWatch\config.json`。
+- 可在设置中迁移数据库，迁移 schema 前会创建一致性备份。
+- “在资源管理器中定位”只在用户主动点击时调用 Windows Explorer。
 
 ## 快速开始
 
-### 便携版（推荐）
+### 便携版
 
-1. 打开 [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest) 下载最新包  
-   或直链：[`DiskWatch-1.2.1-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.2.1/DiskWatch-1.2.1-win64-portable.zip)
-2. 解压 → 运行 **`DiskWatch.exe`**
-3. 完事。不用装 Python。
+从 [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest) 下载最新版，解压后运行 `DiskWatch.exe`。
 
-### 从源码跑
+### 从源码运行
 
-Windows 10/11 · Python 3.10+
+要求 Windows 10/11、Python 3.10+：
 
 ```bat
 git clone https://github.com/niujiaxu/DiskWatch.git
@@ -109,44 +95,20 @@ cd DiskWatch
 start.bat
 ```
 
-首次会自动建 `.venv` 并安装 `PySide6`、`watchdog`。
+首次运行会创建 `.venv` 并安装 `PySide6` 与 `watchdog`。
 
----
+## 平台说明
 
-## 日常怎么用
+当前桌面发行版仍以 Windows 为目标。SQLite 账本、分类和大部分 UI 可复用；macOS/Linux 需要分别实现 FSEvents/inotify 监控适配器，NTFS USN 功能会自动不可用并使用目录恢复策略。
 
-| 你做什么 | 它做什么 |
-|----------|----------|
-| 拖动卡片 / 球 | 记住位置 |
-| 卡片 **－** | 收成迷你球 |
-| 单击迷你球 | 展开卡片 |
-| 双击某条文件 | 资源管理器定位 |
-| 托盘左键 | 显示 / 隐藏 |
-| 托盘双击 | 打开详情 |
-| 详情里勾选 **按应用分组** | 同一路径根下的文件收成一组 |
+## 开发验证
 
-**过滤很重要：** 默认看不到 `Program Files` / `AppData` 里的噪音——故意的。  
-需要看？去 **设置 → 过滤规则**。
+```bat
+.venv\Scripts\python.exe -m pytest tests -q -p no:cacheprovider
+.venv\Scripts\python.exe -m ruff check diskwatch tests
+```
 
----
-
-## 占用（实测）
-
-| 指标 | 大约（整盘 C:，空闲） |
-|------|----------------------|
-| 内存 | 约 100–110 MB（Qt）；纯监控约 24 MB |
-| CPU | 单核约 0.6%–1.7% |
-| 噪音 | 约 93% 事件被默认规则滤掉 |
-
----
-
-## 觉得有用就点个 Star
-
-如果 DiskWatch 帮你找回过「那个文件到底去哪了」，给仓库一个 ⭐，能让更多同样焦虑磁盘的人看见。
-
-欢迎 Issue / PR。路线图：可选跟踪「修改」、更多语言等。
-
----
+项目禁止在 UI 中使用原生 `QComboBox`，全部下拉选择统一使用 `DayPicker`。
 
 ## 许可证
 

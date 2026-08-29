@@ -6,6 +6,7 @@ import os
 import tempfile
 from pathlib import Path
 
+from diskwatch.classification import CapturePolicy, FileClassifier
 from diskwatch.config import Config
 from diskwatch.filters import PathFilter
 
@@ -94,3 +95,32 @@ def test_min_size_property() -> None:
     config.set("min_size_kb", 2)
     f.reload(config)
     assert f.min_size == 2 * 1024
+
+
+def test_full_capture_keeps_temp_and_focus_mode_filters_it(tmp_path) -> None:
+    config, _ = _filter()
+    db = tmp_path / "diskwatch.db"
+    config.set("capture_mode", "all")
+    full = CapturePolicy(config, storage_path=db)
+    assert full.accepts_path(str(tmp_path / "cache.tmp"))
+    assert not full.accepts_path(str(db))
+    assert not full.accepts_path(str(db) + "-wal")
+
+    config.set("capture_mode", "focus")
+    focus = CapturePolicy(config, storage_path=db)
+    assert not focus.accepts_path(r"C:\x\cache.tmp")
+
+
+def test_file_classifier() -> None:
+    classifier = FileClassifier()
+    assert classifier.classify(r"C:\Users\niu\Downloads\movie.mkv") == "download"
+    assert classifier.classify(r"C:\proj\node_modules\pkg\index.js") == "development"
+    assert classifier.classify(r"C:\Users\niu\AppData\Local\Temp\a.tmp") == "temporary"
+    assert classifier.classify(r"C:\VMs\dev.vhdx") == "vm_container"
+
+
+def test_custom_category_rule_has_priority() -> None:
+    config = Config()
+    config.set("category_rules", {"software": [r"\CompanyTools"]})
+    classifier = FileClassifier(config)
+    assert classifier.classify(r"C:\Users\niu\CompanyTools\cache.tmp") == "software"

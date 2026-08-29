@@ -1,29 +1,23 @@
-"""迷你悬浮球：收起状态下只占一个小圆，显示今日新增总大小。
-
-进度环 = 今日体积 / 近 7 天体积合计。
-有两天差不多大时大约半圈；今天持续写入时环会慢慢涨，不会总钉在满圈。
-"""
+"""迷你胶囊：收起状态显示今日净空间变化。"""
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
-    QColor,
-    QConicalGradient,
     QFont,
     QPainter,
     QPen,
-    QRadialGradient,
 )
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from ..i18n import tr
 from ..storage import Storage, human_size, today_str
 from ..watcher import FileMonitor
-from .style import ACCENT, ACCENT_2, BG_BOTTOM, BG_TOP, TEXT, TEXT_DIM
+from .style import theme_tokens
 
 REFRESH_MS = 2000
-FLASH_MS = 60
 DRAG_SLOP = 4  # 位移小于这个值算点击，不算拖动
 RING_DAYS = 7
 
@@ -36,8 +30,8 @@ class MiniBall(QWidget):
     request_quit = Signal()
     hidden_by_user = Signal()
 
-    SIZE = 66
-    RING = 6
+    WIDTH = 132
+    HEIGHT = 44
 
     def __init__(self, storage: Storage, monitor: FileMonitor, config) -> None:
         super().__init__()
@@ -49,7 +43,8 @@ class MiniBall(QWidget):
         self._size_total = 0
         self._period_total = 0
         self._ratio = 0.0
-        self._glow = 0.0
+        self._delta = 0
+        self._attribution_pct = 0
         self._hover = False
         self._press_pos: QPoint | None = None
         self._drag_offset: QPoint | None = None
@@ -58,7 +53,7 @@ class MiniBall(QWidget):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_Hover)
-        self.setFixedSize(self.SIZE, self.SIZE)
+        self.setFixedSize(self.WIDTH, self.HEIGHT)
         self.setCursor(Qt.PointingHandCursor)
 
         self._signature: tuple | None = None
@@ -66,9 +61,6 @@ class MiniBall(QWidget):
         # 同卡片一样：隐藏时不跑定时器，数据没变化时不重绘
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh)
-
-        self._flash_timer = QTimer(self)
-        self._flash_timer.timeout.connect(self._decay_glow)
 
         self._restore_geometry()
         self.refresh(initial=True)
@@ -83,11 +75,13 @@ class MiniBall(QWidget):
     def refresh(self, initial: bool = False) -> None:
         count, total = self._storage.day_stats(today_str())
         period = max(self._storage.period_total_size(RING_DAYS), 1)
+        day_start = datetime.combine(datetime.now().date(), datetime.min.time()).timestamp()
+        summaries = self._storage.attribution_summary(day_start, datetime.now().timestamp())
+        delta = sum(item.attributed_delta for item in summaries)
+        actual = sum(item.actual_delta for item in summaries)
+        attribution_pct = min(100, round(abs(delta) / abs(actual) * 100)) if actual else 0
 
-        if not initial and total > self._size_total:
-            self._start_flash()
-
-        signature = (count, total, period, len(self._monitor.roots))
+        signature = (count, total, period, delta, actual, len(self._monitor.roots))
         if signature == self._signature:
             return
         self._signature = signature
@@ -96,18 +90,21 @@ class MiniBall(QWidget):
         self._size_total = total
         self._period_total = period
         self._ratio = min(total / period, 1.0) if total > 0 else 0.0
+        self._delta = delta
+        self._attribution_pct = attribution_pct
         self._update_tooltip()
         self.update()
 
     def _update_tooltip(self) -> None:
-        pct = round(self._ratio * 100)
+        impact = human_size(abs(self._delta))
+        direction = tr("占用增加") if self._delta >= 0 else tr("释放空间")
         self.setToolTip(
             tr(
-                "今日 {today}\n近{days}天合计 {total}\n今日占比 {pct}%",
-                today=human_size(self._size_total),
-                days=RING_DAYS,
-                total=human_size(self._period_total),
-                pct=pct,
+                "今日{direction} {impact}\n已归因 {pct}%\n记录 {count} 个文件",
+                direction=direction,
+                impact=impact,
+                pct=self._attribution_pct,
+                count=self._count,
             )
         )
 
@@ -121,88 +118,41 @@ class MiniBall(QWidget):
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
         self._timer.stop()
-        self._flash_timer.stop()
-        self._glow = 0.0
-
-    def _start_flash(self) -> None:
-        self._glow = 1.0
-        if not self._flash_timer.isActive():
-            self._flash_timer.start(FLASH_MS)
-
-    def _decay_glow(self) -> None:
-        self._glow = max(0.0, self._glow - 0.06)
-        if self._glow <= 0:
-            self._flash_timer.stop()
-        self.update()
 
     # ---------- 绘制 ----------
 
     def paintEvent(self, event) -> None:
+        t = theme_tokens()
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        outer = QRectF(0.5, 0.5, self.WIDTH - 1, self.HEIGHT - 1)
+        background = t.color("floating_top")
+        if self._hover:
+            background = t.color("surface_raised")
+        p.setBrush(background)
+        p.setPen(QPen(t.color("border_strong"), 1))
+        p.drawRoundedRect(outer, self.HEIGHT / 2, self.HEIGHT / 2)
 
-        pad = self.RING / 2 + 1
-        outer = QRectF(pad, pad, self.SIZE - 2 * pad, self.SIZE - 2 * pad)
-
-        # 新文件进来时短暂发光（科技蓝，克制一点）
-        if self._glow > 0:
-            halo = QRadialGradient(outer.center(), self.SIZE / 2)
-            c = QColor(ACCENT)
-            c.setAlphaF(0.36 * self._glow)
-            halo.setColorAt(0.55, QColor(0, 0, 0, 0))
-            halo.setColorAt(1.0, c)
-            p.setPen(Qt.NoPen)
-            p.setBrush(halo)
-            p.drawEllipse(QRectF(0, 0, self.SIZE, self.SIZE))
-
-        # 球体：与悬浮卡片同一套 BG 渐变
-        body = QRadialGradient(
-            outer.center().x(), outer.top(), outer.height() * 1.25
-        )
-        top = QColor(BG_TOP)
-        top.setAlpha(244)
-        bottom = QColor(BG_BOTTOM)
-        bottom.setAlpha(248)
-        body.setColorAt(0.0, top)
-        body.setColorAt(1.0, bottom)
+        status = t.color("warning" if self._delta >= 0 else "success")
+        status.setAlpha(220)
         p.setPen(Qt.NoPen)
-        p.setBrush(body)
-        p.drawEllipse(outer)
+        p.setBrush(status)
+        p.drawRoundedRect(QRectF(8, 9, 4, self.HEIGHT - 18), 2, 2)
 
-        # 进度环底轨
-        track_a = 40 if not self._hover else 58
-        track = QPen(QColor(160, 190, 255, track_a), self.RING)
-        track.setCapStyle(Qt.FlatCap)
-        p.setPen(track)
-        p.drawArc(outer, 0, 360 * 16)
-
-        # 进度环：蓝 → 浅青，同一冷色相
-        if self._ratio > 0:
-            grad = QConicalGradient(outer.center(), 90)
-            grad.setColorAt(0.0, ACCENT_2)
-            grad.setColorAt(0.5, ACCENT)
-            grad.setColorAt(1.0, ACCENT_2)
-            pen = QPen(grad, self.RING)
-            pen.setCapStyle(Qt.FlatCap)
-            p.setPen(pen)
-            span = max(1, int(360 * 16 * self._ratio))
-            p.drawArc(outer, 90 * 16, -span)
-
-        # 中间显示今日总大小（压缩成 2.7M / 128K 这类，66px 里才放得下）
-        # 继承应用字体（含中文），只改字号/粗细，避免默认西文字体缺字
-        p.setPen(QColor(TEXT))
+        p.setPen(t.color("text"))
         f = QFont(self.font())
         f.setWeight(QFont.DemiBold)
-        text = _compact_size(self._size_total)
-        f.setPointSizeF(12.5 if len(text) <= 4 else 10.0)
+        sign = "+" if self._delta >= 0 else "−"
+        text = sign + _compact_size(abs(self._delta))
+        f.setPointSizeF(11.5)
         p.setFont(f)
-        p.drawText(outer.adjusted(0, -5, 0, -5), Qt.AlignCenter, text)
+        p.drawText(QRectF(19, 5, 76, 22), Qt.AlignLeft | Qt.AlignVCenter, text)
 
-        p.setPen(QColor(TEXT_DIM))
+        p.setPen(t.color("text_dim"))
         small = QFont(self.font())
-        small.setPointSizeF(7.0)
+        small.setPointSizeF(8.0)
         p.setFont(small)
-        p.drawText(outer.adjusted(0, 17, 0, 17), Qt.AlignCenter, tr("今日"))
+        p.drawText(QRectF(19, 23, 102, 14), Qt.AlignLeft | Qt.AlignVCenter, tr("今日净变化"))
 
     # ---------- 交互 ----------
 
@@ -245,7 +195,7 @@ class MiniBall(QWidget):
         menu = QMenu(self)
         menu.addAction(tr("展开卡片"), self.expand_requested.emit)
         menu.addAction(tr("详情面板…"), self.open_panel.emit)
-        menu.addAction(tr("数据看板…"), self.open_dashboard.emit)
+        menu.addAction(tr("概览…"), self.open_dashboard.emit)
         menu.addAction(tr("设置…"), self.open_settings.emit)
         menu.addSeparator()
         menu.addAction(tr("隐藏（保留托盘图标）"), self._hide_self)
@@ -267,7 +217,7 @@ class MiniBall(QWidget):
     def place_near(self, rect) -> None:
         """从卡片收起时，让球出现在卡片右上角附近，视觉上有连续感。"""
         screen = QApplication.primaryScreen().availableGeometry()
-        x = min(rect.right() - self.SIZE, screen.right() - self.SIZE - 8)
+        x = min(rect.right() - self.WIDTH, screen.right() - self.WIDTH - 8)
         y = max(rect.top(), screen.top() + 8)
         self.move(int(x), int(y))
         self._save_pos()
@@ -285,13 +235,13 @@ class MiniBall(QWidget):
             and len(pos) == 2
             and all(isinstance(v, (int, float)) for v in pos)
             and area is not None
-            and area.contains(QPoint(int(pos[0]) + self.SIZE // 2, int(pos[1]) + self.SIZE // 2))
+            and area.contains(QPoint(int(pos[0]) + self.WIDTH // 2, int(pos[1]) + self.HEIGHT // 2))
         ):
             self.move(int(pos[0]), int(pos[1]))
             return
         if area is None:
             return
-        self.move(area.right() - self.SIZE - 28, area.top() + 60)
+        self.move(area.right() - self.WIDTH - 28, area.top() + 60)
 
     def apply_appearance(self) -> None:
         visible = self.isVisible()
@@ -303,6 +253,9 @@ class MiniBall(QWidget):
         # tooltip 是 i18n 的；签名不含语言，先清掉才会重刷
         self._signature = None
         self._update_tooltip()
+        self.update()
+
+    def apply_theme(self) -> None:
         self.update()
 
 

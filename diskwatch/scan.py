@@ -5,17 +5,20 @@
 和库对账——沿被监控根目录走一遍，把创建时间落在回看窗口内、
 通过过滤规则的缺失文件补进库。
 
-跑在后台线程，不阻塞启动；与实时 watcher 共用同一套 PathFilter，
+跑在后台线程，不阻塞启动；与实时 watcher 共用同一套 CapturePolicy，
 过滤口径完全一致。
 """
 
 from __future__ import annotations
 
 import os
+import threading
 import time
+from collections.abc import Callable
 
+from .classification import CapturePolicy, FileClassifier
 from .config import Config
-from .filters import PathFilter, safe_stat
+from .filters import safe_stat
 from .storage import FileRecord, Storage, make_record
 
 SCAN_BATCH = 500
@@ -27,6 +30,9 @@ def scan_and_backfill(
     storage: Storage,
     roots: list[str],
     lookback_days: int = 3,
+    *,
+    cancel_event: threading.Event | None = None,
+    progress: Callable[[int, int, str], None] | None = None,
 ) -> int:
     """递归扫描被监控根目录，补回缺失记录。返回本次补入的条数。
 
@@ -38,10 +44,30 @@ def scan_and_backfill(
       被排除文件的 stat 开销。
     - 已入库且正常的行不会被覆盖（backfill_records 只插缺失、复活删除行）。
     """
-    pfilter = PathFilter(config)
+    pfilter = CapturePolicy(config, storage_path=storage.path)
+    classifier = FileClassifier(config)
+    _lower_current_thread_priority()
     cutoff = time.time() - max(1, lookback_days) * 86400  # 至少回看 1 天
     added = 0
+    scanned_dirs = 0
+    scanned_files = 0
+    reported_dirs = 0
+    reported_files = 0
     batch: list[FileRecord] = []
+
+    def cancelled() -> bool:
+        return cancel_event is not None and cancel_event.is_set()
+
+    def report(path: str, *, force: bool = False) -> None:
+        nonlocal reported_dirs, reported_files
+        if progress is not None and (
+            force
+            or scanned_dirs - reported_dirs >= 32
+            or scanned_files - reported_files >= 500
+        ):
+            progress(scanned_dirs, scanned_files, path)
+            reported_dirs = scanned_dirs
+            reported_files = scanned_files
 
     def flush() -> None:
         nonlocal added
@@ -51,11 +77,17 @@ def scan_and_backfill(
             batch.clear()
 
     for root in roots:
+        if cancelled():
+            break
         if not os.path.isdir(root):
             continue
         stack = [root]
         while stack:
+            if cancelled():
+                break
             dirpath = stack.pop()
+            scanned_dirs += 1
+            report(dirpath)
             if pfilter.excludes_dir(dirpath):
                 continue
             # 目录 mtime 只反映「直接子项」的变更；子目录里的新文件不会
@@ -78,6 +110,8 @@ def scan_and_backfill(
             except OSError:
                 continue
             for ent in entries:
+                if cancelled():
+                    break
                 try:
                     if ent.is_dir(follow_symlinks=False):
                         stack.append(ent.path)
@@ -88,6 +122,8 @@ def scan_and_backfill(
                     continue
                 if not pfilter.accepts_path(ent.path):
                     continue
+                scanned_files += 1
+                report(ent.path)
                 try:
                     st = ent.stat(follow_symlinks=False)
                 except OSError:
@@ -99,8 +135,29 @@ def scan_and_backfill(
                 created = st.st_ctime  # Windows：文件创建时间
                 if created < cutoff:
                     continue
-                batch.append(make_record(ent.path, st.st_size, added_at=created))
+                batch.append(
+                    make_record(
+                        ent.path,
+                        st.st_size,
+                        added_at=created,
+                        category=classifier.classify(ent.path),
+                    )
+                )
                 if len(batch) >= SCAN_BATCH:
                     flush()
     flush()
+    report("", force=True)
     return added
+
+
+def _lower_current_thread_priority() -> None:
+    """补扫只做后台维护；Windows 上把当前线程降为低于正常优先级。"""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        thread = ctypes.windll.kernel32.GetCurrentThread()
+        ctypes.windll.kernel32.SetThreadPriority(thread, -1)
+    except (AttributeError, OSError):
+        pass

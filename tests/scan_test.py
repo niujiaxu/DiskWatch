@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -23,12 +24,18 @@ from diskwatch.storage import Storage, make_record
 
 
 def _config(tmp: Path) -> Config:
-    """测试配置：不排除 Temp 路径本身，只保留一个自定义排除片段。"""
+    """测试配置：显式固定过滤规则，不受真实用户配置影响。"""
     config = Config()
     config.set("watch_mode", "folders")
     config.set("watch_folders", [str(tmp)])
+    config.set("capture_mode", "focus")
     config.set("min_size_kb", 0)
     config.set("exclude_dirs", ["\\appdata_like\\"])
+    config.set("exclude_exts", [".tmp"])
+    config.set("exclude_names", [])
+    config.set("ignore_hidden", True)
+    config.set("ignore_dot_dirs", True)
+    config.set("excluded_drives", [])
     return config
 
 
@@ -74,7 +81,8 @@ def test_backfill() -> None:
 
     dd = _row(storage, dead)
     assert dd is not None and dd["deleted"] == 0, dd
-    assert dd is not None and dd["size"] == 123, dd
+    # 重建后的当前大小应以磁盘现状为准，历史大小保留在 space_events 中。
+    assert dd is not None and dd["size"] == len("back"), dd
     storage.close()
 
 
@@ -135,3 +143,59 @@ def test_mtime_pruning_still_descends_nested() -> None:
     assert _row(storage, inner / "new.txt") is not None, "嵌套新文件被漏掉"
     assert added >= 1, added
     storage.close()
+
+
+def test_full_capture_scan_keeps_previously_filtered_files() -> None:
+    tmp = Path(tempfile.mkdtemp(prefix="dw_scan_all_"))
+    config = _config(tmp)
+    config.set("capture_mode", "all")
+    storage = Storage(tmp / "t.db")
+    try:
+        temp_file = tmp / "download.part"
+        hidden_file = tmp / ".tool" / "cache.bin"
+        temp_file.write_text("partial")
+        hidden_file.parent.mkdir()
+        hidden_file.write_text("cache")
+
+        scan_and_backfill(config, storage, [str(tmp)], lookback_days=3)
+
+        assert _row(storage, temp_file) is not None
+        assert _row(storage, hidden_file) is not None
+        assert _row(storage, tmp / "t.db") is None
+    finally:
+        storage.close()
+
+
+def test_scan_can_be_cancelled_before_work_starts() -> None:
+    tmp = Path(tempfile.mkdtemp(prefix="dw_scan_cancel_"))
+    config = _config(tmp)
+    storage = Storage(tmp / "t.db")
+    cancel = threading.Event()
+    cancel.set()
+    try:
+        (tmp / "missed.txt").write_text("x")
+        added = scan_and_backfill(
+            config, storage, [str(tmp)], cancel_event=cancel
+        )
+        assert added == 0
+        assert _row(storage, tmp / "missed.txt") is None
+    finally:
+        storage.close()
+
+
+def test_scan_reports_progress_and_lowers_priority(monkeypatch) -> None:
+    tmp = Path(tempfile.mkdtemp(prefix="dw_scan_progress_"))
+    config = _config(tmp)
+    storage = Storage(tmp / "t.db")
+    reports: list[tuple[int, int, str]] = []
+    lowered: list[bool] = []
+    monkeypatch.setattr(scanmod, "_lower_current_thread_priority", lambda: lowered.append(True))
+    try:
+        (tmp / "visible.txt").write_text("x")
+        scan_and_backfill(config, storage, [str(tmp)], progress=lambda *args: reports.append(args))
+        assert lowered == [True]
+        assert reports
+        assert reports[-1][0] >= 1
+        assert reports[-1][1] >= 1
+    finally:
+        storage.close()

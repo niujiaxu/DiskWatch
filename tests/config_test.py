@@ -39,9 +39,26 @@ def test_defaults_applied(monkeypatch, tmp_path) -> None:
 
     _isolated(monkeypatch, tmp_path)
     c = cfg.Config()
-    assert c.get("retention_days") == 90
+    assert c.get("retention_days") == 30
     assert c.get("min_size_kb") == 0
     assert c.get("language") == "zh_CN"
+    assert c.get("capture_mode") == "all"
+    assert c.get("scan_on_startup") is True
+    assert c.get("scan_scope") == "user_dirs"
+    assert c.get("startup_recovery") == "usn"
+    assert c.get("theme_mode") == "system"
+    assert c.get("reduce_motion") is False
+
+
+def test_old_scan_setting_migrates_to_safe_default(monkeypatch, tmp_path) -> None:
+    home = _isolated(monkeypatch, tmp_path)
+    (home / "config.json").write_text(
+        json.dumps({"scan_on_startup": True}), encoding="utf-8"
+    )
+    config = cfgmod.Config()
+    assert config.get("capture_mode") == "all"
+    assert config.get("scan_scope") == "user_dirs"
+    assert config.get("scan_on_startup") is True
 
 
 def test_corrupt_config_falls_back(monkeypatch, tmp_path) -> None:
@@ -50,7 +67,7 @@ def test_corrupt_config_falls_back(monkeypatch, tmp_path) -> None:
     home = _isolated(monkeypatch, tmp_path)
     (home / "config.json").write_text("{not json!!", encoding="utf-8")
     c = cfg.Config()
-    assert c.get("retention_days") == 90
+    assert c.get("retention_days") == 30
 
 
 def test_corrupt_filter_version_does_not_crash(monkeypatch, tmp_path) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from diskwatch.storage import DaySummary, Storage, make_record
+from diskwatch.storage import DaySummary, SpaceDaySummary, Storage, make_record
 from diskwatch.ui.dashboard import (
     CumulativeChart,
     DashboardPanel,
@@ -84,6 +84,21 @@ def test_disk_space_trend(qapp, tmp_path) -> None:
         s.close()
 
 
+def test_space_day_and_folder_summaries(qapp, tmp_path) -> None:
+    s = _storage(tmp_path)
+    try:
+        _seed(s)
+        summaries = s.space_day_summaries(3)
+        assert len(summaries) == 3
+        assert sum(item.event_count for item in summaries) == 9
+        assert sum(item.net_bytes for item in summaries) > 0
+        folders = s.top_space_folders(3, 5)
+        assert folders[0][0] == r"C:\AppA"
+        assert folders[0][2] > folders[1][2]
+    finally:
+        s.close()
+
+
 # ---------------------------------------------------------------------------
 # 图表组件
 # ---------------------------------------------------------------------------
@@ -129,6 +144,21 @@ def test_trend_chart_metric_count(qapp) -> None:
     c.grab()
 
 
+def test_trend_chart_signed_space_days(qapp) -> None:
+    c = TrendChart()
+    c.resize(320, 78)
+    c.set_space_days(
+        [
+            SpaceDaySummary("2026-01-02", 0, 20, -20, 2),
+            SpaceDaySummary("2026-01-01", 10, 0, 10, 1),
+        ]
+    )
+    assert c._signed
+    assert c._data == [("2026-01-01", 10, 1), ("2026-01-02", -20, 2)]
+    assert "−" in c._tip_text(1)
+    c.grab()
+
+
 def test_cumulative_chart(qapp) -> None:
     c = CumulativeChart()
     c.resize(320, 120)
@@ -141,6 +171,21 @@ def test_cumulative_chart(qapp) -> None:
     )
     assert c._data == [("2026-01-01", 10), ("2026-01-02", 30), ("2026-01-03", 60)]
     assert c._tip_text(2)  # 累计 60
+    c.grab()
+
+
+def test_cumulative_chart_signed_net_change(qapp) -> None:
+    c = CumulativeChart()
+    c.resize(320, 120)
+    c.set_space_days(
+        [
+            SpaceDaySummary("2026-01-03", 0, 40, -40, 1),
+            SpaceDaySummary("2026-01-02", 20, 0, 20, 1),
+            SpaceDaySummary("2026-01-01", 10, 0, 10, 1),
+        ]
+    )
+    assert c._data == [("2026-01-01", 10), ("2026-01-02", 30), ("2026-01-03", -10)]
+    assert "−" in c._tip_text(2)
     c.grab()
 
 
@@ -201,10 +246,19 @@ def test_dashboard_smoke(qapp, tmp_path) -> None:
         # 手工派发后台线程同款打包结果
         payload = {
             "days": 14,
-            "trend": s.fetch_days_with_data(14),
-            "folders": s.top_folders_range(14, 10),
-            "exts": s.top_extensions_range(14, 8),
-            "spaces": s.disk_space_trend(14),
+            "trend": s.space_day_summaries(14),
+            "folders": s.top_space_folders(14, 10),
+            "recent_spaces": s.disk_samples(
+                since=(datetime.now() - timedelta(days=1)).timestamp()
+            ),
+            "categories": s.category_space_totals(
+                (datetime.now() - timedelta(days=14)).timestamp(),
+                datetime.now().timestamp(),
+            ),
+            "attribution": s.daily_attribution_summary(
+                (date.today() - timedelta(days=13)).isoformat(),
+                date.today().isoformat(),
+            ),
             "seq": s.change_seq,
         }
         panel._on_ready(panel._req, payload)
@@ -213,7 +267,7 @@ def test_dashboard_smoke(qapp, tmp_path) -> None:
         assert panel._chart_folders.isVisible()
         assert panel._chart_exts.isVisible()
         assert panel._chart_space.isVisible()
-        assert "9" in panel.count_label.text()  # 近 14 天：新增 9 个文件
+        assert "9" in panel.count_label.text()  # 近 14 天记录 9 个空间事件
         # 范围切换触发重载（req 递增，不崩溃）
         panel._set_range(7)
         assert panel._range == 7
@@ -230,7 +284,7 @@ def test_dashboard_day_selected(qapp, tmp_path) -> None:
         panel = DashboardPanel(s)
         picked: list[str] = []
         panel.day_selected.connect(picked.append)
-        panel._chart_growth.set_days(s.fetch_days_with_data(14), 14)
+        panel._chart_growth.set_space_days(s.space_day_summaries(14), 14)
         day = panel._chart_growth._data[0][0]
         panel._chart_growth.day_selected.emit(day)
         assert picked == [day], picked

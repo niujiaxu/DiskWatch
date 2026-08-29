@@ -18,9 +18,10 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+from .classification import CapturePolicy, FileClassifier
 from .config import Config
 from .errorlog import errorlog
-from .filters import PathFilter, safe_stat
+from .filters import safe_stat
 from .i18n import tr
 from .storage import FileRecord, Storage, make_record, today_str
 
@@ -34,7 +35,8 @@ FLUSH_INTERVAL = 1.5
 FLUSH_BATCH = 300
 SETTLE_DELAY = 30.0
 SETTLE_INTERVAL = 45.0
-SPACE_SAMPLE_INTERVAL = 300.0  # 每 5 分钟记一次磁盘剩余空间（按天+盘符覆盖写）
+MODIFY_SETTLE_DELAY = 6.0
+SPACE_SAMPLE_INTERVAL = 300.0  # 每 5 分钟写完整采样，同时维护按天+盘符最新值
 
 
 def list_drives(include_removable: bool = False) -> list[str]:
@@ -107,12 +109,17 @@ class _Handler(FileSystemEventHandler):
         else:
             self._monitor.submit(("del", event.src_path))
 
+    def on_modified(self, event) -> None:
+        if not event.is_directory:
+            self._monitor.submit(("modify", event.src_path))
+
 
 class FileMonitor:
     def __init__(self, config: Config, storage: Storage) -> None:
         self._config = config
         self._storage = storage
-        self._filter = PathFilter(config)
+        self._filter = CapturePolicy(config, storage_path=storage.path)
+        self._classifier = FileClassifier(config)
         self._queue: queue.Queue = queue.Queue(maxsize=QUEUE_MAX)
         self._observer: "Observer | None" = None  # type: ignore[valid-type]
         self._stop = threading.Event()
@@ -123,6 +130,10 @@ class FileMonitor:
         self._dropped = 0
         self._seen = 0        # watchdog 递过来的原始事件数
         self._passed = 0      # 通过路径过滤、真正进队列的数量
+        self._processed = 0
+        self._coalesced = 0
+        self._modify_due: dict[str, float] = {}
+        self._high_load_since: float | None = None
         self._roots: list[str] = []
         self._errors: list[str] = []
 
@@ -130,7 +141,8 @@ class FileMonitor:
 
     def start(self) -> None:
         self._stop.clear()
-        self._filter.reload(self._config)
+        self._filter.reload(self._config, storage_path=self._storage.path)
+        self._classifier = FileClassifier(self._config)
         self._roots = self._resolve_roots()
         self._errors = []
 
@@ -193,6 +205,32 @@ class FileMonitor:
         with self._lock:
             return self._seen, self._passed
 
+    def diagnostics(self) -> dict[str, int | float | bool]:
+        with self._lock:
+            queued = self._queue.qsize()
+            now = time.monotonic()
+            if queued >= max(1, int(QUEUE_MAX * 0.75)):
+                if self._high_load_since is None:
+                    self._high_load_since = now
+            else:
+                self._high_load_since = None
+            high_load_seconds = (
+                now - self._high_load_since
+                if self._high_load_since is not None
+                else 0.0
+            )
+            return {
+                "seen": self._seen,
+                "passed": self._passed,
+                "processed": self._processed,
+                "coalesced": self._coalesced,
+                "dropped": self._dropped,
+                "queued": queued,
+                "pending_modifications": len(self._modify_due),
+                "high_load": high_load_seconds >= 10.0,
+                "high_load_seconds": high_load_seconds,
+            }
+
     def submit(self, item: tuple) -> None:
         # 这里在 watchdog 线程上执行，且全盘监控时调用极其频繁，
         # 所以只做纯字符串判断，计数用一次锁合并。
@@ -203,6 +241,12 @@ class FileMonitor:
             if ok:
                 self._passed += 1
         if not ok:
+            return
+        if item[0] == "modify":
+            with self._lock:
+                if path in self._modify_due:
+                    self._coalesced += 1
+                self._modify_due[path] = time.monotonic() + MODIFY_SETTLE_DELAY
             return
         try:
             self._queue.put_nowait(item)
@@ -240,6 +284,8 @@ class FileMonitor:
                 item = None
 
             if item is not None:
+                with self._lock:
+                    self._processed += 1
                 kind = item[0]
                 if kind == "add":
                     rec = self._build_record(item[1])
@@ -257,6 +303,11 @@ class FileMonitor:
                 elif kind == "dir_del":
                     dir_dels.append(item[1])
 
+            for path in self._take_due_modifications():
+                rec = self._build_record(path)
+                if rec:
+                    pending.append(rec)
+
             due = (
                 time.monotonic() - last_flush >= FLUSH_INTERVAL
                 or len(pending) >= FLUSH_BATCH
@@ -270,7 +321,22 @@ class FileMonitor:
                 pending, deletes, moves, dir_moves, dir_dels = [], [], [], [], []
                 last_flush = time.monotonic()
 
+        for path in self._take_due_modifications(force=True):
+            rec = self._build_record(path)
+            if rec:
+                pending.append(rec)
         self._flush(pending, deletes, moves, dir_moves, dir_dels)
+
+    def _take_due_modifications(self, *, force: bool = False) -> list[str]:
+        now = time.monotonic()
+        with self._lock:
+            paths = [
+                path for path, due in self._modify_due.items() if force or due <= now
+            ]
+            for path in paths:
+                self._modify_due.pop(path, None)
+            self._processed += len(paths)
+            return paths
 
     def _flush(
         self,
@@ -281,6 +347,13 @@ class FileMonitor:
         dir_dels: list[str],
     ) -> None:
         try:
+            # 目录移动先于其子文件的补发 created 处理，避免同盘移动被误算为新增。
+            for src, dst in dir_moves:
+                if src != dst:
+                    self._storage.move_subtree(src, dst)
+            for src, dst, rec in moves:
+                if src != dst:
+                    self._storage.move_file(src, dst, rec)
             if pending:
                 # 同一批里同路径可能重复，保留最后一次
                 unique = {r.path: r for r in pending}
@@ -289,12 +362,6 @@ class FileMonitor:
                     self._added_total += len(unique)
             if deletes:
                 self._storage.mark_deleted(deletes)
-            for src, dst, rec in moves:
-                if src != dst:
-                    self._storage.move_file(src, dst, rec)
-            for src, dst in dir_moves:
-                if src != dst:
-                    self._storage.move_subtree(src, dst)
             for src in dir_dels:
                 self._storage.delete_subtree(src)
         except Exception as exc:
@@ -308,10 +375,12 @@ class FileMonitor:
         assert st is not None
         if st.st_size == 0:
             # 刚创建、还在写入的文件。先登记，settle 阶段回填真实体积并复核。
-            return make_record(path, 0)
+            return make_record(path, 0, category=self._classifier.classify(path))
         if not self._filter.meets_size(st.st_size):
             return None
-        return make_record(path, st.st_size)
+        return make_record(
+            path, st.st_size, category=self._classifier.classify(path)
+        )
 
     def _settle_loop(self) -> None:
         while not self._stop.wait(SETTLE_INTERVAL):

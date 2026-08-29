@@ -5,103 +5,85 @@
 </p>
 
 <p align="center">
-  <strong>See what landed on your disk today.</strong><br/>
-  <sub>A tiny Windows desktop widget that tracks newly created files — in real time, locally, quietly.</sub>
+  <strong>Explain where your disk space went.</strong><br/>
+  <sub>Attribute regular-file space changes locally without reading file contents.</sub>
 </p>
+
+## What it explains
+
+DiskWatch correlates file activity with sampled free space:
+
+```text
+C: free space decreased    8.4 GB
+Attributed                 7.9 GB
+Unattributed               0.5 GB
+```
+
+- Actual change comes from file-system free-space samples.
+- Attributed change is the byte delta from creates, growth, shrink, deletion, and cross-drive moves.
+- Unattributed change is the difference between those two measurements.
+- Same-drive moves have zero net impact. Cross-drive moves free space on the source and consume it on the destination.
+
+## Features
+
+- Full capture records regular cache, temporary, AppData, and development files, then categorizes them instead of discarding them.
+- Safety exclusions always protect DiskWatch's own database/WAL/log, device paths, and non-regular files.
+- Categories include user files, downloads, system and updates, software, app cache, temporary files, development artifacts, VMs and containers, and uncategorized. Advanced settings can add higher-priority path rules.
+- The space ledger stores old size, new size, delta, event type, drive, category, and timestamp.
+- Repeated writes to one path settle for about six seconds before final metadata is recorded.
+- Free space is sampled every five minutes for actual/attributed/unattributed comparison.
+- Startup recovery prefers an NTFS USN Change Journal cursor. If unavailable, it reconciles the selected scope by metadata only, with visible progress and cancellation.
+- File Activity is paged at 200 rows, supports collapsible category/folder groups, and filters by period, all/focus view, drive, category, event type, and path.
+- CSV export runs in the background and reads matching rows in batches.
+- Raw events default to 30 days, hourly summaries to one year, and daily summaries are retained long term.
+- Diagnostics expose raw, processed, coalesced, dropped, and queued event counts, write rate, database size/estimated daily growth, and USN status.
+- One main window hosts Overview and File Activity.
+- Light, dark, and system themes switch at runtime, including the native Windows title bar.
+- The floating card and mini pill show today's net space change and attribution ratio.
+- English/Chinese UI, single instance, autostart, and configurable data paths.
+
+## UI
+
+Screenshots are generated off-screen from synthetic data. The renderer does not open Explorer or read the user's real database.
 
 <p align="center">
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/latest"><img src="https://img.shields.io/github/v/release/niujiaxu/DiskWatch?style=for-the-badge&label=release" alt="release" /></a>
-  <a href="https://github.com/niujiaxu/DiskWatch/stargazers"><img src="https://img.shields.io/github/stars/niujiaxu/DiskWatch?style=for-the-badge" alt="stars" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="license" /></a>
+  <img src="docs/main-dark-preview.png" alt="Dark main window" width="760" />
 </p>
+<p align="center"><sub>Dark theme: overview and attribution</sub></p>
 
 <p align="center">
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/latest"><strong>⬇ Download portable .exe</strong></a>
-  &nbsp;·&nbsp;
-  <a href="https://github.com/niujiaxu/DiskWatch/releases/download/v1.2.1/DiskWatch-1.2.1-win64-portable.zip">v1.2.1 zip</a>
-  &nbsp;·&nbsp;
-  <a href="#-quick-start">Quick start</a>
+  <img src="docs/main-light-preview.png" alt="Light main window" width="760" />
 </p>
+<p align="center"><sub>Light theme: file activity</sub></p>
 
----
+## Does scanning harm a drive?
 
-## Demo
+DiskWatch never reads file contents. It reads directory entries and metadata such as size, timestamps, and attributes. Normal monitoring is event-driven and does not continuously walk a disk.
 
-<p align="center">
-  <img src="docs/widget-preview.png" alt="Floating card" width="320" />
-  &nbsp;&nbsp;
-  <img src="docs/ball-preview.png" alt="Mini ball" width="140" />
-</p>
+- NTFS startup recovery reads USN Journal metadata.
+- When USN is unavailable, the default fallback is limited to common user folders; users may explicitly select all watched roots.
+- Reconciliation runs at below-normal priority on Windows and can be cancelled from the main window.
+- Startup recovery and fallback scanning can be disabled under Settings → Monitoring.
+- Repeated writes are coalesced, and the activity table is paged.
 
-<p align="center"><sub>Floating card · Mini ball</sub></p>
+A directory reconciliation scan can still cause seek activity on an HDD, so traditional whole-disk backfill is not the default.
 
-<p align="center">
-  <img src="docs/panel-preview.png" alt="Detail panel" width="720" />
-</p>
+See [performance and disk impact](docs/performance.md) for the synthetic 100,000-event benchmark and its safety boundaries.
 
-<p align="center"><sub>Detail panel — by day, search, sort, group by app, event types, trend chart, export</sub></p>
+## Privacy
 
-<p align="center">
-  <img src="docs/settings-preview.png" alt="Settings" width="560" />
-</p>
-
-<p align="center"><sub>Settings — scope, filters, appearance, data paths</sub></p>
-
----
-
-## Why this exists
-
-Installers, zip extracts, downloads, AI coding agents… Windows creates **thousands of files** you never consciously look at.
-
-Most tools either dump a noisy change list, or start rearranging your folders.  
-DiskWatch does **one** job:
-
-> **Track “what was created today”, put it on your desktop, filter the junk.**
-
-No cloud. No file moving. Just visibility.
-
-| | Change-list tools | Auto-organizers | **DiskWatch** |
-|--|:--:|:--:|:--:|
-| Real-time creates | ✅ | ✅ | ✅ |
-| Today’s count + size | ❌ | ❌ | ✅ |
-| Desktop card / mini ball | ❌ | ❌ | ✅ |
-| Smart noise filters | weak | — | ✅ |
-| Local history + CSV | ❌ | ❌ | ✅ |
-| Moves your files | ❌ | ✅ | ❌ never |
-
----
-
-## Highlights
-
-- **Live monitoring** — Windows directory notifications (not a full-disk scan)
-- **Floating card** — translucent tech-blue glass, draggable, always-on-top, scrollable recent list
-- **Mini ball** — today’s size + ring showing today’s share of the last 7 days’ volume (hover for %)
-- **Detail panel** — virtualized tree/table, optional **group by app** (same path root → one folder), day switch, search that matches the stats, sort by time/size, CSV export, jump to Explorer
-- **Event types** — Added / Deleted / All; deleted rows are dimmed and show deletion time
-- **Trend chart** — 14-day mini bar chart of daily new-file counts
-- **Context menu** — open, reveal in Explorer, copy path, copy name
-- **Bilingual** — Chinese / English, switch takes effect instantly without restart
-- **Smart filters** — skips `AppData`, `Program Files`, caches, `.git` / `.venv`… by default; one-click dev-folder preset
-- **Startup backfill** — files created while the app was off are reconciled at launch (accelerated by directory mtime pruning)
-- **Look** — unified cool tech-blue palette across card, ball, detail, and settings
-- **Single instance** — launch again → brings the UI forward
-- **Portable** — unzip and run; optional autostart from tray
-- **Private** — SQLite under `%APPDATA%\DiskWatch\`, zero network
-
----
+- No file contents are read or uploaded.
+- File names, paths, statistics, and the database are not sent over the network.
+- Data defaults to `%APPDATA%\DiskWatch\diskwatch.db`.
+- Configuration defaults to `%APPDATA%\DiskWatch\config.json`.
+- Schema migration creates a consistent backup before changing the database.
+- Explorer is launched only when the user explicitly asks to reveal a file.
 
 ## Quick start
 
-### Portable (recommended)
+Download the latest portable build from [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest), extract it, and run `DiskWatch.exe`.
 
-1. Grab the latest build from [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest)  
-   or direct: [`DiskWatch-1.2.1-win64-portable.zip`](https://github.com/niujiaxu/DiskWatch/releases/download/v1.2.1/DiskWatch-1.2.1-win64-portable.zip)
-2. Unzip → run **`DiskWatch.exe`**
-3. Done. No Python required.
-
-### From source
-
-Windows 10/11 · Python 3.10+
+From source (Windows 10/11, Python 3.10+):
 
 ```bat
 git clone https://github.com/niujiaxu/DiskWatch.git
@@ -109,44 +91,20 @@ cd DiskWatch
 start.bat
 ```
 
-First run creates `.venv` and installs `PySide6` + `watchdog`.
+The first run creates `.venv` and installs `PySide6` and `watchdog`.
 
----
+## Platform status
 
-## Everyday use
+The current desktop release targets Windows. The SQLite ledger, categorization, and most UI code are reusable; macOS and Linux require FSEvents/inotify monitoring adapters. NTFS USN is automatically unavailable there, so startup recovery uses the configured directory strategy.
 
-| You do | It does |
-|--------|---------|
-| Drag card / ball | Remembers position |
-| Card **－** | Collapse to mini ball |
-| Click ball | Expand card |
-| Double-click a file | Reveal in Explorer |
-| Tray left-click | Show / hide |
-| Tray double-click | Open detail panel |
-| Detail **按应用分组** | Collapse same-day files under one path root |
+## Development checks
 
-**Filters matter:** by default you won’t see `Program Files` / `AppData` noise — on purpose.  
-Need those paths? **Settings → Filters**.
+```bat
+.venv\Scripts\python.exe -m pytest tests -q -p no:cacheprovider
+.venv\Scripts\python.exe -m ruff check diskwatch tests
+```
 
----
-
-## Footprint
-
-| Metric | Approx. (whole C:, idle) |
-|--------|--------------------------|
-| RAM | ~100–110 MB (Qt); monitor-only ~24 MB |
-| CPU | ~0.6%–1.7% of one core |
-| Noise | ~93% of events filtered by default |
-
----
-
-## Star if it helped
-
-If DiskWatch ever answered *“where did that file go?”* for you, a ⭐ helps other Windows users find it.
-
-Issues and PRs welcome · roadmap includes optional “modified” tracking and more languages.
-
----
+Native `QComboBox` is prohibited in the UI; all dropdown selections use `DayPicker`.
 
 ## License
 

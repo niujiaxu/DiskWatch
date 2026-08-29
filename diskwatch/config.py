@@ -182,10 +182,8 @@ def reset_paths_to_default(*, migrate: bool = True) -> tuple[Path, Path]:
 # 过滤规则的版本号。升级默认规则时 +1，老配置会被自动刷新一次。
 FILTER_VERSION = 4
 
-# 默认排除的路径片段（小写子串匹配，命中即忽略）。
-# 取向：默认只保留"你自己产生的文件"。系统目录、AppData、软件安装目录里
-# 每分钟都有大量后台写入，全留下来会把真正有意义的记录冲掉。
-# 想看这些位置，在设置里删掉对应行即可。
+# 关注模式的默认路径规则（小写子串匹配）。全量采集不据此丢弃事件，
+# 这些规则只在用户主动切换到 focus 时决定关注视图的采集范围。
 # 注意：必须用普通字符串写 "\\"，raw 字符串结尾无法表示单个反斜杠。
 DEFAULT_EXCLUDE_DIRS = [
     # 系统与保留区
@@ -269,7 +267,10 @@ DEFAULTS: dict[str, Any] = {
     "include_removable": False,      # 是否监控 U 盘 / 移动硬盘
     "excluded_drives": [],           # 排除的盘符，如 ["D:"]
 
-    # 过滤
+    # 采集模式：all=全量记录后分类；focus=沿用旧过滤规则只记录关注项。
+    "capture_mode": "all",
+
+    # 关注模式高级过滤（全量模式不用于丢弃普通文件）
     "exclude_dirs": DEFAULT_EXCLUDE_DIRS,
     "exclude_exts": DEFAULT_EXCLUDE_EXTS,
     "exclude_names": DEFAULT_EXCLUDE_NAMES,
@@ -278,12 +279,17 @@ DEFAULTS: dict[str, Any] = {
     "ignore_dot_dirs": True,         # 忽略 .git / .venv / .cursor 这类点号开头的目录
 
     # 保留
-    "retention_days": 90,            # 数据保留天数，0 = 永久
+    "retention_days": 30,            # 原始事件保留天数，0 = 永久
 
     # 启动补扫：程序没在跑（或电脑睡眠）期间新增的文件一个事件都收不到，
     # 启动时按磁盘现状对一次账，把落在回看窗口内的文件补进库。
-    "scan_on_startup": True,         # 启动时后台补扫
+    "scan_on_startup": True,         # USN 不可用时仅补扫用户目录
+    "scan_scope": "user_dirs",      # disabled | user_dirs | watched_roots
     "scan_lookback_days": 3,         # 只补回看窗口内的文件（按文件创建时间）
+    "startup_recovery": "usn",      # usn | scan | disabled
+    "usn_cursors": {},               # {"C:": {journal_id, next_usn}}
+    "last_usn_status": "",
+    "category_rules": {},          # {category: [path fragment, ...]}
 
     # 界面
     "widget_pos": None,              # [x, y]
@@ -293,7 +299,9 @@ DEFAULTS: dict[str, Any] = {
     "widget_visible": True,
     "always_on_top": True,
     "start_minimized": False,
-    "language": "zh_CN",             # zh_CN | en_US，重启生效
+    "theme_mode": "system",          # system | light | dark
+    "reduce_motion": False,
+    "language": "zh_CN",             # zh_CN | en_US，即时切换
 }
 
 
@@ -315,6 +323,11 @@ class Config:
         if not isinstance(saved, dict):
             return
         self._data.update(saved)
+        # 旧版本只有“补扫开关”，升级到全量采集后不能沿用为全盘扫描。
+        # 缺少新范围字段说明尚未由用户明确选择，安全迁移为关闭。
+        if "scan_scope" not in saved:
+            self._data["scan_scope"] = "user_dirs"
+            self._data["scan_on_startup"] = True
         try:
             ver = int(saved.get("filter_version", 0))
         except (TypeError, ValueError):

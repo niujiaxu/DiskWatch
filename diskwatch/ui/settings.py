@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
@@ -18,7 +19,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QSpinBox,
-    QTabWidget,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -30,14 +31,20 @@ from ..i18n import SUPPORTED_LOCALES, tr
 from ..storage import Storage
 from ..watcher import list_drives
 from .picker import DayPicker
-from .style import PANEL_QSS, apply_window_icon, enable_dark_titlebar
+from .style import (
+    apply_window_icon,
+    enable_titlebar,
+    install_theme,
+    panel_qss,
+)
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, config: Config, storage: Storage, parent=None) -> None:
+    def __init__(self, config: Config, storage: Storage, parent=None, monitor=None) -> None:
         super().__init__(parent)
         self._config = config
         self._storage = storage
+        self._monitor = monitor
         # 路径变更在 accept 时应用；需要重启时由调用方处理
         self.paths_changed = False
         self._pending_config_path = ""
@@ -48,25 +55,40 @@ class SettingsDialog(QDialog):
         # 会顺带清掉 WindowCloseButtonHint，标题栏 ✕ 看起来在但点不了。
         self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
         apply_window_icon(self)
-        self.setStyleSheet(PANEL_QSS)
-        self.setMinimumSize(640, 600)
+        self._original_theme_mode = str(config.get("theme_mode", "system"))
+        self.apply_theme()
+        self.setMinimumSize(780, 650)
         self._build()
         self._load()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
         apply_window_icon(self)
-        enable_dark_titlebar(self)
+        enable_titlebar(self)
 
     def _build(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 12)
-        tabs = QTabWidget()
-        tabs.addTab(self._tab_scope(), tr("监控范围"))
-        tabs.addTab(self._tab_filters(), tr("过滤规则"))
-        tabs.addTab(self._tab_appearance(), tr("外观与启动"))
-        tabs.addTab(self._tab_data(), tr("数据"))
-        root.addWidget(tabs)
+        body = QHBoxLayout()
+        body.setSpacing(12)
+        self.nav = QListWidget(objectName="settingsNav")
+        self.nav.setFixedWidth(132)
+        self.pages = QStackedWidget()
+        page_specs = (
+            (tr("通用"), self._tab_general()),
+            (tr("监控"), self._tab_scope()),
+            (tr("外观"), self._tab_appearance()),
+            (tr("数据"), self._tab_data()),
+            (tr("高级"), self._tab_filters()),
+        )
+        for title, page in page_specs:
+            self.nav.addItem(title)
+            self.pages.addWidget(page)
+        self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.nav.setCurrentRow(0)
+        body.addWidget(self.nav)
+        body.addWidget(self.pages, 1)
+        root.addLayout(body, 1)
 
         # objectName 必须在构造时给定：样式表已经应用过之后再改 objectName，
         # Qt 不会自动重新 polish，#primary 的配色就不会生效。
@@ -81,10 +103,42 @@ class SettingsDialog(QDialog):
 
     # ---------- 各页 ----------
 
+    def _tab_general(self) -> QWidget:
+        w = QWidget()
+        form = QFormLayout(w)
+        form.setSpacing(12)
+
+        self.cmb_language = DayPicker()
+        for code, name in SUPPORTED_LOCALES.items():
+            self.cmb_language.addItem(name, code)
+        self.cmb_language.setToolTip(tr("修改语言后即时生效"))
+        form.addRow(tr("界面语言"), self.cmb_language)
+
+        self.chk_autostart = QCheckBox(tr("开机自动启动"))
+        form.addRow("", self.chk_autostart)
+        self.chk_start_min = QCheckBox(tr("启动时只显示托盘图标，不显示悬浮组件"))
+        form.addRow("", self.chk_start_min)
+        return w
+
     def _tab_scope(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setSpacing(10)
+
+        mode_form = QFormLayout()
+        self.cmb_capture = DayPicker()
+        self.cmb_capture.addItem(tr("全量采集"), "all")
+        self.cmb_capture.addItem(tr("关注模式"), "focus")
+        self.cmb_capture.setToolTip(
+            tr("全量采集会记录普通文件并分类；关注模式才应用高级过滤规则")
+        )
+        mode_form.addRow(tr("采集模式"), self.cmb_capture)
+        self.cmb_recovery = DayPicker()
+        self.cmb_recovery.addItem(tr("USN 增量恢复（推荐）"), "usn")
+        self.cmb_recovery.addItem(tr("目录补扫"), "scan")
+        self.cmb_recovery.addItem(tr("不恢复离线变化"), "disabled")
+        mode_form.addRow(tr("启动恢复"), self.cmb_recovery)
+        lay.addLayout(mode_form)
 
         lay.addWidget(QLabel(tr("勾选要监控的磁盘："), objectName="dim"))
         self.drive_list = QListWidget()
@@ -111,6 +165,22 @@ class SettingsDialog(QDialog):
 
         self.chk_folders_only = QCheckBox(tr("只监控上面这些文件夹（忽略磁盘勾选）"))
         lay.addWidget(self.chk_folders_only)
+
+        self.chk_scan = QCheckBox(tr("USN 不可用时补扫用户目录"))
+        lay.addWidget(self.chk_scan)
+        scan_form = QFormLayout()
+        self.cmb_scan_scope = DayPicker()
+        self.cmb_scan_scope.addItem(tr("仅用户目录（推荐）"), "user_dirs")
+        self.cmb_scan_scope.addItem(tr("全部监控根目录"), "watched_roots")
+        scan_form.addRow(tr("补扫范围"), self.cmb_scan_scope)
+        self.spin_scan_days = QSpinBox()
+        self.spin_scan_days.setRange(1, 30)
+        self.spin_scan_days.setSuffix(tr(" 天"))
+        self.spin_scan_days.setToolTip(tr("只补创建时间落在最近 N 天内的文件"))
+        scan_form.addRow(tr("补扫回看窗口"), self.spin_scan_days)
+        lay.addLayout(scan_form)
+        self.chk_scan.toggled.connect(self.spin_scan_days.setEnabled)
+        self.chk_scan.toggled.connect(self.cmb_scan_scope.setEnabled)
         lay.addStretch(1)
         return w
 
@@ -118,6 +188,13 @@ class SettingsDialog(QDialog):
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setSpacing(8)
+
+        note = QLabel(
+            tr("全量采集模式下，下列规则只用于分类和关注视图；自身数据库与设备文件仍会安全排除。"),
+            objectName="banner",
+        )
+        note.setWordWrap(True)
+        lay.addWidget(note)
 
         lay.addWidget(QLabel(tr("排除的路径片段（每行一条，路径里包含即忽略，不区分大小写）："), objectName="dim"))
         self.txt_dirs = QPlainTextEdit()
@@ -132,6 +209,19 @@ class SettingsDialog(QDialog):
         self.txt_names = QPlainTextEdit()
         self.txt_names.setMaximumHeight(80)
         lay.addWidget(self.txt_names, 1)
+
+        lay.addWidget(
+            QLabel(
+                tr("自定义分类规则（每行：分类=路径片段；优先于内置规则）："),
+                objectName="dim",
+            )
+        )
+        self.txt_category_rules = QPlainTextEdit()
+        self.txt_category_rules.setPlaceholderText(
+            tr("示例：development=\\Work\\build\\")
+        )
+        self.txt_category_rules.setMaximumHeight(86)
+        lay.addWidget(self.txt_category_rules)
 
         form = QFormLayout()
         self.spin_min = QSpinBox()
@@ -162,6 +252,10 @@ class SettingsDialog(QDialog):
         btn_apply.clicked.connect(self._apply_preset)
         presets_row.addWidget(btn_apply)
         lay.addLayout(presets_row)
+
+        self.lbl_diagnostics = QLabel("", objectName="dim")
+        self.lbl_diagnostics.setWordWrap(True)
+        lay.addWidget(self.lbl_diagnostics)
         return w
 
     def _apply_preset(self) -> None:
@@ -197,6 +291,13 @@ class SettingsDialog(QDialog):
         form = QFormLayout(w)
         form.setSpacing(10)
 
+        self.cmb_theme = DayPicker()
+        self.cmb_theme.addItem(tr("跟随系统"), "system")
+        self.cmb_theme.addItem(tr("浅色"), "light")
+        self.cmb_theme.addItem(tr("深色"), "dark")
+        self.cmb_theme.currentIndexChanged.connect(self._preview_theme)
+        form.addRow(tr("主题"), self.cmb_theme)
+
         self.slider_opacity = QSlider(Qt.Horizontal)
         self.slider_opacity.setRange(40, 100)
         self.lbl_opacity = QLabel("95%")
@@ -212,25 +313,8 @@ class SettingsDialog(QDialog):
 
         self.chk_top = QCheckBox(tr("始终置顶"))
         form.addRow("", self.chk_top)
-        self.chk_autostart = QCheckBox(tr("开机自动启动"))
-        form.addRow("", self.chk_autostart)
-        self.chk_start_min = QCheckBox(tr("启动时只显示托盘图标，不显示悬浮组件"))
-        form.addRow("", self.chk_start_min)
-
-        self.cmb_language = DayPicker()
-        for code, name in SUPPORTED_LOCALES.items():
-            self.cmb_language.addItem(name, code)
-        self.cmb_language.setToolTip(tr("修改语言后即时生效"))
-        form.addRow(tr("界面语言"), self.cmb_language)
-
-        self.chk_scan = QCheckBox(tr("启动时补扫最近创建的文件（补回程序没在跑期间遗漏的记录）"))
-        form.addRow("", self.chk_scan)
-        self.spin_scan_days = QSpinBox()
-        self.spin_scan_days.setRange(1, 30)
-        self.spin_scan_days.setSuffix(tr(" 天"))
-        self.spin_scan_days.setToolTip(tr("只补创建时间落在最近 N 天内的文件"))
-        form.addRow(tr("补扫回看窗口"), self.spin_scan_days)
-        self.chk_scan.toggled.connect(self.spin_scan_days.setEnabled)
+        self.chk_reduce_motion = QCheckBox(tr("减少动态效果"))
+        form.addRow("", self.chk_reduce_motion)
         return w
 
     def _tab_data(self) -> QWidget:
@@ -248,6 +332,13 @@ class SettingsDialog(QDialog):
 
         self.lbl_total = QLabel("", objectName="dim")
         lay.addWidget(self.lbl_total)
+
+        self.lbl_db_size = QLabel("", objectName="dim")
+        lay.addWidget(self.lbl_db_size)
+
+        btn_purge = QPushButton(tr("立即清理过期记录"))
+        btn_purge.clicked.connect(self._purge_expired)
+        lay.addWidget(btn_purge, alignment=Qt.AlignLeft)
 
         btn_clear = QPushButton(tr("清空所有记录"))
         btn_clear.clicked.connect(self._clear_data)
@@ -313,10 +404,24 @@ class SettingsDialog(QDialog):
         self.folder_list.clear()
         self.folder_list.addItems(cfg.get("watch_folders", []))
         self.chk_folders_only.setChecked(cfg.get("watch_mode") == "folders")
+        capture_idx = self.cmb_capture.findData(cfg.get("capture_mode", "all"))
+        self.cmb_capture.setCurrentIndex(max(capture_idx, 0))
+        recovery_idx = self.cmb_recovery.findData(cfg.get("startup_recovery", "usn"))
+        self.cmb_recovery.setCurrentIndex(max(recovery_idx, 0))
 
         self.txt_dirs.setPlainText("\n".join(cfg.get("exclude_dirs", [])))
         self.txt_exts.setPlainText("\n".join(cfg.get("exclude_exts", [])))
         self.txt_names.setPlainText("\n".join(cfg.get("exclude_names", [])))
+        rules = cfg.get("category_rules", {})
+        if isinstance(rules, dict):
+            self.txt_category_rules.setPlainText(
+                "\n".join(
+                    f"{category}={pattern}"
+                    for category, patterns in rules.items()
+                    if isinstance(patterns, list)
+                    for pattern in patterns
+                )
+            )
         self.spin_min.setValue(int(cfg.get("min_size_kb", 0)))
         self.chk_hidden.setChecked(bool(cfg.get("ignore_hidden", True)))
         self.chk_dot_dirs.setChecked(bool(cfg.get("ignore_dot_dirs", True)))
@@ -330,14 +435,35 @@ class SettingsDialog(QDialog):
         self.chk_top.setChecked(bool(cfg.get("always_on_top", True)))
         self.chk_start_min.setChecked(bool(cfg.get("start_minimized", False)))
         self.chk_autostart.setChecked(autostart_enabled())
+        theme_idx = self.cmb_theme.findData(cfg.get("theme_mode", "system"))
+        if theme_idx >= 0:
+            self.cmb_theme.setCurrentIndex(theme_idx)
+        self.chk_reduce_motion.setChecked(bool(cfg.get("reduce_motion", False)))
         self.chk_scan.setChecked(bool(cfg.get("scan_on_startup", True)))
+        scan_scope = str(cfg.get("scan_scope", "user_dirs"))
+        scan_scope_idx = self.cmb_scan_scope.findData(scan_scope)
+        self.cmb_scan_scope.setCurrentIndex(max(scan_scope_idx, 0))
         self.spin_scan_days.setValue(int(cfg.get("scan_lookback_days", 3)))
         self.spin_scan_days.setEnabled(self.chk_scan.isChecked())
+        self.cmb_scan_scope.setEnabled(self.chk_scan.isChecked())
 
         self.spin_retention.setValue(int(cfg.get("retention_days", 90)))
         self.lbl_total.setText(
             tr("当前已记录 {count} 条文件记录", count=self._storage.total_count())
         )
+        from ..storage import human_size
+        metrics = self._storage.database_metrics()
+        self.lbl_db_size.setText(
+            tr(
+                "数据库大小：{size} · 近 24 小时 {events} 条 · 写入 {rate}/秒 · "
+                "预计每日增长 {growth}",
+                size=human_size(int(metrics["size_bytes"])),
+                events=f"{int(metrics['events_24h']):,}",
+                rate=f"{float(metrics['write_rate']):.1f}",
+                growth=human_size(int(metrics["estimated_daily_bytes"])),
+            )
+        )
+        self._refresh_diagnostics()
         lang = cfg.get("language", "zh_CN")
         idx = self.cmb_language.findData(lang)
         if idx >= 0:
@@ -362,17 +488,27 @@ class SettingsDialog(QDialog):
             "include_removable": self.chk_removable.isChecked(),
             "watch_folders": folders,
             "watch_mode": "folders" if self.chk_folders_only.isChecked() else "drives",
+            "capture_mode": self.cmb_capture.currentData(),
+            "startup_recovery": self.cmb_recovery.currentData(),
             "exclude_dirs": _lines(self.txt_dirs.toPlainText()),
             "exclude_exts": _lines(self.txt_exts.toPlainText()),
             "exclude_names": _lines(self.txt_names.toPlainText()),
+            "category_rules": _category_rules(self.txt_category_rules.toPlainText()),
             "min_size_kb": self.spin_min.value(),
             "ignore_hidden": self.chk_hidden.isChecked(),
             "ignore_dot_dirs": self.chk_dot_dirs.isChecked(),
             "widget_opacity": self.slider_opacity.value() / 100.0,
             "always_on_top": self.chk_top.isChecked(),
             "start_minimized": self.chk_start_min.isChecked(),
+            "theme_mode": self.cmb_theme.currentData(),
+            "reduce_motion": self.chk_reduce_motion.isChecked(),
             "retention_days": self.spin_retention.value(),
             "scan_on_startup": self.chk_scan.isChecked(),
+            "scan_scope": (
+                self.cmb_scan_scope.currentData()
+                if self.chk_scan.isChecked()
+                else "disabled"
+            ),
             "scan_lookback_days": self.spin_scan_days.value(),
             "language": self.cmb_language.currentData(),
         }
@@ -407,6 +543,20 @@ class SettingsDialog(QDialog):
         # 确认完成（路径迁移未取消）后才真正写注册表
         set_autostart(self.chk_autostart.isChecked())
         super().accept()
+
+    def reject(self) -> None:
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            install_theme(app, self._original_theme_mode)
+        super().reject()
+
+    def _preview_theme(self, _index: int) -> None:
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            install_theme(app, str(self.cmb_theme.currentData() or "system"))
+
+    def apply_theme(self) -> None:
+        self.setStyleSheet(panel_qss())
 
     # ---------- 动作 ----------
 
@@ -480,6 +630,53 @@ class SettingsDialog(QDialog):
             self._storage.clear_all()
             self.lbl_total.setText(tr("当前已记录 {count} 条文件记录", count=0))
 
+    def _purge_expired(self) -> None:
+        removed = self._storage.purge_older_than(self.spin_retention.value())
+        self.lbl_total.setText(
+            tr("已清理 {count} 条过期记录", count=f"{removed:,}")
+        )
+
+    def _refresh_diagnostics(self) -> None:
+        if self._monitor is None:
+            self.lbl_diagnostics.setText(tr("性能诊断会在主程序运行时显示。"))
+            return
+        values = self._monitor.diagnostics()
+        self.lbl_diagnostics.setText(
+            tr(
+                "事件诊断：原始 {seen} · 已处理 {processed} · 已合并 {coalesced} · "
+                "丢弃 {dropped} · 队列 {queued}",
+                **values,
+            )
+        )
+        if values.get("high_load"):
+            self.lbl_diagnostics.setText(
+                self.lbl_diagnostics.text()
+                + "\n"
+                + tr("警告：事件队列持续高负载，正在优先合并事件。")
+            )
+        usn_status = str(self._config.get("last_usn_status", "")).strip()
+        if usn_status:
+            self.lbl_diagnostics.setText(
+                self.lbl_diagnostics.text()
+                + "\n"
+                + tr("USN 状态：{status}", status=usn_status)
+            )
+
 
 def _lines(text: str) -> list[str]:
     return [ln.strip() for ln in text.splitlines() if ln.strip()]
+
+
+def _category_rules(text: str) -> dict[str, list[str]]:
+    known = {
+        "user", "download", "system", "software", "cache", "temporary",
+        "development", "vm_container", "unclassified",
+    }
+    result: dict[str, list[str]] = {}
+    for line in _lines(text):
+        category, separator, pattern = line.partition("=")
+        category = category.strip().lower()
+        pattern = pattern.strip()
+        if separator and category in known and pattern:
+            result.setdefault(category, []).append(pattern)
+    return result

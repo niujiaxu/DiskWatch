@@ -1,7 +1,7 @@
-"""判断一条文件事件是否值得记录。
+"""关注模式的路径过滤与通用普通文件安全判断。
 
-全盘监控会产生大量系统与软件的临时写入，绝大部分对用户毫无意义，
-这里用「目录片段 + 扩展名 + 文件名通配 + 体积」四道过滤把噪音挡掉。
+全量采集只复用 ``is_regular_file`` 安全边界，不通过这些偏好规则丢弃普通
+文件；用户主动选择关注模式时才应用目录、扩展名、文件名和体积过滤。
 """
 
 from __future__ import annotations
@@ -88,15 +88,19 @@ class PathFilter:
 
     def is_candidate(self, st: os.stat_result | None) -> bool:
         """与体积无关的磁盘侧判断：必须是普通文件，且不是隐藏/系统文件。"""
-        if st is None:
+        if not self.is_regular_file(st):
             return False
-        if not stat.S_ISREG(st.st_mode):
-            return False
+        assert st is not None
         if self._ignore_hidden:
             attrs = getattr(st, "st_file_attributes", 0)
             if attrs & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM):
                 return False
         return True
+
+    @staticmethod
+    def is_regular_file(st: os.stat_result | None) -> bool:
+        """安全边界：只接受普通文件；隐藏属性不属于安全排除。"""
+        return st is not None and stat.S_ISREG(st.st_mode)
 
     def meets_size(self, size: int) -> bool:
         return not self._min_size or size >= self._min_size

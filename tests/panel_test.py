@@ -249,7 +249,7 @@ def test_trend_chart_hover_hit() -> None:
 
 def test_chart_click_emits_day() -> None:
     """点击柱体发出 day_selected 信号，携带该天的 day。"""
-    from PySide6.QtCore import QPoint
+    from PySide6.QtCore import QPointF
     from PySide6.QtGui import QMouseEvent
 
     c = TrendChart()
@@ -263,7 +263,9 @@ def test_chart_click_emits_day() -> None:
     x = x0 + 1 * (bw + gap) + bw // 2
     event = QMouseEvent(
         QMouseEvent.Type.MouseButtonPress,
-        QPoint(x, 30),
+        QPointF(x, 30),
+        QPointF(x, 30),
+        QPointF(x, 30),
         Qt.LeftButton,
         Qt.LeftButton,
         Qt.NoModifier,
@@ -275,7 +277,9 @@ def test_chart_click_emits_day() -> None:
     c.mousePressEvent(
         QMouseEvent(
             QMouseEvent.Type.MouseButtonPress,
-            QPoint(x0 + bw + gap // 2, 30),
+            QPointF(x0 + bw + gap // 2, 30),
+            QPointF(x0 + bw + gap // 2, 30),
+            QPointF(x0 + bw + gap // 2, 30),
             Qt.LeftButton,
             Qt.LeftButton,
             Qt.NoModifier,
@@ -354,7 +358,7 @@ def test_full_display_no_truncation(tmp_path) -> None:
         s.close()
 
 
-def test_double_click_group_toggles_expand(qapp, tmp_path) -> None:
+def test_double_click_group_toggles_expand(qapp, tmp_path, monkeypatch) -> None:
     """双击目录行展开/折叠明细（回归：Qt 真实双击序列下 pressedIndex 清空导致
     doubleClicked 奇偶次错位，旧实现第一次双击无效、折叠永远错位）。"""
     from PySide6.QtCore import Qt
@@ -410,15 +414,14 @@ def test_double_click_group_toggles_expand(qapp, tmp_path) -> None:
         child = panel._model.index(0, 0, gi)
         crect = panel.table.visualRect(child)
         assert crect.height() > 0
-        called: list[int] = []
-        orig = panel._open_selected
-        panel._open_selected = lambda idx=None: (called.append(1), orig(idx))[1]
+        opened: list[str] = []
+        monkeypatch.setattr("diskwatch.ui.panel.open_in_explorer", opened.append)
         QTest.mouseDClick(
             panel.table.viewport(), Qt.LeftButton, Qt.NoModifier,
             crect.center(), 50,
         )
         QApplication.processEvents()
-        assert called, "文件行双击应触发 _open_selected"
+        assert opened == [r"C:\BigApp\f0.txt"], "文件行双击应请求在资源管理器中定位"
     finally:
         panel.close()
         s.close()
