@@ -41,6 +41,17 @@ def test_activity_panel_pages_and_filters(qapp, tmp_path) -> None:
         assert panel._total == PAGE_SIZE + 5
         assert panel.table.rowCount() == PAGE_SIZE
 
+        panel._sort_by_column(3)
+        _settle(qapp, panel)
+        assert panel._space_sort_order == "delta_desc"
+        assert panel._events[0].delta_bytes == PAGE_SIZE + 5
+        assert panel.table.horizontalHeader().isSortIndicatorShown()
+
+        panel._sort_by_column(3)
+        _settle(qapp, panel)
+        assert panel._space_sort_order == "delta_asc"
+        assert panel._events[0].delta_bytes == 1
+
         panel._change_page(1)
         _settle(qapp, panel)
         assert panel._page == 1

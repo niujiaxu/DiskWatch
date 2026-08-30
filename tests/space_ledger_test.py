@@ -204,6 +204,10 @@ def test_space_event_paging_filters_and_category_totals() -> None:
         assert storage.space_event_count(keyword="note") == 1
         page = storage.space_events(limit=1, offset=1)
         assert len(page) == 1 and page[0].path.endswith("b.bin")
+        descending = storage.space_events(sort_order="delta_desc")
+        ascending = storage.space_events(sort_order="delta_asc")
+        assert [event.delta_bytes for event in descending] == [250, 100, 20]
+        assert [event.delta_bytes for event in ascending] == [20, 100, 250]
         drives, categories = storage.space_event_filter_values()
         assert drives == ["C:", "D:"]
         assert set(categories) == {"development", "downloads", "user"}

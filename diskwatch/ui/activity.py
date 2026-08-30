@@ -77,6 +77,7 @@ class ActivityPanel(QWidget):
         self._row_events: dict[int, int] = {}
         self._collapsed_groups: set[str] = set()
         self._selected_day: str | None = None
+        self._space_sort_order = "time_desc"
         self._history_req = 0
         self._reload_req = 0
         self._building = True
@@ -180,6 +181,9 @@ class ActivityPanel(QWidget):
         header.setSectionResizeMode(3, QHeaderView.Interactive)
         header.setSectionResizeMode(4, QHeaderView.Interactive)
         header.setSectionResizeMode(5, QHeaderView.Stretch)
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(False)
+        header.sectionClicked.connect(self._sort_by_column)
         self.table.setColumnWidth(0, 132)
         self.table.setColumnWidth(2, 88)
         self.table.setColumnWidth(3, 112)
@@ -304,6 +308,7 @@ class ActivityPanel(QWidget):
         self._reload_req += 1
         req = self._reload_req
         requested_page = self._page
+        requested_sort = self._space_sort_order
         storage = self._storage
         self.summary.setText(tr("加载中…"))
         self.btn_refresh.setEnabled(False)
@@ -314,7 +319,10 @@ class ActivityPanel(QWidget):
                 max_page = max(0, math.ceil(total / PAGE_SIZE) - 1)
                 page = min(requested_page, max_page)
                 events = storage.space_events(
-                    **filters, limit=PAGE_SIZE, offset=page * PAGE_SIZE
+                    **filters,
+                    sort_order=requested_sort,
+                    limit=PAGE_SIZE,
+                    offset=page * PAGE_SIZE,
                 )
                 result: object = (total, page, events)
             except Exception as exc:
@@ -442,6 +450,7 @@ class ActivityPanel(QWidget):
         self.summary.setText(tr("每页最多 {count} 条", count=PAGE_SIZE))
         self.btn_prev.setEnabled(self._page > 0)
         self.btn_next.setEnabled(self._page + 1 < pages)
+        self._sync_sort_indicator()
         self.table.viewport().update()
         if self._row_events:
             self._show_selected()
@@ -568,6 +577,35 @@ class ActivityPanel(QWidget):
         self._page = max(0, self._page + direction)
         self.reload(keep_day=True)
 
+    def _sort_by_column(self, column: int) -> None:
+        """空间影响列使用数据库排序，确保跨分页顺序正确。"""
+        if column != 3:
+            return
+        if self._space_sort_order == "delta_desc":
+            self._space_sort_order = "delta_asc"
+            qt_order = Qt.AscendingOrder
+        else:
+            self._space_sort_order = "delta_desc"
+            qt_order = Qt.DescendingOrder
+        header = self.table.horizontalHeader()
+        header.setSortIndicator(3, qt_order)
+        header.setSortIndicatorShown(True)
+        self._page = 0
+        self.reload(keep_day=True)
+
+    def _sync_sort_indicator(self) -> None:
+        header = self.table.horizontalHeader()
+        if self._space_sort_order == "time_desc":
+            header.setSortIndicatorShown(False)
+            return
+        order = (
+            Qt.DescendingOrder
+            if self._space_sort_order == "delta_desc"
+            else Qt.AscendingOrder
+        )
+        header.setSortIndicator(3, order)
+        header.setSortIndicatorShown(True)
+
     def _export_csv(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
@@ -588,6 +626,7 @@ class ActivityPanel(QWidget):
             "event_type": self.event_picker.currentData(),
             "keyword": self.search.text().strip() or None,
             "focus_only": self.view_picker.currentData() == "focus",
+            "sort_order": self._space_sort_order,
         }
         self.btn_export.setEnabled(False)
         self.btn_export.setText(tr("正在导出…"))

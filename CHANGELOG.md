@@ -2,6 +2,12 @@
 
 All notable changes to DiskWatch are documented in this file.
 
+## [2.0.4] - 2026-08-30
+
+### Added
+- 文件活动表支持点击“空间影响”列，在全量分页数据上切换数值降序和升序排列
+- CSV 导出沿用当前空间影响排序，表头显示当前排序方向
+
 ## [2.0.3] - 2026-08-30
 
 ### Changed

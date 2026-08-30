@@ -1116,37 +1116,24 @@ class Storage:
         event_type: str | None = None,
         keyword: str | None = None,
         focus_only: bool = False,
+        sort_order: str = "time_desc",
         limit: int = 1000,
         offset: int = 0,
     ) -> list[SpaceEvent]:
-        where = ["1 = 1"]
-        args: list[object] = []
-        if since is not None:
-            where.append("occurred_at >= ?")
-            args.append(since)
-        if until is not None:
-            where.append("occurred_at <= ?")
-            args.append(until)
-        if drive:
-            where.append("drive = ?")
-            args.append(drive.upper())
-        if category:
-            where.append("category = ?")
-            args.append(category)
-        if event_type:
-            where.append("event_type = ?")
-            args.append(event_type)
-        if keyword:
-            where.append("path LIKE ? ESCAPE '\\'")
-            args.append("%" + _like_escape(keyword) + "%")
-        if focus_only:
-            where.append("category IN ('user', 'download')")
+        where, args = self._space_event_where(
+            since, until, drive, category, event_type, keyword, focus_only
+        )
+        order_by = {
+            "time_desc": "occurred_at DESC, id DESC",
+            "delta_desc": "delta_bytes DESC, occurred_at DESC, id DESC",
+            "delta_asc": "delta_bytes ASC, occurred_at DESC, id DESC",
+        }.get(sort_order, "occurred_at DESC, id DESC")
         args.extend((max(1, limit), max(0, offset)))
         rows = self._read.execute(
             "SELECT id, path, old_path, drive, category, event_type, old_size, "
             "new_size, delta_bytes, occurred_at FROM space_events WHERE "
             + " AND ".join(where)
-            + " ORDER BY occurred_at DESC, id DESC LIMIT ? OFFSET ?",
+            + f" ORDER BY {order_by} LIMIT ? OFFSET ?",
             args,
         ).fetchall()
         return [
