@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+import sys
+from ctypes import wintypes
+
+from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, Signal
+from PySide6.QtGui import QCursor, QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -17,7 +21,111 @@ from PySide6.QtWidgets import (
 )
 
 from ..i18n import tr
-from .style import apply_window_icon, enable_titlebar, panel_qss, theme_tokens
+from .style import (
+    app_icon,
+    apply_window_icon,
+    enable_titlebar,
+    panel_qss,
+    theme_tokens,
+)
+
+
+class _WindowControlButton(QPushButton):
+    """与应用主题一致的极简窗口控制按钮。"""
+
+    def __init__(self, kind: str, parent=None) -> None:
+        object_name = "titleBarClose" if kind == "close" else "titleBarButton"
+        super().__init__("", parent, objectName=object_name)
+        self.kind = kind
+        self.setFixedSize(42, 36)
+        self.setFocusPolicy(Qt.NoFocus)
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        super().paintEvent(event)
+        t = theme_tokens()
+        color = t.color("text_dim")
+        if self.kind == "close" and self.underMouse():
+            color = Qt.white
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(color, 1.45))
+        cx = self.width() / 2
+        cy = self.height() / 2
+        if self.kind == "minimize":
+            painter.drawLine(QPoint(int(cx - 6), int(cy + 3)), QPoint(int(cx + 6), int(cy + 3)))
+        elif self.kind == "maximize":
+            window = self.window()
+            if window.isMaximized():
+                painter.drawRoundedRect(QRectF(cx - 4, cy - 5, 9, 9), 0.8, 0.8)
+                painter.drawRoundedRect(QRectF(cx - 6, cy - 3, 9, 9), 0.8, 0.8)
+            else:
+                painter.drawRoundedRect(QRectF(cx - 5, cy - 5, 10, 10), 0.8, 0.8)
+        else:
+            painter.drawLine(QPoint(int(cx - 5), int(cy - 5)), QPoint(int(cx + 5), int(cy + 5)))
+            painter.drawLine(QPoint(int(cx + 5), int(cy - 5)), QPoint(int(cx - 5), int(cy + 5)))
+        painter.end()
+
+
+class _TitleBar(QFrame):
+    """无装饰窗口的标题栏，保留系统拖动与最大化行为。"""
+
+    def __init__(self, window: "MainWindow") -> None:
+        super().__init__(window, objectName="appTitleBar")
+        self._window = window
+        self.setFixedHeight(44)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 4, 6, 4)
+        layout.setSpacing(8)
+
+        icon = QLabel(objectName="titleBarIcon")
+        icon.setFixedSize(22, 22)
+        icon.setPixmap(app_icon().pixmap(20, 20))
+        icon.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.title = QLabel(window.windowTitle(), objectName="titleBarTitle")
+        self.title.setAttribute(Qt.WA_TransparentForMouseEvents)
+        layout.addWidget(icon)
+        layout.addWidget(self.title)
+        layout.addStretch(1)
+
+        self.btn_minimize = _WindowControlButton("minimize", self)
+        self.btn_maximize = _WindowControlButton("maximize", self)
+        self.btn_close = _WindowControlButton("close", self)
+        self.btn_minimize.setToolTip(tr("最小化"))
+        self.btn_maximize.setToolTip(tr("最大化"))
+        self.btn_close.setToolTip(tr("关闭"))
+        self.btn_minimize.setAccessibleName(tr("最小化"))
+        self.btn_maximize.setAccessibleName(tr("最大化"))
+        self.btn_close.setAccessibleName(tr("关闭"))
+        self.btn_minimize.clicked.connect(window.showMinimized)
+        self.btn_maximize.clicked.connect(window.toggle_maximized)
+        self.btn_close.clicked.connect(window.close)
+        layout.addWidget(self.btn_minimize)
+        layout.addWidget(self.btn_maximize)
+        layout.addWidget(self.btn_close)
+        window.windowTitleChanged.connect(self.title.setText)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton:
+            handle = self._window.windowHandle()
+            if handle is not None and handle.startSystemMove():
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton:
+            self._window.toggle_maximized()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def refresh_state(self) -> None:
+        self.btn_maximize.setToolTip(
+            tr("还原") if self._window.isMaximized() else tr("最大化")
+        )
+        self.btn_maximize.setAccessibleName(self.btn_maximize.toolTip())
+        for button in (self.btn_minimize, self.btn_maximize, self.btn_close):
+            button.update()
 
 
 class MainWindow(QMainWindow):
@@ -35,14 +143,23 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.dashboard = dashboard
         self.activity = activity
+        self.setWindowFlag(Qt.FramelessWindowHint, True)
         self.setWindowTitle(tr("DiskWatch · 磁盘空间"))
         self.resize(1180, 780)
         self.setMinimumSize(900, 620)
         apply_window_icon(self)
 
-        root = QWidget(objectName="panelRoot")
+        root = QWidget(objectName="mainRoot")
         self.setCentralWidget(root)
-        layout = QHBoxLayout(root)
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        self.title_bar = _TitleBar(self)
+        root_layout.addWidget(self.title_bar)
+
+        body = QWidget(objectName="panelRoot")
+        root_layout.addWidget(body, 1)
+        layout = QHBoxLayout(body)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
@@ -143,6 +260,51 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    def toggle_maximized(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+        self.title_bar.refresh_state()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange and hasattr(self, "title_bar"):
+            self.title_bar.refresh_state()
+
+    def nativeEvent(self, event_type, message):
+        """为无边框窗口恢复 Windows 四边和四角的原生缩放命中区。"""
+        if sys.platform == "win32" and not self.isMaximized():
+            try:
+                msg = wintypes.MSG.from_address(int(message))
+                if msg.message == 0x0084:  # WM_NCHITTEST
+                    pos = self.mapFromGlobal(QCursor.pos())
+                    edge = 7
+                    left = pos.x() < edge
+                    right = pos.x() >= self.width() - edge
+                    top = pos.y() < edge
+                    bottom = pos.y() >= self.height() - edge
+                    hit = {
+                        (True, False, True, False): 13,   # HTTOPLEFT
+                        (False, True, True, False): 14,   # HTTOPRIGHT
+                        (True, False, False, True): 16,   # HTBOTTOMLEFT
+                        (False, True, False, True): 17,   # HTBOTTOMRIGHT
+                    }.get((left, right, top, bottom))
+                    if hit is None:
+                        if left:
+                            hit = 10  # HTLEFT
+                        elif right:
+                            hit = 11  # HTRIGHT
+                        elif top:
+                            hit = 12  # HTTOP
+                        elif bottom:
+                            hit = 15  # HTBOTTOM
+                    if hit is not None:
+                        return True, hit
+            except (AttributeError, TypeError, ValueError):
+                pass
+        return super().nativeEvent(event_type, message)
+
     def show_scan_progress(self, directories: int, files: int, path: str = "") -> None:
         self.scan_strip.show()
         if not self._scan_cancelling:
@@ -188,6 +350,15 @@ class MainWindow(QMainWindow):
     def apply_theme(self) -> None:
         t = theme_tokens()
         nav_qss = f"""
+QWidget#mainRoot {{ background: {t.window}; border: 1px solid {t.border}; }}
+QFrame#appTitleBar {{ background: {t.surface}; border-bottom: 1px solid {t.border}; }}
+QLabel#titleBarTitle {{ color: {t.text_dim}; font-size: 12px; font-weight: 500; }}
+QPushButton#titleBarButton, QPushButton#titleBarClose {{
+    background: transparent; border: none; border-radius: 8px; padding: 0;
+}}
+QPushButton#titleBarButton:hover {{ background: {t.button}; }}
+QPushButton#titleBarClose:hover {{ background: {t.danger}; }}
+QPushButton#titleBarButton:focus, QPushButton#titleBarClose:focus {{ border: none; }}
 QFrame#mainSidebar {{ background: {t.surface}; border-right: 1px solid {t.border}; }}
 QLabel#brand {{ color: {t.text}; font-size: 18px; font-weight: 650; }}
 QPushButton#navButton {{
@@ -201,6 +372,7 @@ QProgressBar {{ background: {t.field}; border: none; border-radius: 3px; height:
 QProgressBar::chunk {{ background: {t.accent}; border-radius: 3px; }}
 """
         self.setStyleSheet(panel_qss() + nav_qss)
+        self.title_bar.refresh_state()
         for page in (self.dashboard, self.activity, self.settings):
             if page is None:
                 continue

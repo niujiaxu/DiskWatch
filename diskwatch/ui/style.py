@@ -158,6 +158,14 @@ QPlainTextEdit, QListWidget {{ background: {t.base}; border: 1px solid {t.border
  border-radius: 8px; padding: 5px; }}
 QListWidget::item {{ padding: 4px 5px; }}
 QListWidget::item:selected {{ background: {selection}; }}
+QListWidget#settingsNav {{ background: {t.surface}; border: 1px solid {t.border};
+ border-radius: 10px; padding: 6px; outline: none; }}
+QListWidget#settingsNav::item {{ color: {t.text_dim}; border: none;
+ border-radius: 7px; padding: 8px 10px; margin: 1px 0; outline: none; }}
+QListWidget#settingsNav::item:hover {{ color: {t.text}; background: {t.button}; }}
+QListWidget#settingsNav::item:selected {{ color: {t.accent};
+ background: {t.accent_soft}; border: none; outline: none; }}
+QListWidget#settingsNav::item:focus {{ border: none; outline: none; }}
 QSpinBox {{ background: {t.field}; border: 1px solid {t.border};
  border-radius: 8px; padding: 5px 7px; }}
 QTabWidget::pane {{ background: {t.surface}; border: 1px solid {t.border};
@@ -209,7 +217,7 @@ def _sync_compat_colors(t: ThemeTokens) -> None:
 
 
 def enable_titlebar(widget: QWidget, dark: bool | None = None) -> None:
-    """同步 Windows 原生标题栏深浅状态。"""
+    """同步 Windows 标题栏主题，并为窗口启用 Windows 11 圆角。"""
     if sys.platform != "win32" or widget is None:
         return
     try:
@@ -226,6 +234,14 @@ def enable_titlebar(widget: QWidget, dark: bool | None = None) -> None:
             )
         except Exception:
             pass
+    # Windows 11: 圆角偏好。无边框主窗口也可获得与系统一致的外轮廓。
+    corner = ctypes.c_int(2)  # DWMWCP_ROUND
+    try:
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd, 33, ctypes.byref(corner), ctypes.sizeof(corner)
+        )
+    except Exception:
+        pass
 
 
 def enable_dark_titlebar(widget: QWidget) -> None:

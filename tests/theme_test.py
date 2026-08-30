@@ -1,5 +1,6 @@
 """浅色、深色和运行时主题切换。"""
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QWidget
 
@@ -62,6 +63,9 @@ def test_main_window_unifies_overview_and_activity(qapp) -> None:
     activity = _ThemeProbe()
     window = MainWindow(overview, activity)
     try:
+        assert window.windowFlags() & Qt.FramelessWindowHint
+        assert window.title_bar.height() == 44
+        assert window.title_bar.btn_close.focusPolicy() == Qt.NoFocus
         assert window.pages.count() == 2
         window.show_activity()
         qapp.processEvents()
@@ -72,3 +76,10 @@ def test_main_window_unifies_overview_and_activity(qapp) -> None:
         assert window.btn_overview.isChecked()
     finally:
         window.close()
+
+
+def test_settings_navigation_has_modern_selection_without_focus_outline() -> None:
+    qss = panel_qss(LIGHT_TOKENS)
+    assert "QListWidget#settingsNav" in qss
+    assert "outline: none" in qss
+    assert LIGHT_TOKENS.accent_soft in qss
