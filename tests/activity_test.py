@@ -4,7 +4,7 @@ import threading
 import time
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QSplitter, QWidget
 
 from diskwatch.storage import Storage, make_record
 from diskwatch.ui.activity import PAGE_SIZE, ActivityPanel
@@ -123,6 +123,48 @@ def test_activity_filter_actions_use_separate_rows(qapp, tmp_path) -> None:
         assert panel.search.geometry().top() > panel.range_picker.geometry().top()
         assert panel.group_picker.geometry().right() <= panel.width() - 20
         assert panel.btn_export.geometry().right() <= panel.width() - 20
+        panel.close()
+    finally:
+        storage.close()
+
+
+def test_activity_splitter_fills_width_with_long_detail_text(qapp, tmp_path) -> None:
+    storage = Storage(tmp_path / "responsive-splitter.db")
+    long_name = "awesun_service.20260819-074729-with-a-very-long-unbroken-name.log"
+    try:
+        storage.add_files(
+            [
+                make_record(
+                    rf"C:\Users\niu\AppData\Roaming\Oray\AweSun\log\{long_name}",
+                    178,
+                )
+            ]
+        )
+        panel = ActivityPanel(storage)
+        panel.resize(1800, 900)
+        panel.show()
+        _settle(qapp, panel)
+        panel.table.selectRow(0)
+        _settle(qapp, panel)
+
+        splitter = panel.findChild(QSplitter)
+        assert splitter is panel.splitter
+        assert panel.detail_card.minimumSizeHint().width() <= 340
+        available = splitter.width() - splitter.handleWidth()
+        table_width, detail_width = splitter.sizes()
+        assert detail_width <= panel.detail_card.maximumWidth()
+        assert table_width + detail_width >= available - 2
+        assert table_width >= available - panel.detail_card.maximumWidth() - 2
+
+        # 模拟窗口恢复后再次最大化，分栏必须继续填满最终可用宽度。
+        panel.resize(1100, 700)
+        qapp.processEvents()
+        panel.resize(1800, 900)
+        qapp.processEvents()
+        table_width, detail_width = splitter.sizes()
+        available = splitter.width() - splitter.handleWidth()
+        assert table_width + detail_width >= available - 2
+        assert table_width >= available - panel.detail_card.maximumWidth() - 2
         panel.close()
     finally:
         storage.close()

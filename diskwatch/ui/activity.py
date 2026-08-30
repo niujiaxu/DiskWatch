@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -83,6 +84,9 @@ class ActivityPanel(QWidget):
         self._building = True
         self._workers: list[threading.Thread] = []
         self._workers_lock = threading.Lock()
+        self._splitter_reflow_timer = QTimer(self)
+        self._splitter_reflow_timer.setSingleShot(True)
+        self._splitter_reflow_timer.timeout.connect(self._fit_splitter)
         self._build()
         self._building = False
         self.apply_theme()
@@ -162,7 +166,9 @@ class ActivityPanel(QWidget):
         actions.addWidget(self.btn_export)
         root.addLayout(actions)
 
-        splitter = QSplitter(Qt.Horizontal)
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
             [
@@ -195,12 +201,13 @@ class ActivityPanel(QWidget):
         self.table.itemSelectionChanged.connect(self._show_selected)
         self.table.cellClicked.connect(self._table_clicked)
         self.table.cellDoubleClicked.connect(lambda _r, _c: self._reveal_selected())
-        splitter.addWidget(self.table)
+        self.splitter.addWidget(self.table)
 
-        detail = QFrame(objectName="card")
-        detail.setMinimumWidth(248)
-        detail.setMaximumWidth(340)
-        detail_lay = QVBoxLayout(detail)
+        self.detail_card = QFrame(objectName="card")
+        self.detail_card.setMinimumWidth(248)
+        self.detail_card.setMaximumWidth(340)
+        self.detail_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        detail_lay = QVBoxLayout(self.detail_card)
         detail_lay.setContentsMargins(16, 16, 16, 16)
         detail_lay.setSpacing(8)
         self.detail_name = QLabel(tr("选择一条活动"), objectName="h1")
@@ -215,6 +222,20 @@ class ActivityPanel(QWidget):
         self.detail_history = QLabel("", objectName="dim")
         self.detail_history.setWordWrap(True)
         self.detail_history.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        # QLabel 会把不含空格的长文件名和 Windows 路径计入最小宽度。
+        # 若不忽略这个横向 size hint，详情卡可被撑到 900px 以上，继而
+        # 让 QSplitter 在窗口刚显示或最大化时保留一段未分配的空白区域。
+        for label in (
+            self.detail_name,
+            self.detail_meta,
+            self.detail_path,
+            self.detail_sizes,
+            self.detail_history_title,
+            self.detail_history,
+        ):
+            policy = label.sizePolicy()
+            policy.setHorizontalPolicy(QSizePolicy.Ignored)
+            label.setSizePolicy(policy)
         detail_lay.addWidget(self.detail_name)
         detail_lay.addWidget(self.detail_meta)
         detail_lay.addWidget(self.detail_sizes)
@@ -227,9 +248,10 @@ class ActivityPanel(QWidget):
         self.btn_copy.clicked.connect(self._copy_selected)
         detail_lay.addWidget(self.btn_reveal)
         detail_lay.addWidget(self.btn_copy)
-        splitter.addWidget(detail)
-        splitter.setStretchFactor(0, 1)
-        root.addWidget(splitter, 1)
+        self.splitter.addWidget(self.detail_card)
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+        root.addWidget(self.splitter, 1)
 
         footer = QHBoxLayout()
         self.page_label = QLabel("", objectName="dim")
@@ -760,8 +782,30 @@ class ActivityPanel(QWidget):
         if hasattr(self, "table") and self.isVisible():
             self._fill_table()
 
+    def _fit_splitter(self) -> None:
+        """让表格始终吃满详情卡之外的宽度。"""
+        if not hasattr(self, "splitter"):
+            return
+        available = self.splitter.width() - self.splitter.handleWidth()
+        if available <= 0:
+            return
+        sizes = self.splitter.sizes()
+        detail_width = sizes[1] if len(sizes) > 1 and sizes[1] > 0 else 248
+        detail_width = max(
+            self.detail_card.minimumWidth(),
+            min(self.detail_card.maximumWidth(), detail_width),
+        )
+        self.splitter.setSizes([max(1, available - detail_width), detail_width])
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "splitter"):
+            self._splitter_reflow_timer.start(0)
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        # 外层窗口可能还在恢复或最大化，下一轮事件循环再按最终宽度重排。
+        self._splitter_reflow_timer.start(0)
 
 
 def _signed_size(value: int) -> str:

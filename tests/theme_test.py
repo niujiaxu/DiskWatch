@@ -71,6 +71,12 @@ def test_main_window_unifies_overview_and_activity(qapp) -> None:
         qapp.processEvents()
         assert window.pages.currentWidget() is activity
         assert window.btn_activity.isChecked()
+        window.showMaximized()
+        qapp.processEvents()
+        assert window.isMaximized()
+        window.show_activity()
+        qapp.processEvents()
+        assert window.isMaximized()
         window.show_overview()
         assert window.pages.currentWidget() is overview
         assert window.btn_overview.isChecked()

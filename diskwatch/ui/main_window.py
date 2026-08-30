@@ -256,7 +256,12 @@ class MainWindow(QMainWindow):
         self._show_front()
 
     def _show_front(self) -> None:
-        self.showNormal()
+        # 已最大化的窗口保持最大化，只在最小化时恢复。无条件
+        # showNormal() 会让页面切换与窗口尺寸变化在同一时刻竞争布局。
+        if self.isMinimized():
+            self.showNormal()
+        else:
+            self.show()
         self.raise_()
         self.activateWindow()
 
