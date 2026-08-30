@@ -11,9 +11,9 @@ from __future__ import annotations
 import ctypes
 import os
 import queue
+import subprocess
 import threading
 import time
-from pathlib import Path
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -426,19 +426,12 @@ def open_in_explorer(path: str) -> None:
     不先做 is_file()/exists()：网络盘或被锁文件上同步探测会把 UI 卡死。
     直接 ShellExecute；文件已删时资源管理器自己处理。
     """
-    p = Path(path)
     try:
-        ctypes.windll.shell32.ShellExecuteW(
-            None,
-            "open",
-            "explorer.exe",
-            f'/select,"{p}"',
-            None,
-            1,  # SW_SHOWNORMAL
+        subprocess.Popen(
+            ["explorer.exe", f"/select,{path}"],
+            close_fds=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except OSError:
-        try:
-            if p.parent.exists():
-                os.startfile(str(p.parent))
-        except OSError:
-            pass
+        # 定位失败不在 UI 线程继续做 exists()/网络路径探测，避免离线盘再次卡住。
+        return

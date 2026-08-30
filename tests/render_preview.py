@@ -152,6 +152,9 @@ def main() -> int:
         install_theme(app, "light")
         window.show_activity()
         activity.reload()
+        QTimer.singleShot(350, render_light)
+
+    def render_light() -> None:
         app.processEvents()
         save(window, "main-light-preview", "#e9edf2")
         window.show_settings()

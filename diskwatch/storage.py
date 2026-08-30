@@ -322,11 +322,15 @@ class _ReadPool:
                 pass
 
     def close(self) -> None:
+        current_thread = threading.get_ident()
         with self._lock:
             self._closed = True
-            connections = list(self._connections.values())
-            self._connections.clear()
-        for connection in connections:
+            # sqlite3.Connection 即使 check_same_thread=False，也不能在查询
+            # 执行到一半时由另一个线程强制 close；Python 3.14/Windows 下会
+            # 直接 access violation。这里只关闭调用 close() 的线程连接，
+            # 其他短生命周期线程会在 finally/release_current_thread 中自关。
+            connection = self._connections.pop(current_thread, None)
+        if connection is not None:
             try:
                 connection.close()
             except sqlite3.Error:
@@ -1185,14 +1189,16 @@ class Storage:
         """返回一个文件跨重命名路径的大小变化历史，最新事件在前。"""
         aliases = {path}
         found: dict[int, sqlite3.Row] = {}
-        # 一次移动只增加一个旧路径；循环可追溯连续多次重命名。
+        # 一次移动事件保存在新路径行中，并通过 old_path 指向前驱。因此只需
+        # 沿 path 索引向后追溯；不要写 `path IN (...) OR old_path IN (...)`，
+        # old_path 未索引时会在每次选中详情时全表扫描，直接卡住 UI。
         for _ in range(16):
             placeholders = ",".join("?" for _ in aliases)
-            args = [*aliases, *aliases, max(limit * 2, 100)]
+            args = [*aliases, max(limit * 2, 100)]
             rows = self._read.execute(
                 "SELECT id, path, old_path, drive, category, event_type, "
                 "old_size, new_size, delta_bytes, occurred_at FROM space_events "
-                f"WHERE path IN ({placeholders}) OR old_path IN ({placeholders}) "
+                f"WHERE path IN ({placeholders}) "
                 "ORDER BY occurred_at DESC, id DESC LIMIT ?",
                 args,
             ).fetchall()

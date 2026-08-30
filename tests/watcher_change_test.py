@@ -45,3 +45,18 @@ def test_repeated_modify_events_coalesce_to_final_size(monkeypatch) -> None:
         monitor.stop()
         storage.close()
 
+
+def test_open_in_explorer_returns_after_process_launch(monkeypatch) -> None:
+    launched: list[tuple[list[str], dict]] = []
+
+    def fake_popen(args, **kwargs):
+        launched.append((args, kwargs))
+        return object()
+
+    monkeypatch.setattr(watchermod.subprocess, "Popen", fake_popen)
+    watchermod.open_in_explorer(r"C:\folder with spaces\file.txt")
+
+    assert launched[0][0] == [
+        "explorer.exe",
+        r"/select,C:\folder with spaces\file.txt",
+    ]

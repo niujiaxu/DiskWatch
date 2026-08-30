@@ -98,6 +98,8 @@ _TRANSLATIONS: dict[str, str] = {
     "大小变化历史": "Size Change History",
     "{time}  {old} → {new}  ({delta})": "{time}  {old} → {new}  ({delta})",
     "暂无历史": "No history yet",
+    "正在加载历史…": "Loading history…",
+    "历史加载失败：{err}": "Unable to load history: {err}",
     "无法定位文件": "Unable to Reveal File",
     "导出结果格式无效": "Invalid export result",
     "用户文件": "User Files",

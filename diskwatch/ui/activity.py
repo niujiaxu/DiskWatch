@@ -65,6 +65,8 @@ class ActivityPanel(QWidget):
 
     open_dashboard = Signal()
     _export_done = Signal(object)
+    _history_ready = Signal(int, str, object)
+    _page_ready = Signal(int, object)
 
     def __init__(self, storage: Storage, parent=None) -> None:
         super().__init__(parent, objectName="panelRoot")
@@ -75,6 +77,8 @@ class ActivityPanel(QWidget):
         self._row_events: dict[int, int] = {}
         self._collapsed_groups: set[str] = set()
         self._selected_day: str | None = None
+        self._history_req = 0
+        self._reload_req = 0
         self._building = True
         self._workers: list[threading.Thread] = []
         self._workers_lock = threading.Lock()
@@ -86,6 +90,8 @@ class ActivityPanel(QWidget):
         self._search_timer.setSingleShot(True)
         self._search_timer.timeout.connect(self._filters_changed)
         self._export_done.connect(self._on_export_done)
+        self._history_ready.connect(self._on_history_ready)
+        self._page_ready.connect(self._on_page_ready)
         self.reload_filters()
         self.reload()
 
@@ -277,7 +283,7 @@ class ActivityPanel(QWidget):
         self.reload()
 
     def reload(self, keep_day: bool = False) -> None:
-        # 日期只在筛选条件变化时清除；手动刷新、翻页和自动刷新均保留。
+        """后台统计和分页查询；任何筛选条件都不能阻塞 Qt 主线程。"""
         since, until = self._time_range()
         filters = {
             "since": since,
@@ -288,12 +294,54 @@ class ActivityPanel(QWidget):
             "keyword": self.search.text().strip() or None,
             "focus_only": self.view_picker.currentData() == "focus",
         }
-        self._total = self._storage.space_event_count(**filters)
-        max_page = max(0, math.ceil(self._total / PAGE_SIZE) - 1)
-        self._page = min(self._page, max_page)
-        self._events = self._storage.space_events(
-            **filters, limit=PAGE_SIZE, offset=self._page * PAGE_SIZE
-        )
+        self._reload_req += 1
+        req = self._reload_req
+        requested_page = self._page
+        storage = self._storage
+        self.summary.setText(tr("加载中…"))
+        self.btn_refresh.setEnabled(False)
+
+        def work() -> None:
+            try:
+                total = storage.space_event_count(**filters)
+                max_page = max(0, math.ceil(total / PAGE_SIZE) - 1)
+                page = min(requested_page, max_page)
+                events = storage.space_events(
+                    **filters, limit=PAGE_SIZE, offset=page * PAGE_SIZE
+                )
+                result: object = (total, page, events)
+            except Exception as exc:
+                result = exc
+            finally:
+                storage.release_reader()
+            try:
+                self._page_ready.emit(req, result)
+            finally:
+                current = threading.current_thread()
+                with self._workers_lock:
+                    if current in self._workers:
+                        self._workers.remove(current)
+
+        worker = threading.Thread(target=work, name="dw-activity-page", daemon=True)
+        with self._workers_lock:
+            self._workers.append(worker)
+        worker.start()
+
+    def _on_page_ready(self, req: int, result: object) -> None:
+        if req != self._reload_req:
+            return
+        self.btn_refresh.setEnabled(True)
+        if isinstance(result, Exception):
+            self.summary.setText(tr("加载失败：{err}", err=result))
+            return
+        if not isinstance(result, tuple) or len(result) != 3:
+            return
+        total, page, events = result
+        if not isinstance(events, list):
+            return
+        self._total = int(total)
+        self._page = int(page)
+        self._events = [event for event in events if isinstance(event, SpaceEvent)]
         self._fill_table()
 
     def _fill_table(self) -> None:
@@ -411,24 +459,64 @@ class ActivityPanel(QWidget):
                delta=_signed_size(event.delta_bytes))
         )
         self.detail_path.setText(event.path)
-        history = self._storage.file_event_history(event.path, limit=12)
+        self.detail_history.setText(tr("正在加载历史…"))
+        self._load_history_async(event.path)
+        self.btn_reveal.setEnabled(True)
+        self.btn_copy.setEnabled(True)
+
+    def _load_history_async(self, path: str) -> None:
+        self._history_req += 1
+        req = self._history_req
+        storage = self._storage
+
+        def work() -> None:
+            try:
+                result: object = storage.file_event_history(path, limit=12)
+            except Exception as exc:
+                result = exc
+            finally:
+                storage.release_reader()
+            try:
+                self._history_ready.emit(req, path, result)
+            finally:
+                current = threading.current_thread()
+                with self._workers_lock:
+                    if current in self._workers:
+                        self._workers.remove(current)
+
+        worker = threading.Thread(target=work, name="dw-file-history", daemon=True)
+        with self._workers_lock:
+            self._workers.append(worker)
+        worker.start()
+
+    def _on_history_ready(self, req: int, path: str, result: object) -> None:
+        event = self._selected_event()
+        if req != self._history_req or event is None or event.path != path:
+            return
+        if isinstance(result, Exception):
+            self.detail_history.setText(tr("历史加载失败：{err}", err=result))
+            return
+        if not isinstance(result, list):
+            return
         self.detail_history.setText(
             "\n".join(
                 tr(
                     "{time}  {old} → {new}  ({delta})",
-                    time=datetime.fromtimestamp(item.occurred_at).strftime("%m-%d %H:%M"),
+                    time=datetime.fromtimestamp(item.occurred_at).strftime(
+                        "%m-%d %H:%M"
+                    ),
                     old=human_size(item.old_size),
                     new=human_size(item.new_size),
                     delta=_signed_size(item.delta_bytes),
                 )
-                for item in history
+                for item in result
+                if isinstance(item, SpaceEvent)
             )
             or tr("暂无历史")
         )
-        self.btn_reveal.setEnabled(True)
-        self.btn_copy.setEnabled(True)
 
     def _clear_detail(self) -> None:
+        self._history_req += 1
         self.detail_name.setText(tr("选择一条活动"))
         self.detail_meta.clear()
         self.detail_sizes.clear()
@@ -554,6 +642,12 @@ class ActivityPanel(QWidget):
     def hideEvent(self, event) -> None:
         self._search_timer.stop()
         super().hideEvent(event)
+
+    def closeEvent(self, event) -> None:
+        self._reload_req += 1
+        self._history_req += 1
+        self.wait_for_idle()
+        super().closeEvent(event)
 
     def wait_for_idle(self, timeout: float = 5.0) -> None:
         deadline = time.monotonic() + timeout

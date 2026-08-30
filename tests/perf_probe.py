@@ -174,8 +174,18 @@ def _database_probe(storage: Storage, db_path: Path, count: int) -> dict[str, fl
 
     app = QApplication.instance() or QApplication(["diskwatch-perf-probe"])
     rss_before = _rss_mb()
-    panel, ui_ms = _measure("构造文件活动页（200 行）", lambda: ActivityPanel(storage))
+    ui_started = time.perf_counter()
+    panel = ActivityPanel(storage)
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        app.processEvents()
+        with panel._workers_lock:
+            if not panel._workers:
+                break
+        time.sleep(0.005)
     app.processEvents()
+    ui_ms = (time.perf_counter() - ui_started) * 1000
+    print(f"构造并加载文件活动页（200 行） {ui_ms:>9.2f} ms")
     rss_after = _rss_mb()
     panel.close()
     panel.deleteLater()

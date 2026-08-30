@@ -2,6 +2,14 @@
 
 All notable changes to DiskWatch are documented in this file.
 
+## [2.0.1] - 2026-08-30
+
+### Fixed
+- 打开文件活动或切换记录时，跨重命名历史查询因 `old_path` 未索引而反复全表扫描，导致窗口与按钮假死
+- 详情历史、分页计数、筛选和翻页改为后台读取；慢查询期间保留现有表格和复制等交互
+- 数据库关闭不再跨线程强制关闭仍在查询的 SQLite 连接，避免 Python 3.14/Windows 原生 access violation
+- “在资源管理器中定位”改为快速拉起独立 Explorer 进程，不再在 UI 线程同步解析离线或网络路径
+
 ## [2.0.0] - 2026-08-29
 
 ### Added
