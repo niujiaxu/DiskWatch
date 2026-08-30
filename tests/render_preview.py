@@ -126,13 +126,12 @@ def main() -> int:
 
     dashboard = DashboardPanel(storage)
     activity = ActivityPanel(storage)
-    window = MainWindow(dashboard, activity)
+    settings = SettingsDialog(config, storage, monitor=monitor, embedded=True)
+    window = MainWindow(dashboard, activity, settings)
     window.resize(1180, 780)
     widget = FloatingWidget(storage, monitor, config)
     widget.adjustSize()
-    settings = SettingsDialog(config, storage, monitor=monitor)
-    settings.resize(820, 680)
-    for surface in (window, widget, settings):
+    for surface in (window, widget):
         surface.setAttribute(Qt.WA_DontShowOnScreen, True)
 
     def render() -> None:
@@ -153,13 +152,13 @@ def main() -> int:
         install_theme(app, "light")
         window.show_activity()
         activity.reload()
-        settings.show()
-        settings.nav.setCurrentRow(2)
         app.processEvents()
         save(window, "main-light-preview", "#e9edf2")
-        save(settings, "settings-preview", "#e9edf2")
+        window.show_settings()
+        settings.nav.setCurrentRow(2)
+        app.processEvents()
+        save(window, "settings-preview", "#e9edf2")
 
-        settings.close()
         window.close()
         dashboard.wait_for_idle()
         storage.close()

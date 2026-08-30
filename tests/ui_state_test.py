@@ -54,6 +54,16 @@ def test_initial_card_state(dw_app, qapp) -> None:
     assert not dw_app.ball.isVisible()
 
 
+def test_settings_is_embedded_third_main_page(dw_app, qapp) -> None:
+    dw_app.show_settings()
+    qapp.processEvents()
+    assert dw_app.main_window.isVisible()
+    assert dw_app.main_window.pages.currentWidget() is dw_app.settings
+    assert not dw_app.settings.isWindow()
+    dw_app.settings.cancel_requested.emit()
+    assert dw_app.main_window.pages.currentWidget() is dw_app.dashboard
+
+
 def test_collapse_to_ball(dw_app, qapp) -> None:
     dw_app.collapse()
     qapp.processEvents()

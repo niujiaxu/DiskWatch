@@ -1344,6 +1344,22 @@ class Storage:
             for row in rows
         ]
 
+    def top_space_files(
+        self, days: int, limit: int = 10
+    ) -> list[tuple[str, int, int]]:
+        """返回时间范围内净占用增长最大的文件。"""
+        cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
+        rows = self._read.execute(
+            "SELECT path, COUNT(*) events, COALESCE(SUM(delta_bytes), 0) net "
+            "FROM space_events WHERE day >= ? GROUP BY path "
+            "HAVING net > 0 ORDER BY net DESC, events DESC LIMIT ?",
+            (cutoff, max(1, limit)),
+        ).fetchall()
+        return [
+            (str(row["path"]), int(row["events"]), int(row["net"]))
+            for row in rows
+        ]
+
     def disk_samples(
         self,
         *,

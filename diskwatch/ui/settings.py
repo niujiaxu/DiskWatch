@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -40,8 +40,21 @@ from .style import (
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, config: Config, storage: Storage, parent=None, monitor=None) -> None:
+    save_requested = Signal()
+    cancel_requested = Signal()
+    activity_requested = Signal()
+
+    def __init__(
+        self,
+        config: Config,
+        storage: Storage,
+        parent=None,
+        monitor=None,
+        *,
+        embedded: bool = False,
+    ) -> None:
         super().__init__(parent)
+        self._embedded = embedded
         self._config = config
         self._storage = storage
         self._monitor = monitor
@@ -54,6 +67,8 @@ class SettingsDialog(QDialog):
         # PySide6 里对 WindowType 做 ~ 得到的是残缺掩码（约 0x1feffff），
         # 会顺带清掉 WindowCloseButtonHint，标题栏 ✕ 看起来在但点不了。
         self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
+        if embedded:
+            self.setWindowFlags(Qt.Widget)
         apply_window_icon(self)
         self._original_theme_mode = str(config.get("theme_mode", "system"))
         self.apply_theme()
@@ -63,8 +78,9 @@ class SettingsDialog(QDialog):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        apply_window_icon(self)
-        enable_titlebar(self)
+        if not self._embedded:
+            apply_window_icon(self)
+            enable_titlebar(self)
 
     def _build(self) -> None:
         root = QVBoxLayout(self)
@@ -340,6 +356,10 @@ class SettingsDialog(QDialog):
         btn_purge.clicked.connect(self._purge_expired)
         lay.addWidget(btn_purge, alignment=Qt.AlignLeft)
 
+        btn_export = QPushButton(tr("打开文件活动并导出…"))
+        btn_export.clicked.connect(self.activity_requested.emit)
+        lay.addWidget(btn_export, alignment=Qt.AlignLeft)
+
         btn_clear = QPushButton(tr("清空所有记录"))
         btn_clear.clicked.connect(self._clear_data)
         lay.addWidget(btn_clear, alignment=Qt.AlignLeft)
@@ -542,13 +562,31 @@ class SettingsDialog(QDialog):
 
         # 确认完成（路径迁移未取消）后才真正写注册表
         set_autostart(self.chk_autostart.isChecked())
-        super().accept()
+        if self._embedded:
+            self.save_requested.emit()
+        else:
+            super().accept()
 
     def reject(self) -> None:
         app = QApplication.instance()
         if isinstance(app, QApplication):
             install_theme(app, self._original_theme_mode)
-        super().reject()
+        if self._embedded:
+            self._load()
+            self.cancel_requested.emit()
+        else:
+            super().reject()
+
+    def reload_from_config(self) -> None:
+        self._original_theme_mode = str(self._config.get("theme_mode", "system"))
+        self.paths_changed = False
+        self._pending_config_path = ""
+        self._pending_db_path = ""
+        self._load()
+
+    def set_storage(self, storage: Storage) -> None:
+        self._storage = storage
+        self._load()
 
     def _preview_theme(self, _index: int) -> None:
         app = QApplication.instance()

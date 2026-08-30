@@ -50,6 +50,7 @@ _CARD_TITLES = {
     "cum": "累计已归因净变化",
     "space": "24 小时磁盘剩余空间",
     "exts": "分类空间变化",
+    "files": "占用增长最大的文件",
     "folders": "TOP 目录",
 }
 
@@ -171,12 +172,21 @@ class DashboardPanel(QWidget):
         exts_lay.addWidget(self._chart_exts)
         grid.addWidget(exts, 1, 1)
 
+        # 占用增长最大的文件（跨两列）
+        self._chart_files = TopBarsChart(self)
+        files, files_lbl, files_lay = self._card(
+            "files", tr("占用增长最大的文件")
+        )
+        self._card_titles["files"] = files_lbl
+        files_lay.addWidget(self._chart_files)
+        grid.addWidget(files, 2, 0, 1, 2)
+
         # TOP 目录（跨两列，行多）
         self._chart_folders = TopBarsChart(self)
         folders, folders_lbl, folders_lay = self._card("folders", tr("TOP 目录"))
         self._card_titles["folders"] = folders_lbl
         folders_lay.addWidget(self._chart_folders)
-        grid.addWidget(folders, 2, 0, 1, 2)
+        grid.addWidget(folders, 3, 0, 1, 2)
 
         self._scroll_area.setWidget(content)
         root.addWidget(self._scroll_area, 1)
@@ -273,6 +283,7 @@ class DashboardPanel(QWidget):
                     "days": days,
                     "trend": storage.space_day_summaries(days),
                     "folders": storage.top_space_folders(days, TOP_FOLDER_LIMIT),
+                    "files": storage.top_space_files(days, TOP_FOLDER_LIMIT),
                     "recent_spaces": storage.disk_samples(since=now - 86400),
                     "attribution": storage.daily_attribution_summary(
                         (date.today() - timedelta(days=days - 1)).isoformat(),
@@ -342,6 +353,12 @@ class DashboardPanel(QWidget):
             for key, delta in payload.get("categories", [])
         ]
         self._chart_exts.set_items(categories, "size")
+
+        files = [
+            (f"{path}  {_signed_space(delta)}", count, delta)
+            for path, count, delta in payload.get("files", [])
+        ]
+        self._chart_files.set_items(files, "size")
 
         attribution = payload.get("attribution", [])
         actual = sum(item.actual_delta for item in attribution)

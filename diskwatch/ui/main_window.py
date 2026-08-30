@@ -26,7 +26,12 @@ class MainWindow(QMainWindow):
     settings_requested = Signal()
     scan_cancel_requested = Signal()
 
-    def __init__(self, dashboard: QWidget, activity: QWidget) -> None:
+    def __init__(
+        self,
+        dashboard: QWidget,
+        activity: QWidget,
+        settings: QWidget | None = None,
+    ) -> None:
         super().__init__()
         self.dashboard = dashboard
         self.activity = activity
@@ -57,8 +62,11 @@ class MainWindow(QMainWindow):
         side.addWidget(self.btn_overview)
         side.addWidget(self.btn_activity)
         side.addStretch(1)
-        self.btn_settings = QPushButton(tr("设置"), objectName="navButton")
-        self.btn_settings.clicked.connect(self.settings_requested.emit)
+        if settings is None:
+            self.btn_settings = QPushButton(tr("设置"), objectName="navButton")
+            self.btn_settings.clicked.connect(self.settings_requested.emit)
+        else:
+            self.btn_settings = self._nav_button(tr("设置"), 2)
         side.addWidget(self.btn_settings)
         layout.addWidget(self.sidebar)
 
@@ -68,7 +76,10 @@ class MainWindow(QMainWindow):
         content_layout.setSpacing(0)
         self.pages = QStackedWidget()
         content_layout.addWidget(self.pages, 1)
-        for page in (dashboard, activity):
+        self.settings = settings
+        for page in (dashboard, activity, settings):
+            if page is None:
+                continue
             page.setParent(self.pages)
             page.setWindowFlags(Qt.Widget)
             page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -93,7 +104,11 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(self.scan_strip)
         layout.addWidget(content, 1)
 
-        self._nav_buttons = (self.btn_overview, self.btn_activity)
+        self._nav_buttons = (
+            (self.btn_overview, self.btn_activity, self.btn_settings)
+            if settings is not None
+            else (self.btn_overview, self.btn_activity)
+        )
         self.select_page(0)
         self.apply_theme()
 
@@ -114,6 +129,13 @@ class MainWindow(QMainWindow):
 
     def show_activity(self) -> None:
         self.select_page(1)
+        self._show_front()
+
+    def show_settings(self) -> None:
+        if self.settings is None:
+            self.settings_requested.emit()
+            return
+        self.select_page(2)
         self._show_front()
 
     def _show_front(self) -> None:
@@ -179,7 +201,9 @@ QProgressBar {{ background: {t.field}; border: none; border-radius: 3px; height:
 QProgressBar::chunk {{ background: {t.accent}; border-radius: 3px; }}
 """
         self.setStyleSheet(panel_qss() + nav_qss)
-        for page in (self.dashboard, self.activity):
+        for page in (self.dashboard, self.activity, self.settings):
+            if page is None:
+                continue
             hook = getattr(page, "apply_theme", None)
             if callable(hook):
                 hook()

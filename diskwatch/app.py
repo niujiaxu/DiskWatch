@@ -57,7 +57,13 @@ class DiskWatchApp:
         self.ball = MiniBall(self.storage, self.monitor, self.config)
         self.panel = ActivityPanel(self.storage)
         self.dashboard = DashboardPanel(self.storage)
-        self.main_window = MainWindow(self.dashboard, self.panel)
+        self.settings = SettingsDialog(
+            self.config,
+            self.storage,
+            monitor=self.monitor,
+            embedded=True,
+        )
+        self.main_window = MainWindow(self.dashboard, self.panel, self.settings)
         self.tray = QSystemTrayIcon(app_icon(), qt_app)
 
         self._wire()
@@ -112,6 +118,11 @@ class DiskWatchApp:
         self.dashboard.day_selected.connect(self._dashboard_show_day)
         self.panel.open_dashboard.connect(self.show_dashboard)
         self.main_window.settings_requested.connect(self.show_settings)
+        self.settings.save_requested.connect(
+            lambda: self._apply_settings(self.settings)
+        )
+        self.settings.cancel_requested.connect(self.main_window.show_overview)
+        self.settings.activity_requested.connect(self.main_window.show_activity)
         self.main_window.scan_cancel_requested.connect(self._cancel_scan)
         self.widget.hidden_by_user.connect(self._sync_tray_actions)
         self.widget.collapse_requested.connect(self.collapse)
@@ -271,11 +282,10 @@ class DiskWatchApp:
         self.activate_from_second_instance()
 
     def show_settings(self) -> None:
-        dlg = SettingsDialog(
-            self.config, self.storage, self.panel, monitor=self.monitor
-        )
-        if not dlg.exec():
-            return
+        self.settings.reload_from_config()
+        self.main_window.show_settings()
+
+    def _apply_settings(self, dlg: SettingsDialog) -> None:
         values = dlg.result_values()
         old_lang = self.config.get("language", "zh_CN")
         new_lang = values.get("language", old_lang)
@@ -313,6 +323,7 @@ class DiskWatchApp:
                 self.ball.set_storage(self.storage)
                 self.panel.set_storage(self.storage)
                 self.dashboard.set_storage(self.storage)
+                self.settings.set_storage(self.storage)
                 self.widget.refresh()
                 self.ball.refresh()
                 return
@@ -327,6 +338,7 @@ class DiskWatchApp:
             self.panel.retranslate()
             self.dashboard.retranslate()
             self.main_window.retranslate()
+            self._replace_settings_panel()
             if self.panel.isVisible():
                 self.panel.reload(keep_day=True)
             if self.dashboard.isVisible():
@@ -345,6 +357,27 @@ class DiskWatchApp:
             self.panel.reload(keep_day=True)
         if self.dashboard.isVisible():
             self.dashboard.reload()
+
+    def _replace_settings_panel(self) -> None:
+        """语言切换后重建嵌入设置页，使所有静态标签立即翻译。"""
+        old = self.settings
+        index = self.main_window.pages.indexOf(old)
+        self.main_window.pages.removeWidget(old)
+        old.deleteLater()
+        self.settings = SettingsDialog(
+            self.config,
+            self.storage,
+            monitor=self.monitor,
+            embedded=True,
+        )
+        self.settings.save_requested.connect(
+            lambda: self._apply_settings(self.settings)
+        )
+        self.settings.cancel_requested.connect(self.main_window.show_overview)
+        self.settings.activity_requested.connect(self.main_window.show_activity)
+        self.main_window.settings = self.settings
+        self.main_window.pages.insertWidget(max(0, index), self.settings)
+        self.main_window.select_page(2)
 
     def _restart_app(self) -> None:
         """整程序重启（托盘菜单「重启」）。"""

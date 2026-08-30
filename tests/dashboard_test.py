@@ -95,6 +95,9 @@ def test_space_day_and_folder_summaries(qapp, tmp_path) -> None:
         folders = s.top_space_folders(3, 5)
         assert folders[0][0] == r"C:\AppA"
         assert folders[0][2] > folders[1][2]
+        files = s.top_space_files(3, 5)
+        assert files
+        assert files[0][2] >= files[-1][2] > 0
     finally:
         s.close()
 
@@ -248,6 +251,7 @@ def test_dashboard_smoke(qapp, tmp_path) -> None:
             "days": 14,
             "trend": s.space_day_summaries(14),
             "folders": s.top_space_folders(14, 10),
+            "files": s.top_space_files(14, 10),
             "recent_spaces": s.disk_samples(
                 since=(datetime.now() - timedelta(days=1)).timestamp()
             ),
@@ -265,6 +269,7 @@ def test_dashboard_smoke(qapp, tmp_path) -> None:
         assert len(panel._chart_growth._data) == 3  # 3 天柱
         assert panel._chart_cum.isVisible()
         assert panel._chart_folders.isVisible()
+        assert panel._chart_files.isVisible()
         assert panel._chart_exts.isVisible()
         assert panel._chart_space.isVisible()
         assert "9" in panel.count_label.text()  # 近 14 天记录 9 个空间事件

@@ -37,7 +37,8 @@ Unattributed               0.5 GB
 - CSV export runs in the background and reads matching rows in batches.
 - Raw events default to 30 days, hourly summaries to one year, and daily summaries are retained long term.
 - Diagnostics expose raw, processed, coalesced, dropped, and queued event counts, write rate, database size/estimated daily growth, and USN status.
-- One main window hosts Overview and File Activity.
+- One main window hosts Overview, File Activity, and the five-section Settings page.
+- Overview lists the files, folders, and categories responsible for the largest growth.
 - Light, dark, and system themes switch at runtime, including the native Windows title bar.
 - The floating card and mini pill show today's net space change and attribution ratio.
 - English/Chinese UI, single instance, autostart, and configurable data paths.
