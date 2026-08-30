@@ -23,6 +23,8 @@ from .storage import FileRecord, Storage, make_record
 
 SCAN_BATCH = 500
 MTIME_MARGIN = 3.0  # FAT 目录时间戳 2 秒粒度，剪枝判断留 3 秒余量
+SCAN_YIELD_EVERY = 128
+SCAN_YIELD_SECONDS = 0.001
 
 
 def scan_and_backfill(
@@ -53,6 +55,7 @@ def scan_and_backfill(
     scanned_files = 0
     reported_dirs = 0
     reported_files = 0
+    visited_entries = 0
     batch: list[FileRecord] = []
 
     def cancelled() -> bool:
@@ -76,6 +79,13 @@ def scan_and_backfill(
             added += len(batch)
             batch.clear()
 
+    def cooperate() -> None:
+        """大目录遍历时定期让出 GIL，避免补扫饿死 Qt 事件循环。"""
+        nonlocal visited_entries
+        visited_entries += 1
+        if visited_entries % SCAN_YIELD_EVERY == 0:
+            time.sleep(SCAN_YIELD_SECONDS)
+
     for root in roots:
         if cancelled():
             break
@@ -96,55 +106,59 @@ def scan_and_backfill(
             mtime = safe_stat(dirpath)
             if mtime is not None and mtime.st_mtime + MTIME_MARGIN < cutoff:
                 try:
-                    for ent in os.scandir(dirpath):
-                        try:
-                            if ent.is_dir(follow_symlinks=False):
-                                stack.append(ent.path)
-                        except OSError:
-                            continue
+                    with os.scandir(dirpath) as entries:
+                        for ent in entries:
+                            cooperate()
+                            try:
+                                if ent.is_dir(follow_symlinks=False):
+                                    stack.append(ent.path)
+                            except OSError:
+                                continue
                 except OSError:
                     continue
                 continue
             try:
-                entries = list(os.scandir(dirpath))
+                entries = os.scandir(dirpath)
             except OSError:
                 continue
-            for ent in entries:
-                if cancelled():
-                    break
-                try:
-                    if ent.is_dir(follow_symlinks=False):
-                        stack.append(ent.path)
+            with entries:
+                for ent in entries:
+                    cooperate()
+                    if cancelled():
+                        break
+                    try:
+                        if ent.is_dir(follow_symlinks=False):
+                            stack.append(ent.path)
+                            continue
+                        if not ent.is_file(follow_symlinks=False):
+                            continue
+                    except OSError:
                         continue
-                    if not ent.is_file(follow_symlinks=False):
+                    if not pfilter.accepts_path(ent.path):
                         continue
-                except OSError:
-                    continue
-                if not pfilter.accepts_path(ent.path):
-                    continue
-                scanned_files += 1
-                report(ent.path)
-                try:
-                    st = ent.stat(follow_symlinks=False)
-                except OSError:
-                    continue
-                if not pfilter.is_candidate(st):
-                    continue
-                if not pfilter.meets_size(st.st_size):
-                    continue
-                created = st.st_ctime  # Windows：文件创建时间
-                if created < cutoff:
-                    continue
-                batch.append(
-                    make_record(
-                        ent.path,
-                        st.st_size,
-                        added_at=created,
-                        category=classifier.classify(ent.path),
+                    scanned_files += 1
+                    report(ent.path)
+                    try:
+                        st = ent.stat(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if not pfilter.is_candidate(st):
+                        continue
+                    if not pfilter.meets_size(st.st_size):
+                        continue
+                    created = st.st_ctime  # Windows：文件创建时间
+                    if created < cutoff:
+                        continue
+                    batch.append(
+                        make_record(
+                            ent.path,
+                            st.st_size,
+                            added_at=created,
+                            category=classifier.classify(ent.path),
+                        )
                     )
-                )
-                if len(batch) >= SCAN_BATCH:
-                    flush()
+                    if len(batch) >= SCAN_BATCH:
+                        flush()
     flush()
     report("", force=True)
     return added

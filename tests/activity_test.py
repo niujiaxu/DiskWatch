@@ -157,3 +157,38 @@ def test_page_reload_never_blocks_ui_thread(qapp, tmp_path, monkeypatch) -> None
     finally:
         gate.set()
         storage.close()
+
+
+def test_showing_loaded_panel_does_not_rebuild_table(qapp, tmp_path, monkeypatch) -> None:
+    storage = Storage(tmp_path / "show-without-rebuild.db")
+    try:
+        storage.add_files([make_record(r"C:\data\row.bin", 10)])
+        panel = ActivityPanel(storage)
+        _settle(qapp, panel)
+        rebuilds: list[bool] = []
+        monkeypatch.setattr(panel, "_fill_table", lambda: rebuilds.append(True))
+
+        panel.show()
+        qapp.processEvents()
+
+        assert rebuilds == []
+        panel.close()
+    finally:
+        storage.close()
+
+
+def test_table_fill_loads_selected_history_once(qapp, tmp_path, monkeypatch) -> None:
+    storage = Storage(tmp_path / "single-selection.db")
+    try:
+        storage.add_files([make_record(r"C:\data\row.bin", 10)])
+        panel = ActivityPanel(storage)
+        _settle(qapp, panel)
+        requested: list[str] = []
+        monkeypatch.setattr(panel, "_load_history_async", requested.append)
+
+        panel._fill_table()
+
+        assert requested == [r"C:\data\row.bin"]
+        panel.close()
+    finally:
+        storage.close()

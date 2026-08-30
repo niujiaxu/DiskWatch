@@ -186,6 +186,11 @@ def _database_probe(storage: Storage, db_path: Path, count: int) -> dict[str, fl
     app.processEvents()
     ui_ms = (time.perf_counter() - ui_started) * 1000
     print(f"构造并加载文件活动页（200 行） {ui_ms:>9.2f} ms")
+    show_started = time.perf_counter()
+    panel.show()
+    app.processEvents()
+    show_ms = (time.perf_counter() - show_started) * 1000
+    print(f"显示已加载活动页（200 行）     {show_ms:>9.2f} ms")
     rss_after = _rss_mb()
     panel.close()
     panel.deleteLater()
@@ -201,6 +206,7 @@ def _database_probe(storage: Storage, db_path: Path, count: int) -> dict[str, fl
         "filter_ms": filter_ms,
         "page_ms": page_ms,
         "ui_ms": ui_ms,
+        "show_ms": show_ms,
         "db_mb": size_mb,
         "ui_rss_delta_mb": rss_after - rss_before,
     }

@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -171,12 +171,19 @@ class ActivityPanel(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        # ResizeToContents 会在可见表格逐项 setItem() 时反复测量整列，
+        # 真实数据下打开页面可把一次 200 行重绘放大到数十秒。固定信息列
+        # 使用稳定宽度，只让文件名和目录瓜分剩余空间。
+        header.setSectionResizeMode(0, QHeaderView.Interactive)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.Interactive)
+        header.setSectionResizeMode(3, QHeaderView.Interactive)
+        header.setSectionResizeMode(4, QHeaderView.Interactive)
         header.setSectionResizeMode(5, QHeaderView.Stretch)
+        self.table.setColumnWidth(0, 132)
+        self.table.setColumnWidth(2, 88)
+        self.table.setColumnWidth(3, 112)
+        self.table.setColumnWidth(4, 100)
         self.table.itemSelectionChanged.connect(self._show_selected)
         self.table.cellClicked.connect(self._table_clicked)
         self.table.cellDoubleClicked.connect(lambda _r, _c: self._reveal_selected())
@@ -345,69 +352,86 @@ class ActivityPanel(QWidget):
         self._fill_table()
 
     def _fill_table(self) -> None:
-        self.table.setSortingEnabled(False)
-        self.table.clearSpans()
-        self.table.clearSelection()
-        self.table.setCurrentCell(-1, -1)
-        self._row_events.clear()
-        t = theme_tokens()
-        group_mode = self.group_picker.currentData()
-        group_counts: dict[str, int] = {}
-        if group_mode is None:
-            rows: list[tuple[str | None, int | None]] = [
-                (None, index) for index in range(len(self._events))
-            ]
-        else:
-            grouped: dict[str, list[int]] = {}
-            for index, event in enumerate(self._events):
-                key = event.category if group_mode == "category" else event.folder
-                grouped.setdefault(key or tr("未分类"), []).append(index)
-            rows = []
-            for key, indexes in grouped.items():
-                group_counts[key] = len(indexes)
-                rows.append((key, None))
-                if key not in self._collapsed_groups:
-                    rows.extend((key, index) for index in indexes)
+        # 可见 QTableWidget 逐格插入会同步触发布局、重绘和选择信号。
+        # 整批更新期间全部关闭，完成后只刷新一次详情和 viewport。
+        signal_blocker = QSignalBlocker(self.table)
+        self.table.setUpdatesEnabled(False)
+        try:
+            self.table.setSortingEnabled(False)
+            self.table.clearSpans()
+            self.table.clearSelection()
+            self.table.setCurrentCell(-1, -1)
+            self._row_events.clear()
+            t = theme_tokens()
+            group_mode = self.group_picker.currentData()
+            group_counts: dict[str, int] = {}
+            if group_mode is None:
+                rows: list[tuple[str | None, int | None]] = [
+                    (None, index) for index in range(len(self._events))
+                ]
+            else:
+                grouped: dict[str, list[int]] = {}
+                for index, event in enumerate(self._events):
+                    key = event.category if group_mode == "category" else event.folder
+                    grouped.setdefault(key or tr("未分类"), []).append(index)
+                rows = []
+                for key, indexes in grouped.items():
+                    group_counts[key] = len(indexes)
+                    rows.append((key, None))
+                    if key not in self._collapsed_groups:
+                        rows.extend((key, index) for index in indexes)
 
-        self.table.setRowCount(len(rows))
-        for row, (group_key, event_index) in enumerate(rows):
-            if event_index is None:
-                assert group_key is not None
-                marker = "▸" if group_key in self._collapsed_groups else "▾"
-                if group_mode == "category":
-                    label = tr(CATEGORY_LABELS.get(group_key, "未分类"))
-                else:
-                    label = group_key
-                count = group_counts.get(group_key, 0)
-                item = QTableWidgetItem(
-                    tr("{marker} {label} · {count} 条", marker=marker, label=label, count=count)
+            self.table.setRowCount(len(rows))
+            for row, (group_key, event_index) in enumerate(rows):
+                if event_index is None:
+                    assert group_key is not None
+                    marker = "▸" if group_key in self._collapsed_groups else "▾"
+                    if group_mode == "category":
+                        label = tr(CATEGORY_LABELS.get(group_key, "未分类"))
+                    else:
+                        label = group_key
+                    count = group_counts.get(group_key, 0)
+                    item = QTableWidgetItem(
+                        tr(
+                            "{marker} {label} · {count} 条",
+                            marker=marker,
+                            label=label,
+                            count=count,
+                        )
+                    )
+                    item.setData(Qt.UserRole + 1, group_key)
+                    item.setForeground(t.color("accent"))
+                    item.setBackground(t.color("surface_raised"))
+                    self.table.setItem(row, 0, item)
+                    self.table.setSpan(row, 0, 1, 6)
+                    continue
+
+                event = self._events[event_index]
+                self._row_events[row] = event_index
+                path = Path(event.path)
+                values = (
+                    datetime.fromtimestamp(event.occurred_at).strftime(
+                        "%m-%d %H:%M:%S"
+                    ),
+                    path.name,
+                    tr(EVENT_LABELS.get(event.event_type, event.event_type)),
+                    _signed_size(event.delta_bytes),
+                    tr(CATEGORY_LABELS.get(event.category, "未分类")),
+                    str(path.parent),
                 )
-                item.setData(Qt.UserRole + 1, group_key)
-                item.setForeground(t.color("accent"))
-                item.setBackground(t.color("surface_raised"))
-                self.table.setItem(row, 0, item)
-                self.table.setSpan(row, 0, 1, 6)
-                continue
-
-            event = self._events[event_index]
-            self._row_events[row] = event_index
-            path = Path(event.path)
-            values = (
-                datetime.fromtimestamp(event.occurred_at).strftime("%m-%d %H:%M:%S"),
-                path.name,
-                tr(EVENT_LABELS.get(event.event_type, event.event_type)),
-                _signed_size(event.delta_bytes),
-                tr(CATEGORY_LABELS.get(event.category, "未分类")),
-                str(path.parent),
-            )
-            for col, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                item.setData(Qt.UserRole, event_index)
-                if col == 3:
-                    role = "warning" if event.delta_bytes > 0 else "success"
-                    item.setForeground(t.color(role))
-                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                self.table.setItem(row, col, item)
+                for col, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    item.setData(Qt.UserRole, event_index)
+                    if col == 3:
+                        role = "warning" if event.delta_bytes > 0 else "success"
+                        item.setForeground(t.color(role))
+                        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    self.table.setItem(row, col, item)
+            if self._row_events:
+                self.table.selectRow(min(self._row_events))
+        finally:
+            signal_blocker.unblock()
+            self.table.setUpdatesEnabled(True)
         pages = max(1, math.ceil(self._total / PAGE_SIZE))
         self.page_label.setText(
             tr(
@@ -418,8 +442,8 @@ class ActivityPanel(QWidget):
         self.summary.setText(tr("每页最多 {count} 条", count=PAGE_SIZE))
         self.btn_prev.setEnabled(self._page > 0)
         self.btn_next.setEnabled(self._page + 1 < pages)
+        self.table.viewport().update()
         if self._row_events:
-            self.table.selectRow(min(self._row_events))
             self._show_selected()
         else:
             self._clear_detail()
@@ -695,8 +719,6 @@ class ActivityPanel(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        if hasattr(self, "table"):
-            self._fill_table()
 
 
 def _signed_size(value: int) -> str:
