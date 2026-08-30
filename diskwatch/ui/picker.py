@@ -6,7 +6,7 @@ API 与 QComboBox 对齐（addItem/currentData/setCurrentIndex/setItemText/…�
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QPoint, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -26,6 +26,7 @@ class DayPicker(QWidget):
     """
 
     currentIndexChanged = Signal(int)
+    POPUP_ROW_HEIGHT = 28
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -129,6 +130,7 @@ class DayPicker(QWidget):
             self._popup = QListWidget(host)
             self._popup.setObjectName("dayPickerPopup")
             self._popup.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self._popup.setUniformItemSizes(True)
             self._popup.itemClicked.connect(self._on_pick)
             host.installEventFilter(self)
             app = QApplication.instance()
@@ -137,6 +139,7 @@ class DayPicker(QWidget):
         self._popup.clear()
         for i, (text, _data) in enumerate(self._items):
             item = QListWidgetItem(text)
+            item.setSizeHint(QSize(0, self.POPUP_ROW_HEIGHT))
             tip = self._tips.get(i)
             if tip:
                 item.setToolTip(tip)
@@ -144,13 +147,27 @@ class DayPicker(QWidget):
         if 0 <= self._index < self._popup.count():
             self._popup.setCurrentRow(self._index)
 
+        self._popup.ensurePolished()
+        self._popup.doItemsLayout()
         top_left = self.mapTo(host, QPoint(0, self.height() + 2))
-        row_h = 28
-        height = min(280, max(row_h * min(len(self._items), 10) + 8, row_h + 8))
-        width = max(self.width(), 220)
-        if top_left.y() + height > host.height() - 8:
-            top_left = self.mapTo(host, QPoint(0, -2)) - QPoint(0, height)
-        self._popup.setGeometry(top_left.x(), max(8, top_left.y()), width, height)
+        row_h = max(self.POPUP_ROW_HEIGHT, self._popup.sizeHintForRow(0))
+        frame = self._popup.frameWidth()
+        visible_rows = min(len(self._items), 10)
+        height = min(280, row_h * visible_rows + frame * 2 + 2)
+        host_width = max(1, host.width())
+        host_height = max(1, host.height())
+        width = min(max(self.width(), 220), max(80, host_width - 16))
+        x = min(max(8, top_left.x()), max(8, host_width - width - 8))
+        below_y = top_left.y()
+        above_y = self.mapTo(host, QPoint(0, -2)).y() - height
+        if below_y + height <= host_height - 8:
+            y = below_y
+        elif above_y >= 8:
+            y = above_y
+        else:
+            height = min(height, max(row_h + frame * 2, host_height - 16))
+            y = min(max(8, below_y), max(8, host_height - height - 8))
+        self._popup.setGeometry(x, y, width, height)
         self._popup.raise_()
         self._popup.show()
         self._popup.setFocus(Qt.PopupFocusReason)

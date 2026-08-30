@@ -4,6 +4,7 @@ import threading
 import time
 
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QWidget
 
 from diskwatch.storage import Storage, make_record
 from diskwatch.ui.activity import PAGE_SIZE, ActivityPanel
@@ -80,6 +81,48 @@ def test_activity_panel_uses_day_picker_only(qapp, tmp_path) -> None:
         panel = ActivityPanel(storage)
         _settle(qapp, panel)
         assert len(panel.findChildren(DayPicker)) == 6
+        panel.close()
+    finally:
+        storage.close()
+
+
+def test_day_picker_popup_fits_items_and_stays_inside_host(qapp) -> None:
+    from diskwatch.ui.picker import DayPicker
+
+    host = QWidget()
+    host.resize(360, 180)
+    picker = DayPicker(host)
+    picker.setGeometry(250, 138, 100, 34)
+    for label in ("跟随系统", "浅色", "深色"):
+        picker.addItem(label, label)
+    host.show()
+    qapp.processEvents()
+
+    picker._open_popup()
+    qapp.processEvents()
+    popup = picker._popup
+    assert popup is not None and popup.isVisible()
+    row_h = max(24, popup.sizeHintForRow(0))
+    expected_height = row_h * 3 + popup.frameWidth() * 2 + 2
+    assert popup.height() <= expected_height
+    assert popup.visualItemRect(popup.item(2)).bottom() >= popup.viewport().height() - 3
+    assert popup.geometry().left() >= 8
+    assert popup.geometry().right() <= host.width() - 8
+    assert popup.geometry().top() >= 8
+    assert popup.geometry().bottom() <= host.height() - 8
+    host.close()
+
+
+def test_activity_filter_actions_use_separate_rows(qapp, tmp_path) -> None:
+    storage = Storage(tmp_path / "responsive-filters.db")
+    try:
+        panel = ActivityPanel(storage)
+        panel.resize(724, 560)
+        panel.show()
+        _settle(qapp, panel)
+        assert panel.search.geometry().top() > panel.range_picker.geometry().top()
+        assert panel.group_picker.geometry().right() <= panel.width() - 20
+        assert panel.btn_export.geometry().right() <= panel.width() - 20
         panel.close()
     finally:
         storage.close()

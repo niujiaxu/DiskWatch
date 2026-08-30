@@ -109,8 +109,8 @@ class ActivityPanel(QWidget):
         title_row.addWidget(self.summary)
         root.addLayout(title_row)
 
-        filters = QHBoxLayout()
-        filters.setSpacing(8)
+        selectors = QHBoxLayout()
+        selectors.setSpacing(8)
         self.range_picker = DayPicker()
         for label, value in (
             (tr("今天"), "today"),
@@ -141,22 +141,26 @@ class ActivityPanel(QWidget):
             self.event_picker,
             self.group_picker,
         ):
-            picker.setMinimumWidth(126)
+            picker.setMinimumWidth(104)
             picker.currentIndexChanged.connect(self._filters_changed)
-            filters.addWidget(picker)
+            selectors.addWidget(picker, 1)
+        root.addLayout(selectors)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
         self.search = QLineEdit()
         self.search.setPlaceholderText(tr("搜索文件名或路径"))
         self.search.textChanged.connect(
             lambda _text: self._search_timer.start(SEARCH_DEBOUNCE_MS)
         )
-        filters.addWidget(self.search, 1)
+        actions.addWidget(self.search, 1)
         self.btn_refresh = QPushButton(tr("刷新"))
         self.btn_refresh.clicked.connect(self.reload)
-        filters.addWidget(self.btn_refresh)
+        actions.addWidget(self.btn_refresh)
         self.btn_export = QPushButton(tr("导出 CSV"))
         self.btn_export.clicked.connect(self._export_csv)
-        filters.addWidget(self.btn_export)
-        root.addLayout(filters)
+        actions.addWidget(self.btn_export)
+        root.addLayout(actions)
 
         splitter = QSplitter(Qt.Horizontal)
         self.table = QTableWidget(0, 6)

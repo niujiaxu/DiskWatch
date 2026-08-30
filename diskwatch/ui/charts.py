@@ -16,9 +16,6 @@ from ..storage import human_size
 from .style import ACCENT, ACCENT_2, OK, TEXT, TEXT_DIM, WARN, theme_tokens
 
 TREND_DAYS = 14
-BAR_GAP = 8
-BAR_W = 18
-BAR_MAX_H = 40
 CHART_H = 78
 _PLOT_TOP = 22
 _LABEL_H = 14
@@ -53,6 +50,21 @@ def _signed_size(n: int) -> str:
     if n == 0:
         return "0 B"
     return ("+" if n > 0 else "−") + human_size(abs(n))
+
+
+def _non_overlapping_labels(
+    labels: list[tuple[str, QRectF]],
+) -> list[tuple[str, QRectF]]:
+    """按屏幕顺序保留互不碰撞的标签，完整数值仍可通过悬浮查看。"""
+    visible: list[tuple[str, QRectF]] = []
+    occupied: list[QRectF] = []
+    for text, rect in labels:
+        padded = rect.adjusted(-2, -1, 2, 1)
+        if any(padded.intersects(other) for other in occupied):
+            continue
+        visible.append((text, rect))
+        occupied.append(padded)
+    return visible
 
 
 class TrendChart(QWidget):
@@ -172,12 +184,17 @@ class TrendChart(QWidget):
         bar_area_h = self.height() - _PLOT_TOP - _LABEL_H - 6
         if n == 0:
             return 0, 0, 0, bar_area_h
-        gap: float = BAR_GAP
-        bw: float = BAR_W
+        usable = max(1.0, w - 16.0)
+        bw: float = min(24.0, max(8.0, usable / max(1.0, n * 1.8)))
+        gap: float = (
+            0.0
+            if n == 1
+            else min(52.0, max(6.0, (usable - n * bw) / (n - 1)))
+        )
         total: float = n * bw + (n - 1) * gap
-        if total > w - 8:
+        if total > usable:
             gap = 2.0
-            bw = max(2.0, (w - 8 - (n - 1) * gap) / n)
+            bw = max(2.0, (usable - (n - 1) * gap) / n)
             total = n * bw + (n - 1) * gap
         x0 = max(0.0, (w - total) / 2)
         return int(bw), int(gap), int(x0), bar_area_h
@@ -349,7 +366,7 @@ class TrendChart(QWidget):
                 painter.drawText(rect, Qt.AlignCenter, day[5:])  # ISO 日期取 MM-DD
 
         # 最后统一绘制柱顶标签（置顶，不被任何柱身遮挡）
-        for text, lrect in labels:
+        for text, lrect in _non_overlapping_labels(labels):
             painter.setOpacity(1.0)
             painter.setFont(label_font)
             painter.setPen(QColor(TEXT_DIM))
@@ -368,12 +385,6 @@ _LINE_COLORS = (
 
 _PLOT_LEFT = 4
 _LABEL_H = 14
-
-
-def _elide_end(text: str, limit: int) -> str:
-    """尾部省略：保留开头（路径场景看主要目录）。"""
-    text = text or ""
-    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def _day_short(day: str) -> str:
@@ -643,8 +654,16 @@ class SpaceTrendChart(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
         area_bottom = h - _LABEL_H - 4
-        area_top = 8
         n = len(self._days)
+
+        drives = sorted(self._series)
+        legend_cell_w = 54
+        legend_columns = max(1, (w - 12) // legend_cell_w)
+        legend_rows = max(1, math.ceil(len(drives) / legend_columns))
+        max_legend_rows = max(1, min(3, (area_bottom - 18) // 12))
+        shown_legend_rows = min(legend_rows, max_legend_rows)
+        legend_capacity = legend_columns * shown_legend_rows
+        area_top = min(area_bottom - 10, 6 + shown_legend_rows * 12)
 
         all_free = [f for m in self._series.values() for f in m.values()]
         lo, hi = min(all_free), max(all_free)
@@ -657,7 +676,6 @@ class SpaceTrendChart(QWidget):
         # 折线（每盘一色）
         font = painter.font()
         font.setPointSizeF(max(7.0, font.pointSizeF() - 1.5))
-        drives = sorted(self._series)
         for k, drive in enumerate(drives):
             color = _LINE_COLORS[k % len(_LINE_COLORS)]
             pen = QPen(color, 1.5)
@@ -678,19 +696,24 @@ class SpaceTrendChart(QWidget):
             painter.setPen(QPen(guide, 1.0))
             painter.drawLine(hx, area_top, hx, area_bottom)
 
-        # 左上角图例（与色板等长；盘数超过色板数时颜色循环但图例不截断）
-        ly = 4
-        for k, drive in enumerate(drives):
+        # 图例横向排布并限制为三行，避免压住折线区域。
+        legend_drives = drives[:legend_capacity]
+        for k, drive in enumerate(legend_drives):
+            column = k % legend_columns
+            row = k // legend_columns
+            lx = 6 + column * legend_cell_w
+            ly = 4 + row * 12
             color = _LINE_COLORS[k % len(_LINE_COLORS)]
             painter.setPen(Qt.NoPen)
             painter.setBrush(color)
-            painter.drawRoundedRect(QRectF(6, ly + 2, 7, 7), 2, 2)
+            painter.drawRoundedRect(QRectF(lx, ly + 2, 7, 7), 2, 2)
             painter.setFont(font)
             painter.setPen(QColor(TEXT_DIM))
             painter.drawText(
-                QRectF(17, ly, 80, 11), Qt.AlignLeft | Qt.AlignVCenter, drive
+                QRectF(lx + 11, ly, legend_cell_w - 12, 11),
+                Qt.AlignLeft | Qt.AlignVCenter,
+                drive,
             )
-            ly += 12
 
         # 首尾日期轴
         if n > 1:
@@ -784,10 +807,10 @@ class TopBarsChart(QWidget):
         max_val = max((self._value(it) for it in self._items), default=1) or 1
         font = painter.font()
         font.setPointSizeF(max(7.0, font.pointSizeF() - 1.5))
-        label_w = min(int(w * 0.34), 220)
-        val_w = 96
+        val_w = min(96, max(56, w // 4))
+        label_w = min(int(w * 0.34), 220, max(40, w - val_w - 44))
         bar_x = 6 + label_w + 10
-        bar_w_max = w - 12 - label_w - 10 - val_w - 8
+        bar_w_max = max(0, w - 12 - label_w - 10 - val_w - 8)
 
         for i, item in enumerate(self._items):
             label, _count, _size = item
@@ -804,23 +827,27 @@ class TopBarsChart(QWidget):
             # label
             painter.setFont(font)
             painter.setPen(QColor(TEXT_DIM))
+            label_text = painter.fontMetrics().elidedText(
+                label, Qt.ElideMiddle, max(1, label_w)
+            )
             painter.drawText(
                 QRectF(6, y + 2, label_w, rect.height() - 4),
                 Qt.AlignLeft | Qt.AlignVCenter,
-                _elide_end(label, 24),
+                label_text,
             )
             # 条形
             val = self._value(item)
             bh = rect.height() - 8
-            bw = max(2.0, bar_w_max * val / max_val)
+            bw = max(2.0, bar_w_max * val / max_val) if bar_w_max > 0 else 0
             grad = QLinearGradient(bar_x, 0, bar_x + bw, 0)
             grad.setColorAt(0.0, ACCENT)
             grad.setColorAt(1.0, ACCENT_2)
             painter.setPen(Qt.NoPen)
             painter.setBrush(grad)
-            painter.drawRoundedRect(
-                QRectF(bar_x, y + 4, bw, bh), 3, 3
-            )
+            if bw > 0:
+                painter.drawRoundedRect(
+                    QRectF(bar_x, y + 4, bw, bh), 3, 3
+                )
             # 数值
             text = (
                 human_size(val)

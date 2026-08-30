@@ -5,7 +5,10 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from PySide6.QtCore import QRectF
+
 from diskwatch.storage import DaySummary, SpaceDaySummary, Storage, make_record
+from diskwatch.ui.charts import _non_overlapping_labels
 from diskwatch.ui.dashboard import (
     CumulativeChart,
     DashboardPanel,
@@ -159,6 +162,28 @@ def test_trend_chart_signed_space_days(qapp) -> None:
     assert c._signed
     assert c._data == [("2026-01-01", 10, 1), ("2026-01-02", -20, 2)]
     assert "−" in c._tip_text(1)
+    c.grab()
+
+
+def test_trend_chart_spreads_sparse_bars_and_removes_label_collisions(qapp) -> None:
+    c = TrendChart()
+    c.resize(620, 78)
+    c.set_days(
+        [DaySummary(f"2026-01-{day:02d}", day, day * 1_000_000) for day in range(1, 6)]
+    )
+    _bw, gap, _x0, _height = c._geometry()
+    assert gap >= 40
+
+    labels = [
+        ("+1.0 GB", QRectF(0, 0, 54, 10)),
+        ("+2.0 GB", QRectF(40, 0, 54, 10)),
+        ("+3.0 GB", QRectF(100, 0, 54, 10)),
+    ]
+    visible = _non_overlapping_labels(labels)
+    assert [text for text, _rect in visible] == ["+1.0 GB", "+3.0 GB"]
+    assert not visible[0][1].adjusted(-2, -1, 2, 1).intersects(
+        visible[1][1].adjusted(-2, -1, 2, 1)
+    )
     c.grab()
 
 
