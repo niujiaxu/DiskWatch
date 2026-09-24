@@ -84,6 +84,62 @@ def test_main_window_unifies_overview_and_activity(qapp) -> None:
         window.close()
 
 
+def test_theme_apply_skips_frameless_floating_windows(qapp, monkeypatch) -> None:
+    """主题重应用时不得给无边框悬浮窗设置 DWM 圆角/阴影（否则四角出现圆弧）。"""
+    from diskwatch.ui import style
+
+    touched: list[QWidget] = []
+    monkeypatch.setattr(
+        style, "enable_titlebar", lambda w, dark=None: touched.append(w)
+    )
+
+    controller = install_theme(qapp, "light")
+    framed = _ThemeProbe()
+    framed.show()
+    frameless = _ThemeProbe()
+    frameless.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
+    frameless.show()
+    try:
+        touched.clear()
+        controller.set_mode("dark")
+        qapp.processEvents()
+        assert framed in touched
+        assert frameless not in touched
+    finally:
+        framed.close()
+        frameless.close()
+
+
+def test_floating_windows_disable_system_shadow(qapp, monkeypatch, tmp_path) -> None:
+    """悬浮卡片/迷你球必须带 NoDropShadowWindowHint，避免矩形轮廓的系统阴影。"""
+    import diskwatch.config as cfg
+    from diskwatch.storage import Storage
+    from diskwatch.ui.ball import MiniBall
+    from diskwatch.ui.widget import FloatingWidget
+    from diskwatch.watcher import FileMonitor
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(cfg.paths, "config", home / "config.json")
+    monkeypatch.setattr(cfg.paths, "db", home / "diskwatch.db")
+    monkeypatch.setattr(cfg, "default_home", lambda: home)
+    monkeypatch.setattr(cfg, "location_file", lambda: home / "location.json")
+
+    config = cfg.Config()
+    storage = Storage(home / "t.db")
+    try:
+        monitor = FileMonitor(config, storage)
+        for surface in (
+            FloatingWidget(storage, monitor, config),
+            MiniBall(storage, monitor, config),
+        ):
+            flags = surface.windowFlags()
+            assert flags & Qt.FramelessWindowHint
+            assert flags & Qt.NoDropShadowWindowHint
+    finally:
+        storage.close()
+
+
 def test_settings_navigation_has_modern_selection_without_focus_outline() -> None:
     qss = panel_qss(LIGHT_TOKENS)
     assert "QListWidget#settingsNav" in qss

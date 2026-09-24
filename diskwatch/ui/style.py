@@ -350,7 +350,10 @@ class ThemeController(QObject):
             hook = getattr(widget, "apply_theme", None)
             if callable(hook):
                 hook()
-            if widget.isWindow():
+            # 悬浮卡片/迷你球是无边框自绘窗口，没有原生标题栏；给它们设置
+            # DWM 圆角/阴影属性会让系统在矩形外轮廓上画出与胶囊弧度不吻合的
+            # 阴影（四角出现圆弧）。与 _ThemeWindowFilter 保持一致：只处理有框窗口。
+            if widget.isWindow() and not widget.windowFlags() & Qt.FramelessWindowHint:
                 enable_titlebar(widget, target.dark)
             widget.update()
         self.changed.emit(target.name)

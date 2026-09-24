@@ -82,8 +82,13 @@ class FloatingWidget(QWidget):
         self._config = config
         self._drag_offset: QPoint | None = None
 
+        # NoDropShadowWindowHint：抑制 DWM 给矩形窗口加的投影，
+        # 否则圆角外的透明区域会露出与卡片弧度不吻合的系统阴影。
         self.setWindowFlags(
-            Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint
+            Qt.FramelessWindowHint
+            | Qt.Tool
+            | Qt.WindowStaysOnTopHint
+            | Qt.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedWidth(272)

@@ -50,7 +50,14 @@ class MiniBall(QWidget):
         self._drag_offset: QPoint | None = None
         self._moved = False
 
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
+        # NoDropShadowWindowHint：抑制 DWM 给矩形窗口加的投影，
+        # 否则胶囊四角透明处会露出与弧度不吻合的系统阴影。
+        self.setWindowFlags(
+            Qt.FramelessWindowHint
+            | Qt.Tool
+            | Qt.WindowStaysOnTopHint
+            | Qt.NoDropShadowWindowHint
+        )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_Hover)
         self.setFixedSize(self.WIDTH, self.HEIGHT)
