@@ -206,6 +206,71 @@ def test_trend_chart_spreads_sparse_bars_and_removes_label_collisions(qapp) -> N
     c.grab()
 
 
+def test_non_overlapping_labels_keep_fitting_neighbours() -> None:
+    """排得下的相邻标签都要显示：柱顶数字不应无故整根缺一个。
+
+    回归：标签矩形以前固定 bw+48（约 72px），而实际文字只有约 40px，
+    间距 76px 的相邻柱也被判成碰撞丢弃。
+    """
+    labels = [(f"+{i}M", QRectF(20.0 + i * 76.0, 0.0, 46.0, 8.0)) for i in range(6)]
+    visible = _non_overlapping_labels(labels)
+    assert len(visible) == 6
+
+
+def test_bar_label_rect_width_follows_text(qapp) -> None:
+    """标签矩形宽度按文字宽度算，相邻柱距足够时两个矩形不相交。"""
+    from PySide6.QtGui import QFontMetricsF
+
+    font = qapp.font()
+    font.setPointSizeF(max(6.5, font.pointSizeF() - 2.5))  # 与图表标签同字号
+    metrics = QFontMetricsF(font)
+    rect = TrendChart._bar_label_rect(10.0, 24.0, "+26.81M", 5.0, metrics)
+    assert rect.width() >= metrics.horizontalAdvance("+26.81M") + 6.0 - 0.01
+    right = TrendChart._bar_label_rect(86.0, 24.0, "+26.81M", 5.0, metrics)
+    assert not rect.adjusted(-2, -1, 2, 1).intersects(right.adjusted(-2, -1, 2, 1))
+
+
+def test_bar_label_rect_is_tall_enough_for_text(qapp) -> None:
+    """标签矩形高度要够放下整行文字。
+
+    回归：以前写死 8px，比字体行高矮，drawText 按矩形裁剪，柱顶数字的
+    下半截正好在柱子顶边处被切掉（"+18.05G" 只剩上半截）。
+    """
+    from PySide6.QtGui import QFontMetricsF
+
+    font = qapp.font()
+    font.setPointSizeF(max(6.5, font.pointSizeF() - 2.5))  # 与图表标签同字号
+    metrics = QFontMetricsF(font)
+    rect = TrendChart._bar_label_rect(10.0, 24.0, "+18.05G", 5.0, metrics)
+    assert rect.height() >= metrics.height()
+    assert rect.height() > 8.0
+
+
+def test_trend_chart_keeps_all_labels_for_sparse_bars(qapp) -> None:
+    """常见卡片宽度下 6 根柱子的柱距足够，6 个柱顶数字都要保留。"""
+    from PySide6.QtGui import QFontMetricsF
+
+    c = TrendChart()
+    c.resize(560, 78)
+    c.set_days(
+        [DaySummary(f"2026-01-{d:02d}", d, d * 1_000_000) for d in range(1, 7)]
+    )
+    bw, gap, x0, _height = c._geometry()
+    font = qapp.font()
+    font.setPointSizeF(max(6.5, font.pointSizeF() - 2.5))  # 与图表标签同字号
+    metrics = QFontMetricsF(font)
+    rects = [
+        (
+            f"+{d}M",
+            TrendChart._bar_label_rect(
+                x0 + i * (bw + gap), bw, f"+{d}M", 0.0, metrics
+            ),
+        )
+        for i, d in enumerate(range(1, 7))
+    ]
+    assert len(_non_overlapping_labels(rects)) == 6
+
+
 def test_cumulative_chart(qapp) -> None:
     c = CumulativeChart()
     c.resize(320, 120)

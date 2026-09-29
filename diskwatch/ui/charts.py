@@ -8,7 +8,14 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import QPoint, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
+from PySide6.QtGui import (
+    QColor,
+    QFontMetricsF,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QPushButton,
@@ -210,6 +217,25 @@ class TrendChart(QWidget):
         x0 = max(0.0, (w - total) / 2)
         return int(bw), int(gap), int(x0), bar_area_h
 
+    @staticmethod
+    def _bar_label_rect(
+        bar_x: float,
+        bar_w: float,
+        text: str,
+        label_y: float,
+        metrics: QFontMetricsF,
+    ) -> QRectF:
+        """柱顶数值标签的矩形：宽度按文字实际宽度（不小于柱宽），高度按行高。
+
+        宽度同时用于碰撞检测：以前固定 bw+48，明明排得下的相邻标签也会
+        被判为碰撞而整根柱子没有数字。高度以前写死 8px，比文字行高矮，
+        drawText 按矩形裁剪，数字下半截会被切掉。
+        """
+        text_w = max(float(bar_w), float(metrics.horizontalAdvance(text)) + 6.0)
+        return QRectF(
+            bar_x + bar_w / 2 - text_w / 2, label_y, text_w, float(metrics.height())
+        )
+
     def _index_at(self, x: int) -> int:
         bw, gap, x0, _ = self._geometry()
         if bw <= 0:
@@ -299,6 +325,8 @@ class TrendChart(QWidget):
         axis_font.setPointSizeF(max(7.0, axis_font.pointSizeF() - 1.5))
         label_font = painter.font()
         label_font.setPointSizeF(max(6.5, label_font.pointSizeF() - 2.5))
+        label_metrics = QFontMetricsF(label_font)
+        label_h = float(label_metrics.height())
         axis_pen = QPen(QColor(TEXT_DIM))
         n_bars = len(self._data)
         # 柱顶标签延迟到所有柱画完再统一绘制：先画的矮柱标签会被
@@ -358,10 +386,17 @@ class TrendChart(QWidget):
                     if self._metric == "size"
                     else _compact_count(count)
                 )
-                label_y = y - 9 if val >= 0 else min(
-                    _PLOT_TOP + bar_area_h - 8, y + bh + 1
-                )
-                lrect = QRectF(x - 24, label_y, bw + 48, 8)
+                # 标签整体放在柱顶上方（负值放柱底下方），
+                # 高度用字体行高，避免 drawText 按矩形裁掉数字下半截
+                if val >= 0:
+                    label_y = y - label_h - 2.0
+                else:
+                    label_y = min(
+                        _PLOT_TOP + bar_area_h - label_h, y + bh + 1.0
+                    )
+                # 碰撞检测按文字实际宽度（+6px 余量）：以前用固定的 bw+48，
+                # 明明排得下的相邻标签也会被判碰撞而整根柱子没有数字
+                lrect = self._bar_label_rect(x, bw, text, label_y, label_metrics)
                 if self._btn is None or not self._btn.geometry().intersects(lrect.toRect()):
                     labels.append((text, lrect))
 
@@ -387,7 +422,7 @@ class TrendChart(QWidget):
             left = _label_left(lrect.center().x(), label_w, self.width())
             painter.drawText(
                 QRectF(left, lrect.y(), label_w, lrect.height()),
-                Qt.AlignHCenter,
+                Qt.AlignHCenter | Qt.AlignVCenter,
                 text,
             )
         painter.end()
