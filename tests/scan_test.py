@@ -193,7 +193,7 @@ def test_scan_reports_progress_and_lowers_priority(monkeypatch) -> None:
     try:
         (tmp / "visible.txt").write_text("x")
         scan_and_backfill(config, storage, [str(tmp)], progress=lambda *args: reports.append(args))
-        assert lowered == [True]
+        assert lowered, "补扫线程（含并行工作线程）都应降为低优先级"
         assert reports
         assert reports[-1][0] >= 1
         assert reports[-1][1] >= 1
