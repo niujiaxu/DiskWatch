@@ -179,6 +179,36 @@ def test_main_window_native_resize_is_safe_to_call(qapp) -> None:
         window.close()
 
 
+def test_checked_checkbox_is_filled_with_accent(qapp) -> None:
+    """选中态要画出填充色方块 + 对勾。
+
+    回归：以前只把边框改成主题色、对勾用白色画在空心框上，浅色主题下
+    完全看不见，看起来就是“选中只变了下颜色”。
+    """
+    from PySide6.QtWidgets import QCheckBox
+
+    install_theme(qapp, "light")
+    box = QCheckBox("开机自动启动")
+    box.setChecked(True)
+    box.resize(220, 24)
+    qapp.processEvents()
+    image = box.grab().toImage()
+    accent = LIGHT_TOKENS.color("accent")
+    filled = 0
+    for y in range(image.height()):
+        for x in range(min(22, image.width())):  # 只看指示器区域
+            c = image.pixelColor(x, y)
+            if (
+                abs(c.red() - accent.red()) < 40
+                and abs(c.green() - accent.green()) < 40
+                and abs(c.blue() - accent.blue()) < 40
+            ):
+                filled += 1
+    assert filled > 120, (
+        f"选中框应被主题色填充（只画边框约 84 个像素），实际同色像素 {filled} 个"
+    )
+
+
 def test_edge_cursor_filter_handles_resize_hits(qapp) -> None:
     """边缘缩放光标过滤器：Qt 处理之前拦截 WM_SETCURSOR 上的缩放命中码。"""
     import ctypes

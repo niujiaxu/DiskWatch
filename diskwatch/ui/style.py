@@ -281,13 +281,12 @@ class _CheckStyle(QProxyStyle):
         box = QRectF(r.x() + 0.5, r.y() + 0.5, r.width() - 1, r.height() - 1)
         hovered = bool(option.state & QStyle.State_MouseOver)
         checked = bool(option.state & QStyle.State_On)
-        border = t.color("accent") if checked else t.color("border_strong")
-        if hovered and not checked:
-            border = t.color("text_dim")
-        painter.setPen(QPen(border, 1.4))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawRoundedRect(box, 4, 4)
         if checked:
+            # 选中：填充主题色再画白勾。空心框上的白勾在浅色底上完全看不见，
+            # 那样看起来就只是“变了下颜色/边框”。
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(t.color("accent"))
+            painter.drawRoundedRect(box, 4, 4)
             pen = QPen(QColor("#ffffff"), 1.8)
             pen.setCapStyle(Qt.RoundCap)
             pen.setJoinStyle(Qt.RoundJoin)
@@ -298,6 +297,11 @@ class _CheckStyle(QProxyStyle):
             path.lineTo(x + w * 0.44, y + h * 0.72)
             path.lineTo(x + w * 0.78, y + h * 0.32)
             painter.drawPath(path)
+        else:
+            border = t.color("text_dim") if hovered else t.color("border_strong")
+            painter.setPen(QPen(border, 1.4))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(box, 4, 4)
         painter.restore()
 
     def pixelMetric(self, metric, option=None, widget=None) -> int:
