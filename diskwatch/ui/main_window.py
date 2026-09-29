@@ -31,8 +31,15 @@ from .style import (
 )
 
 # ---- 无边框窗口的边缘缩放（Windows）----
+_WM_NCCALCSIZE = 0x0083
 _WM_NCHITTEST = 0x0084
 _WM_SETCURSOR = 0x0020
+_GWL_STYLE = -16
+_WS_THICKFRAME = 0x00040000
+_SWP_NOMOVE = 0x0002
+_SWP_NOSIZE = 0x0001
+_SWP_NOZORDER = 0x0004
+_SWP_FRAMECHANGED = 0x0020
 _RESIZE_EDGE = 7  # 命中带宽度（逻辑像素）
 # HT* 命中码 -> IDC_* 光标资源号
 _HIT_CURSOR = {
@@ -292,8 +299,39 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
-        if event.type() == QEvent.WindowStateChange and hasattr(self, "title_bar"):
+        if event.type() == QEvent.WinIdChange:
+            self._enable_native_resize()
+        elif event.type() == QEvent.WindowStateChange and hasattr(self, "title_bar"):
             self.title_bar.refresh_state()
+
+    def _enable_native_resize(self) -> None:
+        """给无边框窗口补上 WS_THICKFRAME，Windows 才会真正进入缩放循环。
+
+        WM_NCHITTEST 返回 HT* 只让系统知道“这里是缩放区”（光标也随之改变），
+        但按下拖拽时 DefWindowProc 需要窗口带可调整边框样式才会启动缩放。
+        样式加上后客户区会被系统内缩，因此 nativeEvent 里用 WM_NCCALCSIZE
+        把客户区仍保持为整个窗口，视觉上与之前完全一致。
+        """
+        if sys.platform != "win32":
+            return
+        try:
+            hwnd = int(self.winId())
+        except (TypeError, ValueError):
+            return
+        if not hwnd:
+            return
+        try:
+            user32 = ctypes.windll.user32
+            style = user32.GetWindowLongW(hwnd, _GWL_STYLE)
+            if style & _WS_THICKFRAME:
+                return
+            user32.SetWindowLongW(hwnd, _GWL_STYLE, style | _WS_THICKFRAME)
+            user32.SetWindowPos(
+                hwnd, 0, 0, 0, 0, 0,
+                _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER | _SWP_FRAMECHANGED,
+            )
+        except (AttributeError, OSError):
+            pass
 
     def _resize_hit(self, pos: QPoint | None = None) -> int | None:
         """鼠标是否落在窗口边缘/角上；是则返回 HT* 命中码，否则 None。
@@ -328,16 +366,20 @@ class MainWindow(QMainWindow):
         return None
 
     def nativeEvent(self, event_type, message):
-        """无边框窗口：恢复四边/四角的原生缩放命中区，并显示缩放光标。
+        """无边框窗口：恢复四边/四角的原生缩放命中区、缩放光标和客户区。
 
-        光靠 WM_NCHITTEST 返回 HT* 只让系统知道该缩放，但 Qt 处理
-        WM_SETCURSOR 时会按控件光标把它改回箭头，所以边缘看起来"不能拖"。
-        这里一并接管 WM_SETCURSOR，按命中码显式设置缩放光标。
+        - WM_NCCALCSIZE：客户区保持为整个窗口（WS_THICKFRAME 不产生原生边框）
+        - WM_NCHITTEST：边缘/四角返回 HT* 命中码
+        - WM_SETCURSOR：Qt 会把光标改回箭头，这里按命中码显式设置缩放光标
         """
         if sys.platform == "win32":
             try:
                 msg = wintypes.MSG.from_address(int(message))
-                if msg.message == _WM_NCHITTEST:
+                if msg.message == _WM_NCCALCSIZE:
+                    if msg.wParam:
+                        # 返回 0：客户区 = 窗口矩形（去掉原生边框，外观不变）
+                        return True, 0
+                elif msg.message == _WM_NCHITTEST:
                     hit = self._resize_hit()
                     if hit is not None:
                         return True, hit
@@ -394,6 +436,7 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         apply_window_icon(self)
         enable_titlebar(self)
+        self._enable_native_resize()
 
     def apply_theme(self) -> None:
         t = theme_tokens()

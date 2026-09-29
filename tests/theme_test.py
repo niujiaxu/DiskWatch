@@ -163,6 +163,22 @@ def test_main_window_resize_hit_codes() -> None:
         window.close()
 
 
+def test_main_window_native_resize_is_safe_to_call(qapp) -> None:
+    """_enable_native_resize 必须幂等且不抛异常（真实样式在 Windows 生效）。"""
+    from PySide6.QtWidgets import QWidget
+
+    from diskwatch.ui.main_window import MainWindow
+
+    window = MainWindow(QWidget(), QWidget())
+    window.show()
+    try:
+        qapp.processEvents()
+        window._enable_native_resize()  # showEvent 里已调过一次，重复调用应无害
+        window._enable_native_resize()
+    finally:
+        window.close()
+
+
 def test_settings_navigation_has_modern_selection_without_focus_outline() -> None:
     qss = panel_qss(LIGHT_TOKENS)
     assert "QListWidget#settingsNav" in qss
