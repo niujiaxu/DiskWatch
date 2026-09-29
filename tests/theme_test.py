@@ -140,6 +140,29 @@ def test_floating_windows_disable_system_shadow(qapp, monkeypatch, tmp_path) -> 
         storage.close()
 
 
+def test_main_window_resize_hit_codes() -> None:
+    """无边框窗口的边缘/四角要映射到正确的 Windows 缩放命中码。"""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QWidget
+
+    from diskwatch.ui.main_window import MainWindow
+
+    window = MainWindow(QWidget(), QWidget())
+    window.resize(800, 600)
+    try:
+        assert window._resize_hit(QPoint(1, 300)) == 10    # HTLEFT
+        assert window._resize_hit(QPoint(799, 300)) == 11  # HTRIGHT
+        assert window._resize_hit(QPoint(400, 1)) == 12    # HTTOP
+        assert window._resize_hit(QPoint(400, 599)) == 15  # HTBOTTOM
+        assert window._resize_hit(QPoint(1, 1)) == 13      # HTTOPLEFT
+        assert window._resize_hit(QPoint(799, 1)) == 14    # HTTOPRIGHT
+        assert window._resize_hit(QPoint(1, 599)) == 16    # HTBOTTOMLEFT
+        assert window._resize_hit(QPoint(799, 599)) == 17  # HTBOTTOMRIGHT
+        assert window._resize_hit(QPoint(400, 300)) is None
+    finally:
+        window.close()
+
+
 def test_settings_navigation_has_modern_selection_without_focus_outline() -> None:
     qss = panel_qss(LIGHT_TOKENS)
     assert "QListWidget#settingsNav" in qss

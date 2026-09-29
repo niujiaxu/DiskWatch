@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import sys
 from ctypes import wintypes
 
@@ -28,6 +29,22 @@ from .style import (
     panel_qss,
     theme_tokens,
 )
+
+# ---- 无边框窗口的边缘缩放（Windows）----
+_WM_NCHITTEST = 0x0084
+_WM_SETCURSOR = 0x0020
+_RESIZE_EDGE = 7  # 命中带宽度（逻辑像素）
+# HT* 命中码 -> IDC_* 光标资源号
+_HIT_CURSOR = {
+    10: 32644,  # HTLEFT        -> IDC_SIZEWE
+    11: 32644,  # HTRIGHT       -> IDC_SIZEWE
+    12: 32645,  # HTTOP         -> IDC_SIZENS
+    15: 32645,  # HTBOTTOM      -> IDC_SIZENS
+    13: 32642,  # HTTOPLEFT     -> IDC_SIZENWSE
+    17: 32642,  # HTBOTTOMRIGHT -> IDC_SIZENWSE
+    14: 32643,  # HTTOPRIGHT    -> IDC_SIZENESW
+    16: 32643,  # HTBOTTOMLEFT  -> IDC_SIZENESW
+}
 
 
 class _WindowControlButton(QPushButton):
@@ -278,35 +295,60 @@ class MainWindow(QMainWindow):
         if event.type() == QEvent.WindowStateChange and hasattr(self, "title_bar"):
             self.title_bar.refresh_state()
 
+    def _resize_hit(self, pos: QPoint | None = None) -> int | None:
+        """鼠标是否落在窗口边缘/角上；是则返回 HT* 命中码，否则 None。
+
+        pos 为窗口内坐标，默认取当前光标位置（供测试传入固定点）。
+        """
+        if self.isMaximized():
+            return None
+        if pos is None:
+            pos = self.mapFromGlobal(QCursor.pos())
+        e = _RESIZE_EDGE
+        left = pos.x() < e
+        right = pos.x() >= self.width() - e
+        top = pos.y() < e
+        bottom = pos.y() >= self.height() - e
+        if left and top:
+            return 13  # HTTOPLEFT
+        if right and top:
+            return 14  # HTTOPRIGHT
+        if left and bottom:
+            return 16  # HTBOTTOMLEFT
+        if right and bottom:
+            return 17  # HTBOTTOMRIGHT
+        if left:
+            return 10  # HTLEFT
+        if right:
+            return 11  # HTRIGHT
+        if top:
+            return 12  # HTTOP
+        if bottom:
+            return 15  # HTBOTTOM
+        return None
+
     def nativeEvent(self, event_type, message):
-        """为无边框窗口恢复 Windows 四边和四角的原生缩放命中区。"""
-        if sys.platform == "win32" and not self.isMaximized():
+        """无边框窗口：恢复四边/四角的原生缩放命中区，并显示缩放光标。
+
+        光靠 WM_NCHITTEST 返回 HT* 只让系统知道该缩放，但 Qt 处理
+        WM_SETCURSOR 时会按控件光标把它改回箭头，所以边缘看起来"不能拖"。
+        这里一并接管 WM_SETCURSOR，按命中码显式设置缩放光标。
+        """
+        if sys.platform == "win32":
             try:
                 msg = wintypes.MSG.from_address(int(message))
-                if msg.message == 0x0084:  # WM_NCHITTEST
-                    pos = self.mapFromGlobal(QCursor.pos())
-                    edge = 7
-                    left = pos.x() < edge
-                    right = pos.x() >= self.width() - edge
-                    top = pos.y() < edge
-                    bottom = pos.y() >= self.height() - edge
-                    hit = {
-                        (True, False, True, False): 13,   # HTTOPLEFT
-                        (False, True, True, False): 14,   # HTTOPRIGHT
-                        (True, False, False, True): 16,   # HTBOTTOMLEFT
-                        (False, True, False, True): 17,   # HTBOTTOMRIGHT
-                    }.get((left, right, top, bottom))
-                    if hit is None:
-                        if left:
-                            hit = 10  # HTLEFT
-                        elif right:
-                            hit = 11  # HTRIGHT
-                        elif top:
-                            hit = 12  # HTTOP
-                        elif bottom:
-                            hit = 15  # HTBOTTOM
+                if msg.message == _WM_NCHITTEST:
+                    hit = self._resize_hit()
                     if hit is not None:
                         return True, hit
+                elif msg.message == _WM_SETCURSOR:
+                    # 命中码在 lParam 低字（Windows 依据我们的 WM_NCHITTEST 得到）
+                    hit = msg.lParam & 0xFFFF
+                    cursor_id = _HIT_CURSOR.get(hit)
+                    if cursor_id is not None and not self.isMaximized():
+                        user32 = ctypes.windll.user32
+                        user32.SetCursor(user32.LoadCursorW(None, cursor_id))
+                        return True, 1
             except (AttributeError, TypeError, ValueError):
                 pass
         return super().nativeEvent(event_type, message)
