@@ -245,11 +245,6 @@ def enable_titlebar(widget: QWidget, dark: bool | None = None) -> None:
         pass
 
 
-def enable_dark_titlebar(widget: QWidget) -> None:
-    """旧调用入口；现在跟随当前主题。"""
-    enable_titlebar(widget)
-
-
 class _ThemeWindowFilter(QObject):
     def eventFilter(self, obj, event) -> bool:
         if event.type() in (QEvent.Show, QEvent.WinIdChange) and isinstance(obj, QWidget):
@@ -452,10 +447,3 @@ def app_icon(size: int = 64) -> QIcon:
 
 def apply_window_icon(widget: QWidget) -> None:
     widget.setWindowIcon(app_icon())
-
-
-def mono_font(size: int = 10) -> QFont:
-    font = QFont("Consolas")
-    font.setStyleHint(QFont.Monospace)
-    font.setPointSize(size)
-    return font
