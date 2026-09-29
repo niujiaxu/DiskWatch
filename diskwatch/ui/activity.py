@@ -145,7 +145,7 @@ class ActivityPanel(QWidget):
             self.event_picker,
             self.group_picker,
         ):
-            picker.setMinimumWidth(104)
+            picker.setMinimumWidth(84)
             picker.currentIndexChanged.connect(self._filters_changed)
             selectors.addWidget(picker, 1)
         root.addLayout(selectors)
@@ -204,8 +204,8 @@ class ActivityPanel(QWidget):
         self.splitter.addWidget(self.table)
 
         self.detail_card = QFrame(objectName="card")
-        self.detail_card.setMinimumWidth(248)
-        self.detail_card.setMaximumWidth(340)
+        self.detail_card.setMinimumWidth(220)
+        self.detail_card.setMaximumWidth(460)
         self.detail_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         detail_lay = QVBoxLayout(self.detail_card)
         detail_lay.setContentsMargins(16, 16, 16, 16)
@@ -783,14 +783,15 @@ class ActivityPanel(QWidget):
             self._fill_table()
 
     def _fit_splitter(self) -> None:
-        """让表格始终吃满详情卡之外的宽度。"""
+        """让表格吃满详情卡之外的宽度；详情卡宽度随窗口按比例放大。"""
         if not hasattr(self, "splitter"):
             return
         available = self.splitter.width() - self.splitter.handleWidth()
         if available <= 0:
             return
-        sizes = self.splitter.sizes()
-        detail_width = sizes[1] if len(sizes) > 1 and sizes[1] > 0 else 248
+        # 详情卡约占 26% 宽度，夹在 [最小, 最大] 之间：窗口越大卡越宽，
+        # 元素随界面尺寸一起放缩而不是钉死在固定宽度。
+        detail_width = int(available * 0.26)
         detail_width = max(
             self.detail_card.minimumWidth(),
             min(self.detail_card.maximumWidth(), detail_width),

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSpinBox,
     QStackedWidget,
@@ -72,7 +74,10 @@ class SettingsDialog(QDialog):
         apply_window_icon(self)
         self._original_theme_mode = str(config.get("theme_mode", "system"))
         self.apply_theme()
-        self.setMinimumSize(780, 650)
+        # 嵌入主窗口时不要顶高主窗口的最小尺寸，否则窗口缩小到一定尺寸就卡住；
+        # 内容超出时由 _build 里的滚动区兜底。独立弹窗仍给一个合理的最小尺寸。
+        if not embedded:
+            self.setMinimumSize(780, 650)
         self._build()
         self._load()
 
@@ -85,7 +90,9 @@ class SettingsDialog(QDialog):
     def _build(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 12)
-        body = QHBoxLayout()
+        host = QWidget()
+        body = QHBoxLayout(host)
+        body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(12)
         self.nav = QListWidget(objectName="settingsNav")
         self.nav.setFixedWidth(132)
@@ -104,7 +111,16 @@ class SettingsDialog(QDialog):
         self.nav.setCurrentRow(0)
         body.addWidget(self.nav)
         body.addWidget(self.pages, 1)
-        root.addLayout(body, 1)
+        if self._embedded:
+            # 嵌入时用滚动区包住，使页面最小尺寸不再传导给主窗口：
+            # 窗口可以自由缩小，放不下时这里出现滚动条。
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.NoFrame)
+            scroll.setWidget(host)
+            root.addWidget(scroll, 1)
+        else:
+            root.addWidget(host, 1)
 
         # objectName 必须在构造时给定：样式表已经应用过之后再改 objectName，
         # Qt 不会自动重新 polish，#primary 的配色就不会生效。

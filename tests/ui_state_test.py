@@ -111,6 +111,15 @@ def test_tray_switch_back_to_card(dw_app, qapp) -> None:
     assert dw_app.widget.isVisible() and not dw_app.ball.isVisible(), state(dw_app)
 
 
+def test_main_window_can_shrink_freely(dw_app, qapp) -> None:
+    """主窗口最小尺寸要够小：无边框窗口靠拖边缘缩放，别被页面顶死。"""
+    w = dw_app.main_window
+    assert w.minimumSizeHint().width() <= 820, w.minimumSizeHint().toTuple()
+    assert w.minimumSizeHint().height() <= 620, w.minimumSizeHint().toTuple()
+    # 嵌入的设置页用滚动区兜底，不再把自身大尺寸传导给主窗口
+    assert dw_app.settings.minimumSizeHint().width() < 400
+
+
 def test_compact_size() -> None:
     from diskwatch.ui.ball import _compact_size
 

@@ -288,3 +288,25 @@ def test_table_fill_loads_selected_history_once(qapp, tmp_path, monkeypatch) -> 
         panel.close()
     finally:
         storage.close()
+
+
+def test_activity_detail_card_scales_with_width(qapp, tmp_path) -> None:
+    """窗口变宽时右侧详情卡按比例变宽，而不是钉死在固定宽度。"""
+    storage = Storage(tmp_path / "scale.db")
+    try:
+        panel = ActivityPanel(storage)
+        panel.resize(900, 600)
+        panel.show()
+        _settle(qapp, panel)
+        _table_w, small = panel.splitter.sizes()
+
+        panel.resize(1700, 900)
+        qapp.processEvents()
+        _settle(qapp, panel)
+        _table_w, large = panel.splitter.sizes()
+
+        assert large > small
+        assert large <= panel.detail_card.maximumWidth()
+        panel.close()
+    finally:
+        storage.close()

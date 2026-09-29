@@ -146,7 +146,8 @@ class MainWindow(QMainWindow):
         self.setWindowFlag(Qt.FramelessWindowHint, True)
         self.setWindowTitle(tr("DiskWatch · 磁盘空间"))
         self.resize(1180, 780)
-        self.setMinimumSize(900, 620)
+        # 下限放低：各页面用滚动区/按比例布局兜底，窗口可以自由拖小。
+        self.setMinimumSize(760, 500)
         apply_window_icon(self)
 
         root = QWidget(objectName="mainRoot")

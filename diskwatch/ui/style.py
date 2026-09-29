@@ -121,6 +121,7 @@ def panel_qss(tokens: ThemeTokens | None = None) -> str:
     return f"""
 QWidget#panelRoot, QDialog, QMessageBox {{ background: {t.window}; color: {t.text}; }}
 QLabel {{ color: {t.text}; background: transparent; }}
+QScrollArea, QScrollArea > QWidget#qt_scrollarea_viewport {{ background: transparent; border: none; }}
 QLabel#h1 {{ font-size: 18px; font-weight: 600; }}
 QLabel#dim {{ color: {t.text_dim}; font-size: 12px; }}
 QLabel#statValue {{ font-size: 20px; font-weight: 600; }}
