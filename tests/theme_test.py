@@ -190,6 +190,9 @@ def test_edge_cursor_filter_handles_resize_hits(qapp) -> None:
 
     window = MainWindow(QWidget(), QWidget())
     window.resize(800, 600)
+    window.show()
+    qapp.processEvents()
+    window._sync_edge_filter()
     try:
         assert window._edge_filter is not None
         msg = wintypes.MSG()

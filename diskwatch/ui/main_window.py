@@ -12,6 +12,7 @@ from PySide6.QtCore import (
     QPoint,
     QRectF,
     Qt,
+    QTimer,
     Signal,
 )
 from PySide6.QtGui import QCursor, QMouseEvent, QPainter, QPaintEvent, QPen
@@ -63,17 +64,78 @@ _HIT_CURSOR = {
 
 
 class _EdgeCursorFilter(QAbstractNativeEventFilter):
-    """在 Qt 处理之前接管主窗口的 WM_SETCURSOR：边缘/四角强制缩放光标。
+    """在 Qt 之前接管主窗口的边缘缩放消息（WM_NCHITTEST / WM_SETCURSOR）。
 
-    无边框窗口的边缘区域下面往往压着子控件：鼠标移到概览图表（手型光标）
-    等位置时，Qt 会按控件光标把缩放光标覆盖回箭头，看起来就是“箭头时有时
-    无”。nativeEventFilter 比 Qt 的窗口过程更早拿到消息，在这里设置光标
-    就不会被覆盖。
+    两个坑都在这里规避：
+
+    - Qt 按“鼠标下控件”的光标处理 WM_SETCURSOR，会把手型/箭头覆盖到边缘，
+      导致缩放光标时有时无；
+    - Qt 记录的窗口几何可能与原生窗口不一致（原生缩放后），依赖
+      QCursor.pos()+mapFromGlobal 判断边缘会失效，表现为“有箭头但拖不动”。
+
+    因此位置全部按原生消息计算（lParam / GetCursorPos + GetWindowRect），
+    不依赖 Qt 的几何和光标状态。
     """
 
-    def __init__(self, window: "MainWindow") -> None:
+    def __init__(self, hwnd: int = 0) -> None:
         super().__init__()
-        self._window = window
+        self._hwnd = int(hwnd)
+
+    def set_hwnd(self, hwnd: int) -> None:
+        """由 Qt 侧（showEvent / 句柄变化）更新。
+
+        绝不能在 nativeEventFilter 里调 winId() 等 Qt API：原生消息回调中
+        重入 Qt 会导致进程崩溃（STATUS_FATAL_USER_CALLBACK_EXCEPTION）。
+        """
+        self._hwnd = int(hwnd)
+
+    @staticmethod
+    def _hit(hwnd: int, x: int, y: int) -> int | None:
+        """按屏幕坐标（物理像素）判断窗口边缘/四角，返回 HT* 命中码。"""
+        user32 = ctypes.windll.user32
+        if not hwnd or user32.IsZoomed(wintypes.HWND(hwnd)):
+            return None
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
+            return None
+        # SM_CXSIZEFRAME + SM_CXPADDEDBORDER：系统标准可缩放边框厚度
+        margin = user32.GetSystemMetrics(32) + user32.GetSystemMetrics(92)
+        if margin <= 0:
+            margin = 8
+        left = x < rect.left + margin
+        right = x >= rect.right - margin
+        top = y < rect.top + margin
+        bottom = y >= rect.bottom - margin
+        if left and top:
+            return 13  # HTTOPLEFT
+        if right and top:
+            return 14  # HTTOPRIGHT
+        if left and bottom:
+            return 16  # HTBOTTOMLEFT
+        if right and bottom:
+            return 17  # HTBOTTOMRIGHT
+        if left:
+            return 10  # HTLEFT
+        if right:
+            return 11  # HTRIGHT
+        if top:
+            return 12  # HTTOP
+        if bottom:
+            return 15  # HTBOTTOM
+        return None
+
+    @staticmethod
+    def _ensure_thickframe(hwnd: int) -> None:
+        """边缘自愈：某些路径会让 Qt 丢掉 WS_THICKFRAME，丢了就拖不动。"""
+        user32 = ctypes.windll.user32
+        style = user32.GetWindowLongW(hwnd, _GWL_STYLE)
+        if style & _WS_THICKFRAME:
+            return
+        user32.SetWindowLongW(hwnd, _GWL_STYLE, style | _WS_THICKFRAME)
+        user32.SetWindowPos(
+            hwnd, 0, 0, 0, 0, 0,
+            _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER | _SWP_FRAMECHANGED,
+        )
 
     def nativeEventFilter(self, event_type, message):
         try:
@@ -84,22 +146,32 @@ class _EdgeCursorFilter(QAbstractNativeEventFilter):
             )
             if "windows_generic_MSG" not in name and "windows_dispatcher_MSG" not in name:
                 return False, 0
+            hwnd = self._hwnd
+            if not hwnd:
+                return False, 0
             msg = wintypes.MSG.from_address(int(message))
-            if msg.message != _WM_SETCURSOR:
-                return False, 0
-            if int(msg.hWnd or 0) != int(self._window.winId()):
-                return False, 0
-            hit = msg.lParam & 0xFFFF
-            cursor_id = _HIT_CURSOR.get(hit)
-            if cursor_id is None:
-                cursor_id = _HIT_CURSOR.get(self._window._resize_hit())
-            if cursor_id is None:
+            if int(msg.hWnd or 0) != hwnd:
                 return False, 0
             user32 = ctypes.windll.user32
-            user32.SetCursor(user32.LoadCursorW(None, cursor_id))
-            return True, 0
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-            return False, 0
+            if msg.message == _WM_NCHITTEST:
+                x = ctypes.c_short(msg.lParam & 0xFFFF).value
+                y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
+                hit = self._hit(hwnd, x, y)
+                if hit is not None:
+                    return True, hit
+            elif msg.message == _WM_SETCURSOR:
+                hit = msg.lParam & 0xFFFF
+                cursor_id = _HIT_CURSOR.get(hit)
+                if cursor_id is None:
+                    pt = wintypes.POINT()
+                    user32.GetCursorPos(ctypes.byref(pt))
+                    cursor_id = _HIT_CURSOR.get(self._hit(hwnd, pt.x, pt.y))
+                if cursor_id is not None:
+                    user32.SetCursor(user32.LoadCursorW(None, cursor_id))
+                    return True, 0
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+        return False, 0
 
 
 class _WindowControlButton(QPushButton):
@@ -220,9 +292,10 @@ class MainWindow(QMainWindow):
         # 边缘缩放光标：抢在 Qt 的光标逻辑之前接管 WM_SETCURSOR，
         # 否则鼠标压在图表/按钮等带光标的子控件上时会被改回箭头。
         self._edge_filter: _EdgeCursorFilter | None = None
+        self._style_timer: QTimer | None = None
         app = QApplication.instance()
         if app is not None:
-            self._edge_filter = _EdgeCursorFilter(self)
+            self._edge_filter = _EdgeCursorFilter()
             app.installNativeEventFilter(self._edge_filter)
         self.resize(1180, 780)
         # 下限放低：各页面用滚动区/按比例布局兜底，窗口可以自由拖小。
@@ -356,8 +429,17 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
         if event.type() == QEvent.WinIdChange:
             self._enable_native_resize()
+            self._sync_edge_filter()
         elif event.type() == QEvent.WindowStateChange and hasattr(self, "title_bar"):
             self.title_bar.refresh_state()
+
+    def _sync_edge_filter(self) -> None:
+        """把当前原生句柄告诉过滤器（过滤器内部不能回调 Qt）。"""
+        if self._edge_filter is not None:
+            try:
+                self._edge_filter.set_hwnd(int(self.winId()))
+            except (RuntimeError, TypeError, ValueError):
+                self._edge_filter.set_hwnd(0)
 
     def _enable_native_resize(self) -> None:
         """给无边框窗口补上 WS_THICKFRAME，Windows 才会真正进入缩放循环。
@@ -477,8 +559,6 @@ class MainWindow(QMainWindow):
         self.scan_label.setText(text)
         self.scan_label.setToolTip("")
         self.scan_cancel.hide()
-        from PySide6.QtCore import QTimer
-
         QTimer.singleShot(3500, self.scan_strip.hide)
 
     def _request_scan_cancel(self) -> None:
@@ -492,6 +572,13 @@ class MainWindow(QMainWindow):
         apply_window_icon(self)
         enable_titlebar(self)
         self._enable_native_resize()
+        self._sync_edge_filter()
+        if self._style_timer is None:
+            # 兜底自愈：个别路径下 Qt 会重置窗口样式（丢掉 WS_THICKFRAME），
+            # 那时边缘就没有缩放命中区。低频检查并补回。
+            self._style_timer = QTimer(self)
+            self._style_timer.timeout.connect(self._enable_native_resize)
+            self._style_timer.start(2000)
 
     def apply_theme(self) -> None:
         t = theme_tokens()
