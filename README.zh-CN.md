@@ -57,6 +57,16 @@ C: 可用空间减少    8.4 GB
 </p>
 <p align="center"><sub>浅色主题：文件活动</sub></p>
 
+<p align="center">
+  <img src="docs/settings-preview.png" alt="设置页" width="760" />
+</p>
+<p align="center"><sub>设置：外观与启动</sub></p>
+
+<p align="center">
+  <img src="docs/widget-preview.png" alt="悬浮卡片" width="272" />
+</p>
+<p align="center"><sub>悬浮卡片：今日空间变化与最近记录</sub></p>
+
 ## 扫盘会伤硬盘吗
 
 DiskWatch 不读取文件内容，只读取目录项、文件大小、时间和属性等元数据。正常实时监控由文件系统事件驱动，不会持续遍历整盘。

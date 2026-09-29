@@ -8,16 +8,7 @@ from pathlib import Path
 
 from diskwatch import i18n
 
-SRC_FILES = [
-    Path("diskwatch/app.py"),
-    Path("diskwatch/watcher.py"),
-    Path("diskwatch/storage.py"),
-    Path("diskwatch/grouping.py"),
-    Path("diskwatch/ui/widget.py"),
-    Path("diskwatch/ui/ball.py"),
-    Path("diskwatch/ui/panel.py"),
-    Path("diskwatch/ui/settings.py"),
-]
+SRC_FILES = sorted(Path("diskwatch").rglob("*.py"))
 
 
 class _FakeMon:
@@ -71,7 +62,6 @@ def test_english_ui_construction(qapp) -> None:
     from diskwatch.config import Config
     from diskwatch.storage import Storage
     from diskwatch.ui.ball import MiniBall
-    from diskwatch.ui.panel import DetailPanel
     from diskwatch.ui.settings import SettingsDialog
     from diskwatch.ui.widget import FloatingWidget
 
@@ -83,13 +73,11 @@ def test_english_ui_construction(qapp) -> None:
     try:
         MiniBall(storage, _FakeMon(), cfg)  # 构造不崩溃即可，不引用后续
         widget = FloatingWidget(storage, _FakeMon(), cfg)
-        panel = DetailPanel(storage)
-        dlg = SettingsDialog(cfg, storage, panel)
+        dlg = SettingsDialog(cfg, storage)
     finally:
         storage.close()
 
     assert dlg.windowTitle() == "Settings", dlg.windowTitle()
-    assert panel.windowTitle() == "DiskWatch · Details", panel.windowTitle()
     assert widget.title.text() == "Today's Space Change", widget.title.text()
     assert dlg.cmb_language.currentData() == "en_US"
     assert dlg.cmb_language.count() == 2, dlg.cmb_language.count()
@@ -99,7 +87,6 @@ def test_hot_swap_retranslate(qapp) -> None:
     """语言热切换：retranslate 后可见文案立即变为新语言。"""
     from diskwatch.config import Config
     from diskwatch.storage import Storage
-    from diskwatch.ui.panel import DetailPanel
     from diskwatch.ui.widget import FloatingWidget
 
     i18n.set_language("en_US")
@@ -109,18 +96,14 @@ def test_hot_swap_retranslate(qapp) -> None:
     storage = Storage(tmp / "t.db")
     try:
         widget = FloatingWidget(storage, _FakeMon(), cfg)
-        panel = DetailPanel(storage)
         # 签名被占用后 retranslate 仍要刷新（回归：曾因签名早退而漏刷新）
         widget.refresh()
-        panel.retranslate()
+        widget.retranslate()
 
         i18n.set_language("zh_CN")
         widget.retranslate()
-        panel.retranslate()
 
         assert widget.title.text() == "今日空间变化", widget.title.text()
         assert widget.btn_detail.text() == "详情", widget.btn_detail.text()
-        assert panel.lbl_title.text() == "新增文件明细", panel.lbl_title.text()
-        assert panel.event_filter.itemText(0) == "新增", panel.event_filter.itemText(0)
     finally:
         storage.close()

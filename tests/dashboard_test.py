@@ -8,14 +8,13 @@ from pathlib import Path
 from PySide6.QtCore import QRectF
 
 from diskwatch.storage import DaySummary, SpaceDaySummary, Storage, make_record
-from diskwatch.ui.charts import _non_overlapping_labels
+from diskwatch.ui.charts import TrendChart, _non_overlapping_labels
 from diskwatch.ui.dashboard import (
     CumulativeChart,
     DashboardPanel,
     SpaceTrendChart,
     TopBarsChart,
 )
-from diskwatch.ui.panel import TrendChart
 
 
 def _storage(tmp: Path) -> Storage:

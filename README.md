@@ -57,6 +57,16 @@ Screenshots are generated off-screen from synthetic data. The renderer does not 
 </p>
 <p align="center"><sub>Light theme: file activity</sub></p>
 
+<p align="center">
+  <img src="docs/settings-preview.png" alt="Settings" width="760" />
+</p>
+<p align="center"><sub>Settings: appearance and startup</sub></p>
+
+<p align="center">
+  <img src="docs/widget-preview.png" alt="Floating card" width="272" />
+</p>
+<p align="center"><sub>Floating card: today's space change and recent files</sub></p>
+
 ## Does scanning harm a drive?
 
 DiskWatch never reads file contents. It reads directory entries and metadata such as size, timestamps, and attributes. Normal monitoring is event-driven and does not continuously walk a disk.
