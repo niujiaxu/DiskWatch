@@ -79,12 +79,18 @@ def scan_and_backfill(
             added += len(batch)
             batch.clear()
 
-    def cooperate() -> None:
-        """大目录遍历时定期让出 GIL，避免补扫饿死 Qt 事件循环。"""
+    def cooperate() -> bool:
+        """大目录遍历时定期让出 GIL；返回 True 表示已被要求取消。
+
+        每个条目都查一次取消标志（Event.is_set 很便宜）：点“取消补扫”
+        后最多再处理一个条目就会退出，不会卡在“正在取消”。让出 GIL
+        仍然按固定节奏做，避免补扫饿死 Qt 事件循环。
+        """
         nonlocal visited_entries
         visited_entries += 1
         if visited_entries % SCAN_YIELD_EVERY == 0:
             time.sleep(SCAN_YIELD_SECONDS)
+        return cancelled()
 
     for root in roots:
         if cancelled():
@@ -108,7 +114,8 @@ def scan_and_backfill(
                 try:
                     with os.scandir(dirpath) as entries:
                         for ent in entries:
-                            cooperate()
+                            if cooperate():
+                                break
                             try:
                                 if ent.is_dir(follow_symlinks=False):
                                     stack.append(ent.path)
@@ -123,8 +130,7 @@ def scan_and_backfill(
                 continue
             with entries:
                 for ent in entries:
-                    cooperate()
-                    if cancelled():
+                    if cooperate():
                         break
                     try:
                         if ent.is_dir(follow_symlinks=False):

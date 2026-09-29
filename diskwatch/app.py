@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ctypes
+import os
 import subprocess
 import sys
 import threading
@@ -464,13 +466,21 @@ class DiskWatchApp:
                 scan_roots: list[str] = []
                 if mode == "usn":
                     report = recover_from_usn(
-                        self.config, self.storage, self.monitor.roots
+                        self.config,
+                        self.storage,
+                        self.monitor.roots,
+                        cancel_event=self._scan_cancel,
                     )
-                    if report.fallback_roots and self.config.get("scan_on_startup", True):
+                    if (
+                        not report.cancelled
+                        and not self._scan_cancel.is_set()
+                        and report.fallback_roots
+                        and self.config.get("scan_on_startup", True)
+                    ):
                         scan_roots = self._fallback_scan_roots(report.fallback_roots)
                 elif mode == "scan":
                     scan_roots = self._fallback_scan_roots(self.monitor.roots)
-                if scan_roots:
+                if scan_roots and not self._scan_cancel.is_set():
                     self._scan_notifier.progress.emit(0, 0, "")
                     added = scan_and_backfill(
                         self.config,
@@ -486,6 +496,7 @@ class DiskWatchApp:
             self._scan_notifier.done.emit(added, self._scan_cancel.is_set())
 
         t = threading.Thread(target=_run, name="dw-startup-scan", daemon=True)
+        self._scan_thread = t
         t.start()
         self._background_threads.append(t)
 
@@ -517,12 +528,35 @@ class DiskWatchApp:
         后台线程对已关闭连接的写异常会被各自的 except 记录）。
         """
         self._scan_cancel.set()
+        self._boost_scan_thread()  # 让被降优先级的补扫线程尽快退出
         for t in self._background_threads:
             t.join(timeout=timeout)
         self._background_threads = []
 
     def _cancel_scan(self) -> None:
         self._scan_cancel.set()
+        self._boost_scan_thread()
+
+    def _boost_scan_thread(self) -> None:
+        """取消时把补扫线程的优先级提回正常。
+
+        补扫线程启动时被降到低于正常优先级（避免和 UI 抢资源）。系统
+        繁忙时它可能长时间拿不到 CPU，取消标志迟迟得不到检查，界面就
+        一直停在“正在取消”。这里临时提回正常，保证能立刻响应。
+        """
+        thread = getattr(self, "_scan_thread", None)
+        if thread is None or not thread.is_alive() or os.name != "nt":
+            return
+        try:
+            handle = ctypes.windll.kernel32.OpenThread(0x0020, False, thread.ident)
+            if not handle:
+                return
+            try:
+                ctypes.windll.kernel32.SetThreadPriority(handle, 0)  # NORMAL
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+        except (AttributeError, OSError, TypeError):
+            pass
 
     def _after_scan_refresh(self, added: int = 0, cancelled: bool = False) -> None:
         try:

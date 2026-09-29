@@ -10,6 +10,7 @@ import ctypes
 import os
 import struct
 import sys
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +18,7 @@ from pathlib import Path
 from .classification import CapturePolicy, FileClassifier
 from .config import Config
 from .filters import safe_stat
-from .storage import Storage, make_record
+from .storage import FileRecord, Storage, make_record
 
 FSCTL_QUERY_USN_JOURNAL = 0x000900F4
 FSCTL_READ_USN_JOURNAL = 0x000900BB
@@ -78,6 +79,7 @@ class RecoveryReport:
     processed: int = 0
     skipped: int = 0
     fallback_roots: tuple[str, ...] = ()
+    cancelled: bool = False
 
 
 def parse_usn_buffer(data: bytes) -> tuple[int, list[UsnRecord]]:
@@ -252,7 +254,14 @@ class WindowsUsnJournal:
         finally:
             self.kernel32.CloseHandle(handle)
 
-    def read(self, drive: str, cursor: UsnCursor, limit: int = 100_000) -> UsnReadResult:
+    def read(
+        self,
+        drive: str,
+        cursor: UsnCursor,
+        limit: int = 100_000,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> UsnReadResult:
         from ctypes import wintypes
 
         class ReadData(ctypes.Structure):
@@ -280,6 +289,8 @@ class WindowsUsnJournal:
         start = cursor.next_usn
         try:
             while start < current.next_usn and len(records) < limit:
+                if should_cancel is not None and should_cancel():
+                    break
                 request = ReadData(
                     start,
                     0xFFFFFFFF,
@@ -295,8 +306,11 @@ class WindowsUsnJournal:
                     break
                 start = next_usn
             # resolver 持有 volume handle，只能在返回前把父路径解析完并固化。
+            # 取消时不必解析剩余的父路径（未解析的记录会被上层跳过）。
             parent_ids = {record.parent_ref for record in records}
             for parent_id in parent_ids:
+                if should_cancel is not None and should_cancel():
+                    break
                 resolve_parent(parent_id)
             snapshot = dict(parent_cache)
         finally:
@@ -344,8 +358,17 @@ def recover_from_usn(
     roots: list[str],
     *,
     journal: WindowsUsnJournal | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> RecoveryReport:
-    """读取各 NTFS 盘离线变化并写入现有空间账本。"""
+    """读取各 NTFS 盘离线变化并写入现有空间账本。
+
+    cancel_event 置位时尽快返回；被打断的磁盘不推进游标，下次启动会
+    重新读取并重放（重放对已有行只产生 0 字节增量，幂等），避免丢数据。
+    """
+
+    def cancelled() -> bool:
+        return cancel_event is not None and cancel_event.is_set()
+
     drives = sorted(
         {
             os.path.splitdrive(root)[0].upper()
@@ -368,8 +391,19 @@ def recover_from_usn(
     skipped = 0
     fallback: list[str] = []
     statuses: list[str] = []
+    was_cancelled = False
+    # 连续的新增/修改攒批写入：一次事务写数百条，比逐条 add_files 快得多
+    pending: list[tuple[FileRecord, str, float]] = []
+
+    def flush_pending() -> None:
+        if pending:
+            storage.add_events_batch(pending)
+            pending.clear()
 
     for drive in drives:
+        if cancelled():
+            was_cancelled = True
+            break
         saved = cursors.get(drive)
         current: UsnCursor | None = None
         try:
@@ -382,10 +416,16 @@ def recover_from_usn(
                 statuses.append(f"{drive} 已建立 USN 基线")
                 continue
             cursor = UsnCursor(int(saved["journal_id"]), int(saved["next_usn"]))
-            result = source.read(drive, cursor)
+            result = source.read(drive, cursor, should_cancel=cancelled)
             actions = coalesce_usn_records(result.records, result.resolve_parent)
+            interrupted = False
             for action in actions:
+                if cancelled():
+                    interrupted = True
+                    break
                 if action.kind == "deleted":
+                    # 结构性操作前先把攒批落库，保持事件先后顺序
+                    flush_pending()
                     if action.is_dir:
                         storage.delete_subtree(action.path)
                     else:
@@ -393,6 +433,7 @@ def recover_from_usn(
                     processed += 1
                     continue
                 if action.kind == "move" and action.old_path:
+                    flush_pending()
                     if action.is_dir:
                         storage.move_subtree(action.old_path, action.path)
                     else:
@@ -421,10 +462,15 @@ def recover_from_usn(
                     action.path, st.st_size, action.occurred_at,
                     classifier.classify(action.path),
                 )
-                storage.add_files(
-                    [record], event_type=action.kind, occurred_at=action.occurred_at
-                )
+                pending.append((record, action.kind, action.occurred_at))
                 processed += 1
+                if len(pending) >= 200:
+                    flush_pending()
+            flush_pending()
+            if interrupted or cancelled():
+                # 不推进游标：本次没处理完，下次启动重放（幂等）
+                was_cancelled = True
+                continue
             cursors[drive] = {
                 "journal_id": result.cursor.journal_id,
                 "next_usn": result.cursor.next_usn,
@@ -443,7 +489,10 @@ def recover_from_usn(
                 # 查询本身失败时不要写入 0/0 伪游标；下次恢复应重新建立基线。
                 cursors.pop(drive, None)
 
+    flush_pending()
     config.set("usn_cursors", cursors)
     config.set("last_usn_status", "；".join(statuses))
     config.save()
-    return RecoveryReport("；".join(statuses), processed, skipped, tuple(fallback))
+    return RecoveryReport(
+        "；".join(statuses), processed, skipped, tuple(fallback), was_cancelled
+    )

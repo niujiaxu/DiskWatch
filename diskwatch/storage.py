@@ -730,6 +730,25 @@ class Storage:
                 )
             return changed
 
+    def add_events_batch(self, items: list[tuple[FileRecord, str, float]]) -> int:
+        """恢复流程专用：一次事务写入多条带各自事件类型/发生时间的记录。
+
+        逐条 add_files 时每条都是一个事务，Journal 大时极慢；攒批写入
+        把数百条合并成一个事务。调用方需保证结构性操作（删除/移动）前
+        先落库，以维持事件先后顺序。
+        """
+        if not items:
+            return 0
+        with self._write_tx():
+            changed = 0
+            for record, event_type, occurred_at in items:
+                changed += int(
+                    self._observe_record_locked(
+                        record, event_type=event_type, occurred_at=occurred_at
+                    )
+                )
+            return changed
+
     def backfill_records(self, records: list[FileRecord]) -> int:
         """启动补扫专用：只插入缺失路径，绝不覆盖已有行的统计。
 

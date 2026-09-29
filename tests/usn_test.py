@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+import threading
 import time
 
 from diskwatch.storage import Storage
@@ -88,7 +89,7 @@ class _Journal:
     def query(self, _drive: str):
         return UsnCursor(7, 30), 1
 
-    def read(self, _drive: str, _cursor: UsnCursor):
+    def read(self, _drive: str, _cursor: UsnCursor, **_kwargs):
         record = UsnRecord(
             1, 2, "offline.bin", USN_REASON_FILE_CREATE, 20, time.time()
         )
@@ -128,6 +129,39 @@ def test_query_failure_does_not_persist_fake_zero_cursor(tmp_path) -> None:
         )
         assert report.fallback_roots == (r"C:\Users\me",)
         assert "C:" not in config.data["usn_cursors"]
+        assert config.saved
+    finally:
+        storage.close()
+
+
+def test_recover_from_usn_cancel_stops_and_keeps_cursor(tmp_path) -> None:
+    """取消要能立刻中断恢复，且不推进游标（下次启动重放，避免丢数据）。"""
+    file_path = tmp_path / "offline.bin"
+    file_path.write_bytes(b"offline")
+    storage = Storage(tmp_path / "usn-cancel.db")
+    drive = file_path.drive.upper()
+    config = _Config(drive)
+    cancel = threading.Event()
+
+    class CancelDuringRead(_Journal):
+        def read(self, drive_: str, cursor, **kwargs):
+            result = super().read(drive_, cursor, **kwargs)
+            cancel.set()  # 读完就取消，动作循环必须立刻退出
+            return result
+
+    try:
+        report = recover_from_usn(
+            config,
+            storage,
+            [str(tmp_path)],
+            journal=CancelDuringRead(str(tmp_path)),
+            cancel_event=cancel,
+        )
+        assert report.cancelled is True
+        assert report.processed == 0
+        # 游标保持原值：本次没处理完，下次重放（对已有行幂等）
+        assert config.data["usn_cursors"][drive]["next_usn"] == 10
+        assert storage.space_events() == []
         assert config.saved
     finally:
         storage.close()

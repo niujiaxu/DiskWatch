@@ -199,3 +199,40 @@ def test_scan_reports_progress_and_lowers_priority(monkeypatch) -> None:
         assert reports[-1][1] >= 1
     finally:
         storage.close()
+
+
+def test_scan_cancel_is_prompt_inside_old_dirs() -> None:
+    """旧目录（mtime 剪枝分支）里也必须能立刻取消。
+
+    回归：该分支以前只 cooperate()、不检查取消标志，遇到包含大量条目的
+    旧目录时“取消补扫”要等整个目录扫完才生效，界面卡在“正在取消”。
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="dw_scan_cancel_old_"))
+    config = _config(tmp)
+    storage = Storage(tmp / "t.db")
+    root = tmp / "old"
+    total = 300
+    for i in range(total):
+        d = root / f"d{i}"
+        d.mkdir(parents=True)
+        os.utime(d, (1000, 1000))
+    os.utime(root, (1000, 1000))  # 整棵树都算“旧”，全部走剪枝分支
+
+    cancel = threading.Event()
+    seen: list[tuple[int, int, str]] = []
+
+    def progress(dirs: int, files: int, path: str) -> None:
+        seen.append((dirs, files, path))
+        if dirs >= 32:
+            cancel.set()
+
+    try:
+        scan_and_backfill(
+            config, storage, [str(root)], lookback_days=3,
+            cancel_event=cancel, progress=progress,
+        )
+        assert cancel.is_set()
+        assert seen, "至少应上报一次进度"
+        assert seen[-1][0] < total, f"取消后仍在继续扫描：{seen[-1]}"
+    finally:
+        storage.close()
