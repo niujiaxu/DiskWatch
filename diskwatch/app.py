@@ -595,17 +595,11 @@ class DiskWatchApp:
             pass
 
     def _after_scan_refresh(self, added: int = 0, cancelled: bool = False) -> None:
-        # 先把界面收尾：下面刷新悬浮组件若抛异常（例如库繁忙），也必须
-        # 让“正在补扫”结束，不能永远卡在界面上
+        # 无条件收尾。注意不能加 if scan_strip.isVisible()：主窗口隐藏时它
+        # 也是 False，跳过收尾会让 strip 保留最后一条“正在补扫：N 个目录”
+        # 的旧文案，下次打开窗口看起来就像永远卡住。
         try:
-            visible = self.main_window.scan_strip.isVisible()
-            errorlog.log(
-                logging.INFO,
-                f"[pid={os.getpid()}] 补扫收尾：added={added} cancelled={cancelled} "
-                f"strip_visible={visible}",
-            )
-            if visible:
-                self.main_window.finish_scan(added, cancelled)
+            self.main_window.finish_scan(added, cancelled)
         except Exception as exc:
             errorlog.log_exception("scan-finish", exc)
         for name, refresh in (

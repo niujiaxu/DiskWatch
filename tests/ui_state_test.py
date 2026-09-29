@@ -13,9 +13,12 @@ def dw_app(qapp, monkeypatch, tmp_path):
 
     apply_dark_theme(qapp)
     import diskwatch.config as cfgmod
+    import diskwatch.errorlog as errlog
 
     monkeypatch.setattr(cfgmod.paths, "config", tmp_path / "cfg.json")
     monkeypatch.setattr(cfgmod.paths, "db", tmp_path / "t.db")
+    # 日志也写临时目录：否则测试进程会往用户真实日志里写（曾把诊断日志搅乱）
+    monkeypatch.setattr(errlog, "default_home", lambda: tmp_path)
 
     seed = Config()
     original = {
@@ -27,6 +30,8 @@ def dw_app(qapp, monkeypatch, tmp_path):
             "widget_visible": True,
             "start_minimized": False,
             "scan_on_startup": False,
+            # 测试不做启动恢复：避免读真实磁盘的 USN/用户目录（慢且侵入）
+            "startup_recovery": "disabled",
         }
     )
     seed.save()
@@ -47,6 +52,24 @@ def dw_app(qapp, monkeypatch, tmp_path):
 
 def state(app) -> str:
     return f"card={app.widget.isVisible()} ball={app.ball.isVisible()}"
+
+
+def test_scan_finish_resets_strip_even_when_window_hidden(dw_app, qapp) -> None:
+    """回归：主窗口隐藏时补扫结束也必须收尾。
+
+    症状：补扫期间把主窗口隐藏（只看悬浮卡片），补扫结束后再打开主窗口，
+    底部一直显示“正在补扫：N 个目录 · M 个文件”不动 —— 因为收尾曾经只在
+    `scan_strip.isVisible()` 为真时执行，而窗口隐藏时它永远是 False。
+    """
+    app = dw_app
+    app.main_window.scan_label.setText("正在补扫：10143 个目录 · 3014 个文件")
+    app.main_window._scan_cancelling = True
+    assert not app.main_window.scan_strip.isVisible()  # 主窗口未显示
+
+    app._after_scan_refresh(444, False)
+
+    label = app.main_window.scan_label.text()
+    assert "正在补扫" not in label, label
 
 
 def test_initial_card_state(dw_app, qapp) -> None:
