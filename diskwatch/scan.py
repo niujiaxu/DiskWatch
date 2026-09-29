@@ -74,10 +74,17 @@ def scan_and_backfill(
 
     def flush() -> None:
         nonlocal added
-        if batch:
-            storage.backfill_records(batch)
-            added += len(batch)
+        if not batch:
+            return
+        if cancelled():
+            # 已请求取消：不再等写库（客户端 flush 可能撞上数据库大事务的
+            # 写锁，一等就是几秒，界面会卡在“正在取消”）。攒下的记录下次
+            # 补扫还能再发现，丢弃不影响正确性。
             batch.clear()
+            return
+        storage.backfill_records(batch)
+        added += len(batch)
+        batch.clear()
 
     def cooperate() -> bool:
         """大目录遍历时定期让出 GIL；返回 True 表示已被要求取消。

@@ -1093,24 +1093,39 @@ class Storage:
             for path in missing:
                 self._mark_deleted_locked(path, now)
 
+    def _delete_in_chunks(
+        self, table: str, where: str, args: tuple, chunk: int = 4000
+    ) -> int:
+        """分批删除，避免单个大事务长时间持有写锁。
+
+        一个大 DELETE 会把写锁按住几秒（几十万行的库上实测 3.5 秒），期间
+        补扫的 flush 只能干等——用户点“取消补扫”后取消标志直到锁释放才被
+        检查到，界面就卡在“正在取消”。分批后每批只有几十毫秒。
+        """
+        removed = 0
+        while True:
+            with self._write_tx():
+                cur = self._write.execute(
+                    f"DELETE FROM {table} WHERE rowid IN "
+                    f"(SELECT rowid FROM {table} WHERE {where} LIMIT ?)",
+                    (*args, chunk),
+                )
+                count = max(0, cur.rowcount)
+            removed += count
+            if count < chunk:
+                return removed
+
     def purge_older_than(self, days: int) -> int:
         if days <= 0:
             return 0
         cutoff = (date.today() - timedelta(days=days)).isoformat()
         hourly_cutoff = (date.today() - timedelta(days=365)).isoformat() + "T00:00"
-        with self._write_tx():
-            removed_files = 0
-            for table in ("files", "space_events", "disk_samples"):
-                cur = self._write.execute(
-                    f"DELETE FROM {table} WHERE day < ?", (cutoff,)
-                )
-                if table == "files":
-                    removed_files = max(0, cur.rowcount)
-            self._write.execute(
-                "DELETE FROM space_hourly WHERE hour < ?", (hourly_cutoff,)
-            )
-            # disk_space 与 space_daily 是长期每日汇总，不随原始保留期删除。
-            return removed_files
+        removed_files = self._delete_in_chunks("files", "day < ?", (cutoff,))
+        self._delete_in_chunks("space_events", "day < ?", (cutoff,))
+        self._delete_in_chunks("disk_samples", "day < ?", (cutoff,))
+        self._delete_in_chunks("space_hourly", "hour < ?", (hourly_cutoff,))
+        # disk_space 与 space_daily 是长期每日汇总，不随原始保留期删除。
+        return removed_files
 
     def clear_all(self) -> None:
         with self._write_tx():

@@ -172,6 +172,25 @@ def test_purge_older_than_files() -> None:
         s.close()
 
 
+def test_purge_older_than_deletes_every_chunk() -> None:
+    """过期数据超过分块大小时必须全部删掉，不能漏尾批。
+
+    分块删除是为了避免单个大事务长时间持有写锁（会卡住补扫的 flush）。
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="dw_purge_chunk_"))
+    s = _storage(tmp)
+    try:
+        old = time.time() - 100 * 86400
+        total = 4500  # 大于 4000 的分块大小，至少走两批
+        s.add_files([make_record(rf"C:\a\old{i}.txt", 1, added_at=old) for i in range(total)])
+        assert s.total_count() == total
+        removed = s.purge_older_than(90)
+        assert removed == total, removed
+        assert s.total_count() == 0
+    finally:
+        s.close()
+
+
 def test_clear_all_files_and_meta() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
     s = _storage(tmp)
