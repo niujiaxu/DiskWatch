@@ -12,6 +12,7 @@ All notable changes to DiskWatch are documented in this file.
 ### Removed
 - 移除已废弃的旧详情面板 `DetailPanel` 与分组模块 `grouping.py`（主窗口改版后应用不再使用，仅测试还在引用），同步删除对应测试
 - 清理 59 个已无引用的翻译键（旧详情面板/看板遗留），并把 `关闭/最小化/最大化/还原` 四个缺失的键补进英文翻译；i18n 覆盖检查改为扫描全部 `diskwatch/**/*.py`
+- 测试套件收尾时自动清理 `dw_*` 临时目录（42 处 `mkdtemp` 在 Windows 上不会自动回收，实测累积 4800+ 个目录 / 1GB+）
 
 ### Fixed
 - 复选框选中态改为“填充主题色 + 白色对勾”：此前只把边框改色、白勾画在空心框上，浅色主题下完全看不见，看起来只是“变了下颜色”
