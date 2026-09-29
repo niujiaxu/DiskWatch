@@ -15,7 +15,7 @@ def test_enumerate_drives() -> None:
 
 
 def test_full_chain() -> None:
-    tmp = Path(tempfile.mkdtemp(prefix="diskwatch_test_"))
+    tmp = Path(tempfile.mkdtemp(prefix="dw_smoke_"))
     db = tmp / "test.db"
 
     config = Config()
