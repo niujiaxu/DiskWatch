@@ -213,6 +213,23 @@ def test_edge_cursor_filter_handles_resize_hits(qapp) -> None:
         window.close()
 
 
+def test_edge_press_filter_maps_window_edges() -> None:
+    """边缘按下兜底：按位置映射到对应的边/角（用于 startSystemResize）。"""
+    from PySide6.QtCore import QPoint
+
+    from diskwatch.ui.main_window import _EdgePressFilter
+
+    width, height = 800, 600
+    edges = _EdgePressFilter.edges_for
+    assert edges(QPoint(2, 300), width, height) == Qt.LeftEdge
+    assert edges(QPoint(799, 300), width, height) == Qt.RightEdge
+    assert edges(QPoint(400, 2), width, height) == Qt.TopEdge
+    assert edges(QPoint(400, 599), width, height) == Qt.BottomEdge
+    assert edges(QPoint(2, 2), width, height) == (Qt.LeftEdge | Qt.TopEdge)
+    assert edges(QPoint(799, 599), width, height) == (Qt.RightEdge | Qt.BottomEdge)
+    assert edges(QPoint(400, 300), width, height) == Qt.Edge(0)
+
+
 def test_settings_navigation_has_modern_selection_without_focus_outline() -> None:
     qss = panel_qss(LIGHT_TOKENS)
     assert "QListWidget#settingsNav" in qss

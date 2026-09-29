@@ -10,6 +10,7 @@ All notable changes to DiskWatch are documented in this file.
 - 文件活动页右侧详情卡随窗口宽度按比例缩放（约 26%，夹在 220–460 之间）
 
 ### Fixed
+- 主窗口边缘缩放再加一道兜底：若系统没把边缘按下当作非客户区（窗口失活等状态下会这样），Qt 层按位置主动调用 startSystemResize 发起系统缩放，避免“有箭头但拖不动”
 - 修复主窗口边缘“有箭头但拖不动”：边缘命中测试（WM_NCHITTEST）改到应用级 native filter 里用原生 API（lParam + GetWindowRect）计算，不再依赖 Qt 的窗口几何/光标状态；并增加 2 秒兜底自愈 WS_THICKFRAME（个别路径下 Qt 会重置窗口样式，丢了样式就进不了缩放循环）
 - 修复主窗口边缘缩放光标“时有时无”（刚打开正常、页面数据加载后消失）：鼠标压在概览图表等带手型光标的子控件上时，Qt 会按控件光标把缩放光标覆盖回箭头；改为应用级 native event filter，在 Qt 光标逻辑之前接管 WM_SETCURSOR
 - 修复无边框主窗口边缘拖拽不能缩放的问题：仅返回 WM_NCHITTEST 命中码只会改变边缘光标，真正按下拖拽需要窗口带 WS_THICKFRAME 才会进入系统缩放循环；现补上该样式并用 WM_NCCALCSIZE 把客户区保持为整窗（外观不变，最大化仍不盖任务栏）

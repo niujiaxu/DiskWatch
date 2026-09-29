@@ -9,6 +9,7 @@ from ctypes import wintypes
 from PySide6.QtCore import (
     QAbstractNativeEventFilter,
     QEvent,
+    QObject,
     QPoint,
     QRectF,
     Qt,
@@ -61,6 +62,59 @@ _HIT_CURSOR = {
     14: 32643,  # HTTOPRIGHT    -> IDC_SIZENESW
     16: 32643,  # HTBOTTOMLEFT  -> IDC_SIZENESW
 }
+
+
+class _EdgePressFilter(QObject):
+    """边缘按下兜底：按下位置在窗口边缘时主动发起系统缩放。
+
+    正常情况下 Windows 会把边缘按下当成非客户区消息（WM_NCLBUTTONDOWN）
+    直接进入系统缩放循环；但在窗口失活等状态下，这一下可能被 Qt 当作普通
+    客户区点击派发（表现为“有箭头但拖不动”）。这里在 Qt 层再兜一层：
+    按位置判断边缘并调用 QWindow.startSystemResize（Qt 官方系统缩放 API）。
+    """
+
+    BAND = 6  # 逻辑像素
+
+    def __init__(self, window: "MainWindow") -> None:
+        super().__init__(window)
+        self._window = window
+
+    @classmethod
+    def edges_for(cls, pos: QPoint, width: int, height: int) -> Qt.Edge:
+        """按下点落在窗口哪条边/角上（供测试直接断言）。"""
+        edges = Qt.Edge(0)
+        if pos.x() < cls.BAND:
+            edges |= Qt.LeftEdge
+        elif pos.x() >= width - cls.BAND:
+            edges |= Qt.RightEdge
+        if pos.y() < cls.BAND:
+            edges |= Qt.TopEdge
+        elif pos.y() >= height - cls.BAND:
+            edges |= Qt.BottomEdge
+        return edges
+
+    def eventFilter(self, obj, event):
+        if event.type() != QEvent.MouseButtonPress:
+            return False
+        if event.button() != Qt.LeftButton:
+            return False
+        widget = obj if isinstance(obj, QWidget) else None
+        if widget is None or (widget is not self._window and not self._window.isAncestorOf(widget)):
+            return False
+        if self._window.isMaximized():
+            return False
+        handle = self._window.windowHandle()
+        if handle is None:
+            return False
+        pos = event.globalPosition().toPoint() - self._window.frameGeometry().topLeft()
+        edges = self.edges_for(pos, self._window.width(), self._window.height())
+        if not edges:
+            return False
+        try:
+            started = handle.startSystemResize(edges)
+        except (RuntimeError, TypeError, ValueError):
+            return False
+        return bool(started)
 
 
 class _EdgeCursorFilter(QAbstractNativeEventFilter):
@@ -293,10 +347,13 @@ class MainWindow(QMainWindow):
         # 否则鼠标压在图表/按钮等带光标的子控件上时会被改回箭头。
         self._edge_filter: _EdgeCursorFilter | None = None
         self._style_timer: QTimer | None = None
+        self._press_filter: _EdgePressFilter | None = None
         app = QApplication.instance()
         if app is not None:
             self._edge_filter = _EdgeCursorFilter()
             app.installNativeEventFilter(self._edge_filter)
+            self._press_filter = _EdgePressFilter(self)
+            app.installEventFilter(self._press_filter)
         self.resize(1180, 780)
         # 下限放低：各页面用滚动区/按比例布局兜底，窗口可以自由拖小。
         self.setMinimumSize(760, 500)
