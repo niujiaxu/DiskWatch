@@ -381,7 +381,15 @@ class TrendChart(QWidget):
             painter.setOpacity(1.0)
             painter.setFont(label_font)
             painter.setPen(QColor(TEXT_DIM))
-            painter.drawText(lrect, Qt.AlignHCenter, text)
+            # 居中在柱子上，但整体夹在控件内：首/末柱的标签矩形会伸出
+            # 窗口边缘，以前会被裁掉开头的符号（"+26.81M" 显示成 "26.81M"）
+            label_w = float(painter.fontMetrics().horizontalAdvance(text))
+            left = _label_left(lrect.center().x(), label_w, self.width())
+            painter.drawText(
+                QRectF(left, lrect.y(), label_w, lrect.height()),
+                Qt.AlignHCenter,
+                text,
+            )
         painter.end()
 
 
@@ -399,8 +407,19 @@ _LABEL_H = 14
 
 
 def _day_short(day: str) -> str:
-    """ISO 日期取 MM-DD。"""
+    """轴标签：ISO 日期取 MM-DD；带采样时间的标签取 HH:MM:SS（秒级）。"""
+    if " " in day:
+        return day.split(" ", 1)[1][:8]
     return day[5:]
+
+
+def _label_left(center_x: float, label_w: float, widget_w: float) -> float:
+    """把以 center_x 为中心的标签夹进 [0, widget_w]。
+
+    首/末柱的柱顶标签矩形会伸出窗口边缘，以前会被裁掉开头的符号
+    （"+26.81M" 显示成 "26.81M"）。
+    """
+    return min(max(0.0, center_x - label_w / 2), max(0.0, widget_w - label_w))
 
 
 # ---------------------------------------------------------------------------

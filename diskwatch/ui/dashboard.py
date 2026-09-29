@@ -332,8 +332,9 @@ class DashboardPanel(QWidget):
         series: dict[str, list[tuple[str, int]]] = {}
         latest_free: dict[str, int] = {}
         for sample in payload["recent_spaces"]:
+            # 秒级精度即可：微秒（%f）在轴标签上刷一长串数字且没意义
             sample_label = datetime.fromtimestamp(sample.sampled_at).strftime(
-                "%m-%d %H:%M:%S.%f"
+                "%m-%d %H:%M:%S"
             )
             series.setdefault(sample.drive, []).append(
                 (sample_label, sample.free_bytes)

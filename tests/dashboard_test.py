@@ -45,6 +45,25 @@ def _seed(s: Storage) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_day_short_formats_day_and_timestamp() -> None:
+    """轴标签：ISO 日期取 MM-DD；采样时间戳只取到秒（HH:MM:SS）。"""
+    from diskwatch.ui.charts import _day_short
+
+    assert _day_short("2026-09-29") == "09-29"
+    assert _day_short("09-29 08:28:03") == "08:28:03"
+    assert _day_short("09-29 08:28:03.581034") == "08:28:03"
+
+
+def test_label_left_keeps_labels_inside_widget() -> None:
+    """柱顶标签夹进控件内：首/末柱的数字不会被窗口边缘裁掉（如 '+26.81M'）。"""
+    from diskwatch.ui.charts import _label_left
+
+    assert _label_left(12.0, 40.0, 200.0) == 0.0     # 太靠左 → 贴左边
+    assert _label_left(100.0, 40.0, 200.0) == 80.0   # 正常居中
+    assert _label_left(195.0, 40.0, 200.0) == 160.0  # 太靠右 → 贴右边
+    assert _label_left(10.0, 400.0, 200.0) == 0.0    # 标签比控件还宽 → 从 0 开始
+
+
 def test_top_folders_range(qapp, tmp_path) -> None:
     s = _storage(tmp_path)
     try:
@@ -298,6 +317,10 @@ def test_dashboard_smoke(qapp, tmp_path) -> None:
         assert panel._chart_exts.isVisible()
         assert panel._chart_space.isVisible()
         assert "9" in panel.count_label.text()  # 近 14 天记录 9 个空间事件
+        # 剩余空间轴的采样标签只到秒，不带微秒
+        assert panel._chart_space._days
+        for label in panel._chart_space._days:
+            assert "." not in label, label
         # 范围切换触发重载（req 递增，不崩溃）
         panel._set_range(7)
         assert panel._range == 7
