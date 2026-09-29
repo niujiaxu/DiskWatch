@@ -465,6 +465,7 @@ class DiskWatchApp:
         def _run() -> None:
             added = 0
             started = time.monotonic()
+            pid = os.getpid()
             try:
                 scan_roots: list[str] = []
                 if mode == "usn":
@@ -476,7 +477,8 @@ class DiskWatchApp:
                     )
                     errorlog.log(
                         logging.INFO,
-                        f"USN 恢复：处理 {report.processed} 项、跳过 {report.skipped} 项，"
+                        f"[pid={pid}] USN 恢复：处理 {report.processed} 项、"
+                        f"跳过 {report.skipped} 项，回退根 {len(report.fallback_roots)} 个，"
                         f"用时 {time.monotonic() - started:.1f}s",
                     )
                     if (
@@ -489,6 +491,11 @@ class DiskWatchApp:
                 elif mode == "scan":
                     scan_roots = self._fallback_scan_roots(self.monitor.roots)
                 if scan_roots and not self._scan_cancel.is_set():
+                    errorlog.log(
+                        logging.INFO,
+                        f"[pid={pid}] 目录补扫开始：{len(scan_roots)} 个根目录 "
+                        f"（{', '.join(scan_roots[:3])}…）",
+                    )
                     self._scan_notifier.progress.emit(0, 0, "")
                     scan_started = time.monotonic()
                     added = scan_and_backfill(
@@ -501,10 +508,18 @@ class DiskWatchApp:
                     )
                     errorlog.log(
                         logging.INFO,
-                        f"目录补扫：补回 {added} 条，用时 {time.monotonic() - scan_started:.1f}s",
+                        f"[pid={pid}] 目录补扫完成：补回 {added} 条，"
+                        f"用时 {time.monotonic() - scan_started:.1f}s",
+                    )
+                else:
+                    errorlog.log(
+                        logging.INFO,
+                        f"[pid={pid}] 本次无需目录补扫（roots={len(scan_roots)}，"
+                        f"cancelled={self._scan_cancel.is_set()}）",
                     )
             except Exception as exc:
                 errorlog.log_exception("startup-recovery", exc)
+            errorlog.log(logging.INFO, f"[pid={pid}] 启动恢复线程收尾（added={added}）")
             # 扫描落库后再把悬浮组件刷新一次（信号跨线程排队到主线程）
             self._scan_notifier.done.emit(added, self._scan_cancel.is_set())
 
@@ -575,7 +590,13 @@ class DiskWatchApp:
         # 先把界面收尾：下面刷新悬浮组件若抛异常（例如库繁忙），也必须
         # 让“正在补扫”结束，不能永远卡在界面上
         try:
-            if self.main_window.scan_strip.isVisible():
+            visible = self.main_window.scan_strip.isVisible()
+            errorlog.log(
+                logging.INFO,
+                f"[pid={os.getpid()}] 补扫收尾：added={added} cancelled={cancelled} "
+                f"strip_visible={visible}",
+            )
+            if visible:
                 self.main_window.finish_scan(added, cancelled)
         except Exception as exc:
             errorlog.log_exception("scan-finish", exc)
