@@ -321,3 +321,45 @@ def test_dashboard_day_selected(qapp, tmp_path) -> None:
         panel.close()
     finally:
         s.close()
+
+
+def test_dashboard_charts_scale_with_window(qapp, tmp_path) -> None:
+    """窗口放大时卡片内图表应跟着放大（回归：TrendChart 曾被钉死最大高度）。"""
+    from PySide6.QtWidgets import QSizePolicy
+
+    s = _storage(tmp_path)
+    try:
+        _seed(s)
+        small = DashboardPanel(s)
+        small.resize(960, 620)
+        small.show()
+        large = DashboardPanel(s)
+        large.resize(1720, 1040)
+        large.show()
+        qapp.processEvents()
+
+        for chart in (
+            small._chart_growth,
+            small._chart_cum,
+            small._chart_space,
+            small._chart_exts,
+            small._chart_files,
+            small._chart_folders,
+        ):
+            # 不再有写死的最大高度，且双向可扩展
+            assert chart.maximumHeight() >= 10_000
+            policy = chart.sizePolicy()
+            assert policy.horizontalPolicy() == QSizePolicy.Expanding
+            assert policy.verticalPolicy() == QSizePolicy.Expanding
+
+        # 网格行分配了拉伸，多余高度分给各行而不是留白
+        grid = small._scroll_area.widget().layout()
+        assert all(grid.rowStretch(r) > 0 for r in range(4))
+
+        # 更大的窗口 → 图表更大
+        assert large._chart_growth.width() > small._chart_growth.width()
+        assert large._chart_files.height() > small._chart_files.height()
+        small.close()
+        large.close()
+    finally:
+        s.close()

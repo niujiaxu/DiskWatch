@@ -188,6 +188,10 @@ class DashboardPanel(QWidget):
         folders_lay.addWidget(self._chart_folders)
         grid.addWidget(folders, 3, 0, 1, 2)
 
+        # 行拉伸：窗口拉大时四行共享多余高度，图表随卡片一起放大，不留白
+        for row in range(4):
+            grid.setRowStretch(row, 1)
+
         self._scroll_area.setWidget(content)
         root.addWidget(self._scroll_area, 1)
 

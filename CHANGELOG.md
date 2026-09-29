@@ -4,6 +4,9 @@ All notable changes to DiskWatch are documented in this file.
 
 ## [2.0.6] - 2026-08-30
 
+### Changed
+- 概览图表随窗口等比放大/收缩：柱状图、累计面积、剩余空间折线不再写死高度，横向条形行高自适应，拉大或最大化窗口时卡片内元素填满可用空间
+
 ### Fixed
 - 修复调整悬浮组件透明度后胶囊四角出现系统阴影圆弧的问题：无边框自绘窗不再被套用 DWM 圆角/标题栏属性，并显式声明 NoDropShadowWindowHint 抑制矩形轮廓投影
 - 修复文件活动页偶发沿用初始化分栏宽度、右侧留下大块空白的问题

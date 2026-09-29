@@ -9,7 +9,13 @@ import math
 
 from PySide6.QtCore import QPoint, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QApplication, QPushButton, QToolTip, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QPushButton,
+    QSizePolicy,
+    QToolTip,
+    QWidget,
+)
 
 from ..i18n import tr
 from ..storage import human_size
@@ -19,6 +25,11 @@ TREND_DAYS = 14
 CHART_H = 78
 _PLOT_TOP = 22
 _LABEL_H = 14
+
+
+def _expanding(widget: QWidget) -> None:
+    """让图表随可用空间双向放大/收缩（窗口拉大时元素跟着放缩）。"""
+    widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
 
 def _compact_size(n: int) -> str:
@@ -86,7 +97,7 @@ class TrendChart(QWidget):
         self._signed = False
         self._btn: QPushButton | None = None  # 惰性创建（无 QApplication 的单元测试不建）
         self.setMinimumHeight(CHART_H)
-        self.setMaximumHeight(CHART_H)
+        _expanding(self)
         self.setMouseTracking(True)
         self.setCursor(Qt.PointingHandCursor)
 
@@ -406,6 +417,7 @@ class CumulativeChart(QWidget):
         self._hover: int = -1
         self._signed = False
         self.setMinimumHeight(120)
+        _expanding(self)
         self.setMouseTracking(True)
 
     def set_days(self, summaries, max_days: int = 90) -> None:
@@ -592,6 +604,7 @@ class SpaceTrendChart(QWidget):
         self._days: list[str] = []  # 全局日期并集（升序）
         self._hover: int = -1
         self.setMinimumHeight(120)
+        _expanding(self)
         self.setMouseTracking(True)
 
     def set_series(self, series: dict[str, list[tuple[str, int]]]) -> None:
@@ -741,6 +754,7 @@ class TopBarsChart(QWidget):
         self._metric = "size"
         self._hover: int = -1
         self.setMinimumHeight(60)
+        _expanding(self)
         self.setMouseTracking(True)
 
     def set_items(self, items: list[tuple[str, int, int]], metric: str = "size") -> None:
@@ -752,8 +766,15 @@ class TopBarsChart(QWidget):
         self.setVisible(bool(self._items))
         self.update()
 
+    def _row_h(self) -> float:
+        """行高随卡片高度自适应：窗口拉大时行也放大（上限避免过疏）。"""
+        n = max(1, len(self._items))
+        available = max(float(self.ROW_H), (self.height() - 12) / n)
+        return min(self.ROW_H * 1.8, available)
+
     def _row_rect(self, i: int) -> QRectF:
-        return QRectF(6, 6 + i * self.ROW_H, self.width() - 12, self.ROW_H - 4)
+        h = self._row_h()
+        return QRectF(6, 6 + i * h, self.width() - 12, h - 4)
 
     def _row_at(self, y: float) -> int:
         # 横向条形图整行命中，只按 y 判区间（与 x 无关）
