@@ -6,9 +6,17 @@ import ctypes
 import sys
 from ctypes import wintypes
 
-from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, Signal
+from PySide6.QtCore import (
+    QAbstractNativeEventFilter,
+    QEvent,
+    QPoint,
+    QRectF,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import QCursor, QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -52,6 +60,46 @@ _HIT_CURSOR = {
     14: 32643,  # HTTOPRIGHT    -> IDC_SIZENESW
     16: 32643,  # HTBOTTOMLEFT  -> IDC_SIZENESW
 }
+
+
+class _EdgeCursorFilter(QAbstractNativeEventFilter):
+    """在 Qt 处理之前接管主窗口的 WM_SETCURSOR：边缘/四角强制缩放光标。
+
+    无边框窗口的边缘区域下面往往压着子控件：鼠标移到概览图表（手型光标）
+    等位置时，Qt 会按控件光标把缩放光标覆盖回箭头，看起来就是“箭头时有时
+    无”。nativeEventFilter 比 Qt 的窗口过程更早拿到消息，在这里设置光标
+    就不会被覆盖。
+    """
+
+    def __init__(self, window: "MainWindow") -> None:
+        super().__init__()
+        self._window = window
+
+    def nativeEventFilter(self, event_type, message):
+        try:
+            name = (
+                event_type.decode(errors="ignore")
+                if isinstance(event_type, (bytes, bytearray))
+                else str(event_type)
+            )
+            if "windows_generic_MSG" not in name and "windows_dispatcher_MSG" not in name:
+                return False, 0
+            msg = wintypes.MSG.from_address(int(message))
+            if msg.message != _WM_SETCURSOR:
+                return False, 0
+            if int(msg.hWnd or 0) != int(self._window.winId()):
+                return False, 0
+            hit = msg.lParam & 0xFFFF
+            cursor_id = _HIT_CURSOR.get(hit)
+            if cursor_id is None:
+                cursor_id = _HIT_CURSOR.get(self._window._resize_hit())
+            if cursor_id is None:
+                return False, 0
+            user32 = ctypes.windll.user32
+            user32.SetCursor(user32.LoadCursorW(None, cursor_id))
+            return True, 0
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return False, 0
 
 
 class _WindowControlButton(QPushButton):
@@ -169,6 +217,13 @@ class MainWindow(QMainWindow):
         self.activity = activity
         self.setWindowFlag(Qt.FramelessWindowHint, True)
         self.setWindowTitle(tr("DiskWatch · 磁盘空间"))
+        # 边缘缩放光标：抢在 Qt 的光标逻辑之前接管 WM_SETCURSOR，
+        # 否则鼠标压在图表/按钮等带光标的子控件上时会被改回箭头。
+        self._edge_filter: _EdgeCursorFilter | None = None
+        app = QApplication.instance()
+        if app is not None:
+            self._edge_filter = _EdgeCursorFilter(self)
+            app.installNativeEventFilter(self._edge_filter)
         self.resize(1180, 780)
         # 下限放低：各页面用滚动区/按比例布局兜底，窗口可以自由拖小。
         self.setMinimumSize(760, 500)

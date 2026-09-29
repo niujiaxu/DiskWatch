@@ -179,6 +179,37 @@ def test_main_window_native_resize_is_safe_to_call(qapp) -> None:
         window.close()
 
 
+def test_edge_cursor_filter_handles_resize_hits(qapp) -> None:
+    """边缘缩放光标过滤器：Qt 处理之前拦截 WM_SETCURSOR 上的缩放命中码。"""
+    import ctypes
+    from ctypes import wintypes
+
+    from PySide6.QtWidgets import QWidget
+
+    from diskwatch.ui.main_window import MainWindow
+
+    window = MainWindow(QWidget(), QWidget())
+    window.resize(800, 600)
+    try:
+        assert window._edge_filter is not None
+        msg = wintypes.MSG()
+        msg.hWnd = wintypes.HWND(int(window.winId()))
+        msg.message = 0x0020  # WM_SETCURSOR
+        msg.lParam = (0x0200 << 16) | 10  # WM_MOUSEMOVE + HTLEFT
+        handled, _ = window._edge_filter.nativeEventFilter(
+            b"windows_generic_MSG", ctypes.addressof(msg)
+        )
+        assert handled is True, "缩放命中码应被过滤器接管（否则会被子控件光标覆盖）"
+
+        msg.message = 0x0005  # WM_SIZE：与光标无关的消息不得拦截
+        handled, _ = window._edge_filter.nativeEventFilter(
+            b"windows_generic_MSG", ctypes.addressof(msg)
+        )
+        assert handled is False
+    finally:
+        window.close()
+
+
 def test_settings_navigation_has_modern_selection_without_focus_outline() -> None:
     qss = panel_qss(LIGHT_TOKENS)
     assert "QListWidget#settingsNav" in qss
