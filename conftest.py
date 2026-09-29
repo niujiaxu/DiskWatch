@@ -35,6 +35,11 @@ def _cleanup_temp_artifacts():
     import tempfile
 
     temp = Path(tempfile.gettempdir())
-    for pattern in ("dw_*", "diskwatch_test_*", "diskwatch-preview-*"):
+    for pattern in (
+        "dw_*",
+        "diskwatch_test_*",
+        "diskwatch-preview-*",
+        "pytest-of-*",  # pytest 的 tmp_path 基目录（空壳也一并删掉）
+    ):
         for path in temp.glob(pattern):
             shutil.rmtree(path, ignore_errors=True)

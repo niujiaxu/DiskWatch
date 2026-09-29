@@ -1,6 +1,8 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# tmp_path 目录用完全部删除：默认会保留最近几次会话，长期累积没人清
+tmp_path_retention_policy = "none"
 
 [tool.ruff]
 line-length = 100
