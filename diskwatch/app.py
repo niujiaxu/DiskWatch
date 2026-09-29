@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSharedMemory, QTimer, Signal
@@ -460,6 +461,13 @@ class DiskWatchApp:
         mode = str(self.config.get("startup_recovery", "usn"))
         if mode == "disabled":
             return
+        # 诊断埋点：记录调用来源。曾出现同一进程里 _start_scan 每几秒被
+        # 重复触发（日志刷屏、界面反复显示补扫），需要定位是谁在调用。
+        stack = " <- ".join(
+            f"{Path(frame.filename).name}:{frame.lineno}({frame.name})"
+            for frame in traceback.extract_stack()[:-1][-5:]
+        )
+        errorlog.log(logging.INFO, f"[pid={os.getpid()}] _start_scan 来源: {stack}")
         self._scan_cancel.clear()
 
         def _run() -> None:
