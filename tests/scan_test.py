@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import tempfile
 import threading
 import time
@@ -197,6 +198,39 @@ def test_scan_reports_progress_and_lowers_priority(monkeypatch) -> None:
         assert reports
         assert reports[-1][0] >= 1
         assert reports[-1][1] >= 1
+    finally:
+        storage.close()
+
+
+def test_scan_finishes_even_if_flush_fails(monkeypatch) -> None:
+    """回归：worker 写库抛异常时也必须收尾。
+
+    并行版本里 pending 计数在 finally 中递减；如果 flush() 先抛异常把
+    递减跳过，其它工作线程会永远等 pending 归零 —— 补扫线程收不了尾，
+    界面一直停在“正在补扫：N 个目录”。这里让写库必失败，断言补扫仍返回。
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="dw_scan_flushfail_"))
+    config = _config(tmp)
+    storage = Storage(tmp / "t.db")
+    try:
+        for i in range(20):
+            (tmp / f"f{i}.txt").write_text("x")
+
+        def boom(records, **_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(storage, "backfill_records", boom)
+        result: list[int] = []
+        worker = threading.Thread(
+            target=lambda: result.append(
+                scan_and_backfill(config, storage, [str(tmp)])
+            ),
+            daemon=True,
+        )
+        worker.start()
+        worker.join(timeout=20)
+        assert not worker.is_alive(), "写库失败后补扫必须能收尾（不能卡住）"
+        assert result == [0], result
     finally:
         storage.close()
 

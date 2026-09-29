@@ -353,3 +353,36 @@ def test_schema_migration() -> None:
         assert s.total_count() == 1
     finally:
         s.close()
+
+def test_backfill_records_times_out_when_write_lock_busy() -> None:
+    """写锁被长时间占用时，backfill_records 按 timeout 抛 TimeoutError。
+
+    回归背景：补扫收尾如果无限等写锁，界面会一直停在“正在补扫”。
+    """
+    import threading
+
+    import pytest
+
+    tmp = Path(tempfile.mkdtemp(prefix="dw_lock_timeout_"))
+    s = _storage(tmp)
+    release = threading.Event()
+    try:
+        def hold() -> None:
+            s._write_lock.acquire()
+            release.wait(5)
+            s._write_lock.release()
+
+        holder = threading.Thread(target=hold, daemon=True)
+        holder.start()
+        time.sleep(0.1)
+        with pytest.raises(TimeoutError):
+            s.backfill_records(
+                [make_record(r"C:\a\locked.txt", 1)], timeout=0.2
+            )
+        release.set()
+        holder.join(timeout=2)
+        # 锁释放后恢复正常
+        assert s.backfill_records([make_record(r"C:\a\ok.txt", 1)], timeout=1.0) == 1
+    finally:
+        release.set()
+        s.close()

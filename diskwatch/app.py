@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import ctypes
+import logging
 import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSharedMemory, QTimer, Signal
@@ -462,6 +464,7 @@ class DiskWatchApp:
 
         def _run() -> None:
             added = 0
+            started = time.monotonic()
             try:
                 scan_roots: list[str] = []
                 if mode == "usn":
@@ -470,6 +473,11 @@ class DiskWatchApp:
                         self.storage,
                         self.monitor.roots,
                         cancel_event=self._scan_cancel,
+                    )
+                    errorlog.log(
+                        logging.INFO,
+                        f"USN 恢复：处理 {report.processed} 项、跳过 {report.skipped} 项，"
+                        f"用时 {time.monotonic() - started:.1f}s",
                     )
                     if (
                         not report.cancelled
@@ -482,6 +490,7 @@ class DiskWatchApp:
                     scan_roots = self._fallback_scan_roots(self.monitor.roots)
                 if scan_roots and not self._scan_cancel.is_set():
                     self._scan_notifier.progress.emit(0, 0, "")
+                    scan_started = time.monotonic()
                     added = scan_and_backfill(
                         self.config,
                         self.storage,
@@ -489,6 +498,10 @@ class DiskWatchApp:
                         lookback_days=int(self.config.get("scan_lookback_days", 3)),
                         cancel_event=self._scan_cancel,
                         progress=self._scan_notifier.progress.emit,
+                    )
+                    errorlog.log(
+                        logging.INFO,
+                        f"目录补扫：补回 {added} 条，用时 {time.monotonic() - scan_started:.1f}s",
                     )
             except Exception as exc:
                 errorlog.log_exception("startup-recovery", exc)
@@ -559,13 +572,21 @@ class DiskWatchApp:
             pass
 
     def _after_scan_refresh(self, added: int = 0, cancelled: bool = False) -> None:
+        # 先把界面收尾：下面刷新悬浮组件若抛异常（例如库繁忙），也必须
+        # 让“正在补扫”结束，不能永远卡在界面上
         try:
-            self.widget.refresh()
-            self.ball.refresh()
             if self.main_window.scan_strip.isVisible():
                 self.main_window.finish_scan(added, cancelled)
         except Exception as exc:
-            errorlog.log_exception("scan-refresh", exc)
+            errorlog.log_exception("scan-finish", exc)
+        for name, refresh in (
+            ("widget", self.widget.refresh),
+            ("ball", self.ball.refresh),
+        ):
+            try:
+                refresh()
+            except Exception as exc:
+                errorlog.log_exception(f"scan-refresh-{name}", exc)
 
     def _update_tooltip(self) -> None:
         count, size = self.storage.day_stats(today_str())

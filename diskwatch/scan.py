@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -31,6 +32,7 @@ from .errorlog import errorlog
 from .storage import FileRecord, Storage, make_record
 
 SCAN_BATCH = 500
+SCAN_FLUSH_TIMEOUT = 10.0  # 写库最多等这么久，超时跳过本批（下次补扫还能发现）
 MTIME_MARGIN = 3.0  # FAT 目录时间戳 2 秒粒度，剪枝判断留 3 秒余量
 SCAN_WORKERS = min(6, max(2, os.cpu_count() or 4))
 SCAN_YIELD_EVERY = 4096  # 每处理这么多条目让出一次
@@ -108,7 +110,16 @@ def scan_and_backfill(
                 # 已请求取消：不再等写库（可能撞上数据库大事务的写锁，
                 # 一等就是几秒）。这些文件下次补扫还能再发现，不会丢。
                 return
-            storage.backfill_records(records)
+            try:
+                storage.backfill_records(records, timeout=SCAN_FLUSH_TIMEOUT)
+            except TimeoutError:
+                # 写锁长时间被占（监控洪峰、杀毒软件扫描等）：跳过本批，
+                # 保证补扫及时收尾；这些文件下次补扫还会被重新发现
+                errorlog.log(
+                    logging.WARNING,
+                    f"补扫写库超时（{SCAN_FLUSH_TIMEOUT:.0f}s），跳过 {len(records)} 条",
+                )
+                return
             with lock:
                 stats["added"] += len(records)
 
@@ -184,10 +195,16 @@ def scan_and_backfill(
                 # 单个目录出错不能让工作线程退出（其余目录还要继续扫）
                 errorlog.log_exception("scan-worker", exc)
             finally:
-                flush()
-                with lock:
-                    pending -= 1
-                    empty = pending == 0
+                # flush 失败也必须把 pending 减掉：否则其它工作线程会永远
+                # 等 pending 归零，补扫线程收不了尾，界面一直停在“正在补扫”
+                try:
+                    flush()
+                except Exception as exc:
+                    errorlog.log_exception("scan-flush", exc)
+                finally:
+                    with lock:
+                        pending -= 1
+                        empty = pending == 0
             if empty or (is_cancelled is not None and is_cancelled()):
                 break
 

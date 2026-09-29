@@ -507,13 +507,20 @@ class Storage:
     # ---------- 写 ----------
 
     @contextmanager
-    def _write_tx(self):
+    def _write_tx(self, timeout: float | None = None):
         """持锁写入：成功则 commit，抛 sqlite3.Error 时 rollback 并记录。
 
         裸 sqlite3.Connection 在 execute 后会自动开事务；中途出错但未
         rollback，下一次写入会被并进这个未提交事务，进程一崩整批丢失。
+
+        timeout 给定时最多等这么久拿不到写锁就抛 TimeoutError：后台维护
+        任务（如补扫收尾）宁可跳过这批写入，也不能把界面卡在“正在补扫”。
         """
-        with self._write_lock:
+        if timeout is None:
+            self._write_lock.acquire()
+        elif not self._write_lock.acquire(timeout=timeout):
+            raise TimeoutError("写锁等待超时")
+        try:
             before = self._write.total_changes
             try:
                 yield
@@ -533,6 +540,8 @@ class Storage:
                 # 纯 SELECT / 空操作事务（move 无匹配等）不该触发 UI 重载
                 if self._write.total_changes > before:
                     self._change_seq += 1
+        finally:
+            self._write_lock.release()
 
     def recent_errors(self) -> list[tuple[float, str]]:
         """最近的写入错误，[(timestamp, message)]，新到旧。"""
@@ -749,16 +758,20 @@ class Storage:
                 )
             return changed
 
-    def backfill_records(self, records: list[FileRecord]) -> int:
+    def backfill_records(
+        self, records: list[FileRecord], *, timeout: float | None = None
+    ) -> int:
         """启动补扫专用：只插入缺失路径，绝不覆盖已有行的统计。
 
         - 路径不在库 → 完整插入（added_at 取文件创建时间，落到正确的天）。
         - 路径已存在且 deleted=1（曾删除后又重建）→ 只把 deleted 清 0 复活。
         - 路径已存在且正常 → 什么都不动（实时 watcher 的数据更准，扫描别去覆盖）。
+        - timeout：等待写锁的上限，超时抛 TimeoutError（补扫据此跳过本批，
+          不让界面卡在“正在补扫”）。
         """
         if not records:
             return 0
-        with self._write_tx():
+        with self._write_tx(timeout):
             changed = 0
             for record in records:
                 state = self._write.execute(
