@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS space_events (
     new_size      INTEGER NOT NULL DEFAULT 0,
     delta_bytes   INTEGER NOT NULL DEFAULT 0,
     occurred_at   REAL NOT NULL,
-    day           TEXT NOT NULL
+    day           TEXT NOT NULL,
+    merged_count  INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_space_events_time ON space_events(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_space_events_day_drive ON space_events(day, drive);
@@ -129,7 +130,18 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 """
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
+
+# 动态降噪：同一路径在 FOLD_WINDOW 内的连续变化视为一"串"。一串里前
+# FOLD_AFTER 条照常记录明细，第 FOLD_AFTER+1 条起合并为一条
+# event_type='churn' 的聚合行（merged_count 记录合并条数）。净字节一条
+# 不丢：聚合行 delta 是串内各事件的累加，小时/天汇总仍按原始事件计入。
+# 这就是"不给每个软件维护排除清单"的动态方案：无论缓存放在哪个目录，
+# 高频抖动都会被自动折叠成一行，安静超过 FOLD_WINDOW 后恢复逐条记录。
+FOLD_WINDOW = 600.0      # 串内两次变化的允许间隔（滚动窗口，秒）
+FOLD_AFTER = 5           # 一串内前 N 条记明细，之后折叠
+FOLD_MAX_PATHS = 20000   # 折叠状态字典上限，超出时清掉过期条目
+_FOLD_EVENTS = frozenset({"created", "modified", "deleted", "recreated"})
 
 
 class _SqlExecutor(Protocol):
@@ -181,6 +193,7 @@ class SpaceEvent:
     new_size: int
     delta_bytes: int
     occurred_at: float
+    merged_count: int = 1
 
 
 @dataclass(frozen=True)
@@ -369,6 +382,8 @@ class Storage:
         self._read = _ReadPool(self._connect)
         # 数据变更计数：每次写事务成功提交 +1，供 UI 判断"是否需要重载"
         self._change_seq = 0
+        # 高频折叠状态：path -> (最近事件时间, 串内事件数, 聚合行 id, 归属日)
+        self._fold: dict[str, tuple[float, int, int | None, str]] = {}
 
     @property
     def change_seq(self) -> int:
@@ -497,6 +512,14 @@ class Storage:
                 )
                 """
             )
+        if ver < 4:
+            try:
+                self._write.execute(
+                    "ALTER TABLE space_events "
+                    "ADD COLUMN merged_count INTEGER NOT NULL DEFAULT 1"
+                )
+            except sqlite3.OperationalError:
+                pass  # 列已存在（可能旧 DB 碰巧有）
         if ver < _SCHEMA_VERSION:
             self._write.execute(
                 "INSERT OR REPLACE INTO meta VALUES ('schema_version', ?)",
@@ -547,47 +570,14 @@ class Storage:
         """最近的写入错误，[(timestamp, message)]，新到旧。"""
         return list(self._write_errors)[::-1]
 
-    def _insert_space_event_locked(
-        self,
-        record: FileRecord,
-        event_type: str,
-        old_size: int,
-        new_size: int,
-        occurred_at: float,
-        *,
-        old_path: str | None = None,
-        drive: str | None = None,
-        delta_bytes: int | None = None,
+    def _rollup_event_locked(
+        self, drive: str, category: str, delta: int, occurred_at: float
     ) -> None:
-        delta = new_size - old_size if delta_bytes is None else delta_bytes
-        day = _day_of(occurred_at)
-        self._write.execute(
-            """
-            INSERT INTO space_events (
-                path, old_path, name, ext, drive, folder, category, event_type,
-                old_size, new_size, delta_bytes, occurred_at, day
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record.path,
-                old_path,
-                record.name,
-                record.ext,
-                drive if drive is not None else record.drive,
-                record.folder,
-                record.category,
-                event_type,
-                old_size,
-                new_size,
-                delta,
-                occurred_at,
-                day,
-            ),
-        )
+        """把一条事件折算进小时/天汇总（无论是否折叠，都按原始事件计入）。"""
         hour = datetime.fromtimestamp(occurred_at).strftime("%Y-%m-%dT%H:00")
+        day = _day_of(occurred_at)
         occupied = max(delta, 0)
         released = max(-delta, 0)
-        event_drive = drive if drive is not None else record.drive
         for table, column, bucket in (
             ("space_hourly", "hour", hour),
             ("space_daily", "day", day),
@@ -604,8 +594,107 @@ class Storage:
                     net_bytes = net_bytes + excluded.net_bytes,
                     event_count = event_count + 1
                 """,
-                (bucket, event_drive, record.category, occupied, released, delta),
+                (bucket, drive, category, occupied, released, delta),
             )
+
+    def _shrink_fold_locked(self) -> None:
+        """折叠状态字典超限时清掉过期条目，防止长跑进程内存缓涨。"""
+        if len(self._fold) <= FOLD_MAX_PATHS:
+            return
+        cutoff = time.time() - FOLD_WINDOW * 6
+        for path in [p for p, state in self._fold.items() if state[0] < cutoff]:
+            del self._fold[path]
+
+    def _insert_space_event_locked(
+        self,
+        record: FileRecord,
+        event_type: str,
+        old_size: int,
+        new_size: int,
+        occurred_at: float,
+        *,
+        old_path: str | None = None,
+        drive: str | None = None,
+        delta_bytes: int | None = None,
+    ) -> None:
+        """写一条空间事件；高频同路径变化在此折叠为单条聚合行。
+
+        - 零字节变化（0B 创建/删除/改写）对空间账本零信息，直接不记。
+        - 同路径在 FOLD_WINDOW 内反复变化时，前 FOLD_AFTER 条记明细，
+          之后并入 event_type='churn' 的聚合行，净字节不丢。
+        """
+        delta = new_size - old_size if delta_bytes is None else delta_bytes
+        if delta == 0 and event_type != "moved":
+            return
+        event_drive = drive if drive is not None else record.drive
+        day = _day_of(occurred_at)
+        merged_count = 1
+        fold_state: tuple[float, int, int | None, str] | None = None
+        if event_type in _FOLD_EVENTS:
+            state = self._fold.get(record.path)
+            in_burst = bool(
+                state is not None
+                and state[3] == day
+                and 0.0 <= occurred_at - state[0] <= FOLD_WINDOW
+            )
+            if in_burst:
+                assert state is not None
+                _, count, agg_id, _ = state
+                count += 1
+                if agg_id is not None:
+                    # 串内第 FOLD_AFTER+1 条起：并入已有聚合行，不新增行
+                    self._write.execute(
+                        "UPDATE space_events SET new_size = ?, "
+                        "delta_bytes = delta_bytes + ?, occurred_at = ?, "
+                        "merged_count = merged_count + 1 WHERE id = ?",
+                        (new_size, delta, occurred_at, agg_id),
+                    )
+                    self._fold[record.path] = (occurred_at, count, agg_id, day)
+                    self._rollup_event_locked(
+                        event_drive, record.category, delta, occurred_at
+                    )
+                    return
+                if count > FOLD_AFTER:
+                    # 首次越阈值：从这条起新开聚合行
+                    event_type = "churn"
+                    merged_count = count - FOLD_AFTER
+                fold_state = (occurred_at, count, None, day)
+            else:
+                self._shrink_fold_locked()
+                fold_state = (occurred_at, 1, None, day)
+        cur = self._write.execute(
+            """
+            INSERT INTO space_events (
+                path, old_path, name, ext, drive, folder, category, event_type,
+                old_size, new_size, delta_bytes, occurred_at, day, merged_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.path,
+                old_path,
+                record.name,
+                record.ext,
+                event_drive,
+                record.folder,
+                record.category,
+                event_type,
+                old_size,
+                new_size,
+                delta,
+                occurred_at,
+                day,
+                merged_count,
+            ),
+        )
+        if fold_state is not None:
+            # 只有聚合行才记住 id（后续事件并入它）；明细行存 None
+            self._fold[record.path] = (
+                fold_state[0],
+                fold_state[1],
+                int(cur.lastrowid or 0) if event_type == "churn" else None,
+                fold_state[3],
+            )
+        self._rollup_event_locked(event_drive, record.category, delta, occurred_at)
 
     def _observe_record_locked(
         self,
@@ -1209,7 +1298,7 @@ class Storage:
         args.extend((max(1, limit), max(0, offset)))
         rows = self._read.execute(
             "SELECT id, path, old_path, drive, category, event_type, old_size, "
-            "new_size, delta_bytes, occurred_at FROM space_events WHERE "
+            "new_size, delta_bytes, occurred_at, merged_count FROM space_events WHERE "
             + " AND ".join(where)
             + f" ORDER BY {order_by} LIMIT ? OFFSET ?",
             args,
@@ -1226,6 +1315,7 @@ class Storage:
                 new_size=int(r["new_size"]),
                 delta_bytes=int(r["delta_bytes"]),
                 occurred_at=float(r["occurred_at"]),
+                merged_count=int(r["merged_count"]),
             )
             for r in rows
         ]
@@ -1262,7 +1352,8 @@ class Storage:
             args = [*aliases, max(limit * 2, 100)]
             rows = self._read.execute(
                 "SELECT id, path, old_path, drive, category, event_type, "
-                "old_size, new_size, delta_bytes, occurred_at FROM space_events "
+                "old_size, new_size, delta_bytes, occurred_at, merged_count "
+                "FROM space_events "
                 f"WHERE path IN ({placeholders}) "
                 "ORDER BY occurred_at DESC, id DESC LIMIT ?",
                 args,
@@ -1295,6 +1386,7 @@ class Storage:
             new_size=int(row["new_size"]),
             delta_bytes=int(row["delta_bytes"]),
             occurred_at=float(row["occurred_at"]),
+            merged_count=int(row["merged_count"]),
         )
 
     @staticmethod

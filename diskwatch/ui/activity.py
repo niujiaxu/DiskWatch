@@ -58,7 +58,15 @@ EVENT_LABELS = {
     "moved_in": "跨盘移入",
     "moved_out": "跨盘移出",
     "resurrected": "重新创建",
+    "churn": "高频变化",
 }
+
+
+def _event_label(event: SpaceEvent) -> str:
+    """高频聚合行显示合并条数；其余走常规事件名。"""
+    if event.merged_count > 1:
+        return tr("高频变化 ×{n}", n=event.merged_count)
+    return tr(EVENT_LABELS.get(event.event_type, event.event_type))
 
 
 class ActivityPanel(QWidget):
@@ -448,7 +456,7 @@ class ActivityPanel(QWidget):
                         "%m-%d %H:%M:%S"
                     ),
                     path.name,
-                    tr(EVENT_LABELS.get(event.event_type, event.event_type)),
+                    _event_label(event),
                     _signed_size(event.delta_bytes),
                     tr(CATEGORY_LABELS.get(event.category, "未分类")),
                     str(path.parent),
@@ -508,10 +516,16 @@ class ActivityPanel(QWidget):
         self.detail_name.setText(path.name or event.path)
         self.detail_meta.setText(
             tr("{event} · {category}\n{time}",
-               event=tr(EVENT_LABELS.get(event.event_type, event.event_type)),
+               event=_event_label(event),
                category=tr(CATEGORY_LABELS.get(event.category, "未分类")),
                time=datetime.fromtimestamp(event.occurred_at).strftime("%Y-%m-%d %H:%M:%S"))
         )
+        if event.merged_count > 1:
+            self.detail_meta.setText(
+                self.detail_meta.text()
+                + "\n"
+                + tr("已合并 {n} 次变化", n=event.merged_count)
+            )
         self.detail_sizes.setText(
             tr("原大小 {old}\n新大小 {new}\n空间影响 {delta}",
                old=human_size(event.old_size), new=human_size(event.new_size),
@@ -682,7 +696,7 @@ class ActivityPanel(QWidget):
                                 [
                                     datetime.fromtimestamp(event.occurred_at).isoformat(sep=" ", timespec="seconds"),
                                     Path(event.path).name,
-                                    tr(EVENT_LABELS.get(event.event_type, event.event_type)),
+                                    _event_label(event),
                                     event.delta_bytes,
                                     tr(CATEGORY_LABELS.get(event.category, "未分类")),
                                     event.path,

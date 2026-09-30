@@ -185,7 +185,79 @@ def test_failed_migration_restores_original_database(monkeypatch, tmp_path) -> N
         assert "space_events" not in tables
     finally:
         restored.close()
-    assert list(tmp_path.glob("rollback.db.migration-v1-to-v3.bak"))
+    assert list(tmp_path.glob("rollback.db.migration-v1-to-v4.bak"))
+
+
+def test_zero_delta_events_are_not_recorded() -> None:
+    """0B 创建/删除/改写对空间账本零信息：只更新状态，不写明细。"""
+    storage = _storage()
+    path = r"C:\data\empty.lock"
+    try:
+        storage.add_files([make_record(path, 0, added_at=100.0)])
+        storage.add_files(
+            [make_record(path, 0, added_at=101.0)],
+            event_type="modified",
+            occurred_at=101.0,
+        )
+        storage.mark_deleted([path], deleted_at=102.0)
+        assert storage.space_events() == []
+        state = storage._read.execute(
+            "SELECT size, exists_now FROM file_state WHERE path = ?", (path,)
+        ).fetchone()
+        assert state is not None
+        assert int(state["size"]) == 0
+        assert int(state["exists_now"]) == 0
+    finally:
+        storage.close()
+
+
+def test_high_frequency_same_path_events_are_folded() -> None:
+    """同一路径 10 分钟内的连续变化：前 5 条记明细，之后折叠为聚合行。"""
+    storage = _storage()
+    path = r"C:\work\collect.sqlite-journal"
+    try:
+        # 模拟 SQLite journal 抖动：创建→删除→重建……每 3 秒一轮
+        storage.add_files(
+            [make_record(path, 5000, added_at=100.0)], occurred_at=100.0
+        )
+        storage.mark_deleted([path], deleted_at=103.0)
+        storage.add_files(
+            [make_record(path, 5000, added_at=106.0)], occurred_at=106.0
+        )
+        storage.mark_deleted([path], deleted_at=109.0)
+        storage.add_files(
+            [make_record(path, 5000, added_at=112.0)], occurred_at=112.0
+        )
+        storage.mark_deleted([path], deleted_at=115.0)  # 第 6 条 → 聚合行
+        storage.add_files(
+            [make_record(path, 6000, added_at=118.0)], occurred_at=118.0
+        )
+        storage.mark_deleted([path], deleted_at=121.0)
+
+        events = list(reversed(storage.space_events(limit=20)))
+        assert [e.event_type for e in events] == [
+            "created", "deleted", "recreated", "deleted", "recreated", "churn",
+        ]
+        folded = events[-1]
+        assert folded.merged_count == 3
+        assert folded.delta_bytes == -5000 + 6000 - 6000
+        # 净字节一条不丢：明细 + 聚合 = 全部原始事件之和
+        assert sum(e.delta_bytes for e in events) == 0
+        daily = storage._read.execute(
+            "SELECT net_bytes, event_count FROM space_daily"
+        ).fetchone()
+        assert int(daily["net_bytes"]) == 0
+        assert int(daily["event_count"]) == 8
+
+        # 安静超过窗口后开启新一串：恢复逐条明细
+        storage.add_files(
+            [make_record(path, 700, added_at=1100.0)], occurred_at=1100.0
+        )
+        latest = storage.space_events(limit=1)[0]
+        assert latest.event_type == "recreated"
+        assert latest.merged_count == 1
+    finally:
+        storage.close()
 
 
 def test_space_event_paging_filters_and_category_totals() -> None:

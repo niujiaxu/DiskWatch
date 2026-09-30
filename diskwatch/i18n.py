@@ -119,6 +119,9 @@ _TRANSLATIONS: dict[str, str] = {
     "跨盘移入": "Moved In Across Drives",
     "跨盘移出": "Moved Out Across Drives",
     "重新创建": "Recreated",
+    "高频变化": "High-Churn",
+    "高频变化 ×{n}": "High-churn ×{n}",
+    "已合并 {n} 次变化": "{n} rapid changes merged",
 
     # ---------- widget.py ----------
     "今日空间变化": "Today's Space Change",
