@@ -69,6 +69,16 @@ def _event_label(event: SpaceEvent) -> str:
     return tr(EVENT_LABELS.get(event.event_type, event.event_type))
 
 
+# 可排序列 → (升序键, 降序键, 首次点击是否用降序)。「所在目录」列不参与排序。
+_SORT_COLUMNS: dict[int, tuple[str, str, bool]] = {
+    0: ("time_asc", "time_desc", True),
+    1: ("name_asc", "name_desc", False),
+    2: ("type_asc", "type_desc", False),
+    3: ("delta_asc", "delta_desc", True),
+    4: ("category_asc", "category_desc", False),
+}
+
+
 class ActivityPanel(QWidget):
     """固定页大小，避免几十万条事件一次性进入 UI。"""
 
@@ -202,10 +212,12 @@ class ActivityPanel(QWidget):
         header.setSectionsClickable(True)
         header.setSortIndicatorShown(False)
         header.sectionClicked.connect(self._sort_by_column)
+        header.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
         self.table.setColumnWidth(0, 132)
         self.table.setColumnWidth(2, 88)
         self.table.setColumnWidth(3, 112)
         self.table.setColumnWidth(4, 100)
+        self._sync_sort_indicator()
         self.table.itemSelectionChanged.connect(self._show_selected)
         self.table.cellClicked.connect(self._table_clicked)
         self.table.cellDoubleClicked.connect(lambda _r, _c: self._reveal_selected())
@@ -618,33 +630,43 @@ class ActivityPanel(QWidget):
         self.reload(keep_day=True)
 
     def _sort_by_column(self, column: int) -> None:
-        """空间影响列使用数据库排序，确保跨分页顺序正确。"""
-        if column != 3:
+        """点击表头切换升/降序（数据库级排序，跨分页顺序正确）。
+
+        「所在目录」列不参与排序：只把 Qt 可能挪过去的指示器还原。
+        """
+        spec = _SORT_COLUMNS.get(column)
+        if spec is None:
+            self._sync_sort_indicator()
             return
-        if self._space_sort_order == "delta_desc":
-            self._space_sort_order = "delta_asc"
-            qt_order = Qt.AscendingOrder
+        asc_key, desc_key, default_desc = spec
+        if self._space_sort_order == desc_key:
+            self._space_sort_order = asc_key
+        elif self._space_sort_order == asc_key:
+            self._space_sort_order = desc_key
         else:
-            self._space_sort_order = "delta_desc"
-            qt_order = Qt.DescendingOrder
-        header = self.table.horizontalHeader()
-        header.setSortIndicator(3, qt_order)
-        header.setSortIndicatorShown(True)
+            self._space_sort_order = desc_key if default_desc else asc_key
+        self._sync_sort_indicator()
         self._page = 0
         self.reload(keep_day=True)
 
+    def _on_sort_indicator_changed(self, _section: int, _order) -> None:
+        """Qt 点击表头时会自行挪动排序指示器（包括不可排序列），按真实状态还原。"""
+        self._sync_sort_indicator()
+
     def _sync_sort_indicator(self) -> None:
+        """排序指示器只出现在真正生效的排序列上。"""
         header = self.table.horizontalHeader()
-        if self._space_sort_order == "time_desc":
-            header.setSortIndicatorShown(False)
-            return
-        order = (
-            Qt.DescendingOrder
-            if self._space_sort_order == "delta_desc"
-            else Qt.AscendingOrder
-        )
-        header.setSortIndicator(3, order)
-        header.setSortIndicatorShown(True)
+        for column, (asc_key, desc_key, _default) in _SORT_COLUMNS.items():
+            if self._space_sort_order in (asc_key, desc_key):
+                order = (
+                    Qt.AscendingOrder
+                    if self._space_sort_order == asc_key
+                    else Qt.DescendingOrder
+                )
+                header.setSortIndicator(column, order)
+                header.setSortIndicatorShown(True)
+                return
+        header.setSortIndicatorShown(False)
 
     def _export_csv(self) -> None:
         path, _ = QFileDialog.getSaveFileName(

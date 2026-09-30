@@ -1292,8 +1292,15 @@ class Storage:
         )
         order_by = {
             "time_desc": "occurred_at DESC, id DESC",
+            "time_asc": "occurred_at ASC, id ASC",
             "delta_desc": "delta_bytes DESC, occurred_at DESC, id DESC",
             "delta_asc": "delta_bytes ASC, occurred_at DESC, id DESC",
+            "name_asc": "name COLLATE NOCASE ASC, occurred_at DESC, id DESC",
+            "name_desc": "name COLLATE NOCASE DESC, occurred_at DESC, id DESC",
+            "type_asc": "event_type ASC, occurred_at DESC, id DESC",
+            "type_desc": "event_type DESC, occurred_at DESC, id DESC",
+            "category_asc": "category ASC, occurred_at DESC, id DESC",
+            "category_desc": "category DESC, occurred_at DESC, id DESC",
         }.get(sort_order, "occurred_at DESC, id DESC")
         args.extend((max(1, limit), max(0, offset)))
         rows = self._read.execute(

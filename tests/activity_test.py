@@ -2,8 +2,10 @@
 
 import threading
 import time
+from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QSplitter, QWidget
 
 from diskwatch.storage import Storage, make_record
@@ -307,6 +309,82 @@ def test_activity_detail_card_scales_with_width(qapp, tmp_path) -> None:
 
         assert large > small
         assert large <= panel.detail_card.maximumWidth()
+        panel.close()
+    finally:
+        storage.close()
+
+
+def test_activity_sorts_columns_except_folder(qapp, tmp_path) -> None:
+    """时间/文件名/活动类型/分类可升降序切换；「所在目录」列不参与排序。"""
+    storage = Storage(tmp_path / "sortable.db")
+    now = time.time()
+    try:
+        storage.add_files(
+            [
+                make_record(r"C:\data\b.bin", 20, now - 2, "user"),
+                make_record(r"C:\data\a.bin", 10, now - 1, "development"),
+                make_record(r"C:\data\c.bin", 30, now - 3, "cache"),
+            ]
+        )
+        panel = ActivityPanel(storage)
+        panel.resize(1200, 500)
+        panel.show()
+        _settle(qapp, panel)
+        header = panel.table.horizontalHeader()
+
+        def names() -> list[str]:
+            return [Path(e.path).name for e in panel._events]
+
+        panel._sort_by_column(1)
+        _settle(qapp, panel)
+        assert panel._space_sort_order == "name_asc"
+        assert names() == ["a.bin", "b.bin", "c.bin"]
+        assert header.sortIndicatorSection() == 1
+
+        panel._sort_by_column(1)
+        _settle(qapp, panel)
+        assert panel._space_sort_order == "name_desc"
+        assert names() == ["c.bin", "b.bin", "a.bin"]
+
+        panel._sort_by_column(0)
+        _settle(qapp, panel)
+        assert panel._space_sort_order == "time_desc"
+        assert names() == ["a.bin", "b.bin", "c.bin"]
+        panel._sort_by_column(0)
+        _settle(qapp, panel)
+        assert panel._space_sort_order == "time_asc"
+        assert names() == ["c.bin", "b.bin", "a.bin"]
+
+        panel._sort_by_column(2)
+        _settle(qapp, panel)
+        assert panel._space_sort_order == "type_asc"
+        assert {e.event_type for e in panel._events} == {"created"}
+
+        panel._sort_by_column(4)
+        _settle(qapp, panel)
+        assert panel._space_sort_order == "category_asc"
+        assert [e.category for e in panel._events] == [
+            "cache", "development", "user",
+        ]
+
+        # 模拟 Qt 点击表头时把指示器挪到「所在目录」：必须立即还原
+        header.setSortIndicator(5, Qt.AscendingOrder)
+        qapp.processEvents()
+        assert header.sortIndicatorSection() == 4
+        assert panel._space_sort_order == "category_asc"
+
+        # 真实点击「所在目录」表头：排序状态不变、指示器不留在该列
+        x = sum(panel.table.columnWidth(i) for i in range(5))
+        x += panel.table.columnWidth(5) // 2
+        QTest.mouseClick(
+            header.viewport(),
+            Qt.LeftButton,
+            Qt.NoModifier,
+            QPoint(x, header.height() // 2),
+        )
+        qapp.processEvents()
+        assert panel._space_sort_order == "category_asc"
+        assert header.sortIndicatorSection() == 4
         panel.close()
     finally:
         storage.close()
