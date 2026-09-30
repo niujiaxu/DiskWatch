@@ -1819,27 +1819,6 @@ class Storage:
     def days_with_data(self, limit: int = 60) -> list[DaySummary]:
         return _query_day_summaries(self._read, limit)
 
-    def top_folders(self, day: str, limit: int = 5) -> list[tuple[str, int, int]]:
-        cur = self._read.execute(
-            "SELECT folder, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
-            "WHERE day = ? AND deleted = 0 GROUP BY folder "
-            "ORDER BY c DESC, s DESC LIMIT ?",
-            (day, limit),
-        )
-        return [(r["folder"], int(r["c"]), int(r["s"])) for r in cur.fetchall()]
-
-    def top_extensions(self, day: str, limit: int = 8) -> list[tuple[str, int, int]]:
-        cur = self._read.execute(
-            "SELECT ext, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
-            "WHERE day = ? AND deleted = 0 GROUP BY ext "
-            "ORDER BY c DESC LIMIT ?",
-            (day, limit),
-        )
-        return [
-            (r["ext"] or tr("(无扩展名)"), int(r["c"]), int(r["s"]))
-            for r in cur.fetchall()
-        ]
-
     def max_day_count(self, days: int = 7) -> int:
         """近 N 天里单日新增最多是多少，用于给悬浮球的进度环定标。"""
         cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
@@ -1886,41 +1865,6 @@ class Storage:
         conn.execute("PRAGMA busy_timeout=5000")
         try:
             return _query_day_summaries(conn, limit)
-        finally:
-            conn.close()
-
-    def top_folders_range(self, days: int, limit: int = 10) -> list[tuple[str, int, int]]:
-        """近 N 天（含今天）按目录聚合 TOP，体积降序，后台线程可用。"""
-        cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
-        conn = self._connect()
-        conn.execute("PRAGMA busy_timeout=5000")
-        try:
-            cur = conn.execute(
-                "SELECT folder, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
-                "WHERE day >= ? AND deleted = 0 GROUP BY folder "
-                "ORDER BY s DESC, c DESC LIMIT ?",
-                (cutoff, limit),
-            )
-            return [(r["folder"], int(r["c"]), int(r["s"])) for r in cur.fetchall()]
-        finally:
-            conn.close()
-
-    def top_extensions_range(self, days: int, limit: int = 8) -> list[tuple[str, int, int]]:
-        """近 N 天（含今天）按扩展名聚合 TOP，体积降序，后台线程可用。"""
-        cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
-        conn = self._connect()
-        conn.execute("PRAGMA busy_timeout=5000")
-        try:
-            cur = conn.execute(
-                "SELECT ext, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
-                "WHERE day >= ? AND deleted = 0 GROUP BY ext "
-                "ORDER BY s DESC, c DESC LIMIT ?",
-                (cutoff, limit),
-            )
-            return [
-                (r["ext"] or tr("(无扩展名)"), int(r["c"]), int(r["s"]))
-                for r in cur.fetchall()
-            ]
         finally:
             conn.close()
 

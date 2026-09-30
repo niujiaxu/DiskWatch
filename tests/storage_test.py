@@ -223,26 +223,6 @@ def test_recent_files_order_and_limit() -> None:
         s.close()
 
 
-def test_top_folders_and_extensions() -> None:
-    tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
-    s = _storage(tmp)
-    day = today_str()
-    try:
-        s.add_files(
-            [
-                make_record(r"C:\a\f1.jpg", 10),
-                make_record(r"C:\a\f2.jpg", 20),
-                make_record(r"C:\b\f3.png", 30),
-            ]
-        )
-        folders = s.top_folders(day)
-        assert folders[0][0] == r"C:\a" and folders[0][1] == 2, folders
-        exts = s.top_extensions(day)
-        assert exts[0][0] == ".jpg" and exts[0][1] == 2, exts
-    finally:
-        s.close()
-
-
 def test_fetch_day_view() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
     s = _storage(tmp)

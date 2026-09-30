@@ -70,8 +70,6 @@ def test_full_chain() -> None:
         assert total > 0, f"{count} 个 · {human_size(total)}"
 
         assert bool(storage.days_with_data())
-        assert bool(storage.top_folders(day))
-        assert bool(storage.top_extensions(day))
         assert len(storage.files_for_day(day, "nested")) == 1
 
         (tmp / "report.docx").unlink()

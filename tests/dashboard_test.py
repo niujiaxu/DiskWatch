@@ -63,34 +63,6 @@ def test_label_left_keeps_labels_inside_widget() -> None:
     assert _label_left(10.0, 400.0, 200.0) == 0.0    # 标签比控件还宽 → 从 0 开始
 
 
-def test_top_folders_range(qapp, tmp_path) -> None:
-    s = _storage(tmp_path)
-    try:
-        _seed(s)
-        rows = s.top_folders_range(3, limit=5)
-        assert len(rows) == 2, rows
-        assert rows[0][0] == r"C:\AppA"  # 体积降序
-        assert rows[0][2] == 3 * (30_000_000 + 3_000_000) + 6  # 每文件 +k 共 +6
-        assert rows[0][2] > rows[1][2]
-        # 数量列正确：AppA 每天 2 个文件，AppB 每天 1 个
-        assert rows[0][1] == 6 and rows[1][1] == 3
-    finally:
-        s.close()
-
-
-def test_top_extensions_range(qapp, tmp_path) -> None:
-    s = _storage(tmp_path)
-    try:
-        _seed(s)
-        rows = s.top_extensions_range(3, limit=5)
-        assert rows[0][0] == ".zip"
-        assert rows[0][2] == 90_000_003  # 3 × 30M + 0+1+2
-        assert rows[1][0] == ".txt"
-        assert rows[0][2] > rows[1][2]
-    finally:
-        s.close()
-
-
 def test_disk_space_trend(qapp, tmp_path) -> None:
     s = _storage(tmp_path)
     try:
