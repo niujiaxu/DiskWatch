@@ -54,6 +54,36 @@ def state(app) -> str:
     return f"card={app.widget.isVisible()} ball={app.ball.isVisible()}"
 
 
+def test_ui_watchdog_reports_main_thread_hang(dw_app, qapp, monkeypatch) -> None:
+    """主线程卡住时看门狗要把调用栈写进日志（供事后定位“点不动”）。
+
+    测试里主线程就是本线程：直接 sleep 不跑事件循环，心跳随之停跳。
+    """
+    import time as _time
+
+    import diskwatch.app as appmod
+    from diskwatch.errorlog import errorlog
+
+    monkeypatch.setattr(appmod, "UI_HANG_THRESHOLD", 0.4)
+    monkeypatch.setattr(appmod, "UI_HANG_REPORT_INTERVAL", 0.0)
+    monkeypatch.setattr(appmod, "UI_WATCHDOG_POLL", 0.05)
+
+    _time.sleep(1.5)  # 主线程故意卡住（不处理事件）
+
+    deadline = _time.monotonic() + 4
+    hit = ""
+    while _time.monotonic() < deadline:
+        _time.sleep(0.1)
+        for _level, message in errorlog.recent(50):
+            if "主线程已卡住" in message:
+                hit = message
+                break
+        if hit:
+            break
+    assert hit, "看门狗应检测到主线程停跳并写入日志"
+    assert "调用栈" in hit and "ui_state_test.py" in hit, hit
+
+
 def test_scan_finish_resets_strip_even_when_window_hidden(dw_app, qapp) -> None:
     """回归：主窗口隐藏时补扫结束也必须收尾。
 

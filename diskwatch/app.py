@@ -43,6 +43,10 @@ class _ScanNotifier(QObject):
 
 PURGE_INTERVAL_MS = 60 * 60 * 1000  # 每小时清一次过期数据
 IPC_NAME = f"{APP_NAME}-activate"
+UI_HEARTBEAT_MS = 500  # 主线程心跳间隔
+UI_WATCHDOG_POLL = 2.0  # 看门狗轮询间隔
+UI_HANG_THRESHOLD = 5.0  # 停跳超过这个秒数判定为卡顿
+UI_HANG_REPORT_INTERVAL = 30.0  # 同一段卡顿最多每 30 秒报告一次
 
 
 class DiskWatchApp:
@@ -95,6 +99,20 @@ class DiskWatchApp:
         self._tip_timer.timeout.connect(self._update_tooltip)
         self._tip_timer.start(5000)
         self._update_tooltip()
+
+        # 主线程心跳 + 卡顿看门狗：桌面应用“点什么都不回应”通常是主线程被
+        # 某个阻塞调用卡住（DB 忙、死锁、隐藏的模态框）。这里让 UI 定时器
+        # 打心跳，后台线程发现停跳超过阈值就把主线程调用栈和可见模态窗口
+        # 写进日志，下次再卡就能直接定位。
+        self._ui_heartbeat = 0
+        self._ui_watchdog_stop = False
+        self._ui_beat_timer = QTimer(qt_app)
+        self._ui_beat_timer.timeout.connect(self._beat)
+        self._ui_beat_timer.start(UI_HEARTBEAT_MS)
+        self._ui_watchdog = threading.Thread(
+            target=self._watch_ui, name="dw-ui-watchdog", daemon=True
+        )
+        self._ui_watchdog.start()
 
         self.widget.hide()
         self.ball.hide()
@@ -418,6 +436,7 @@ class DiskWatchApp:
 
     def _shutdown(self) -> None:
         """统一的关闭序列：汇合后台线程 → 停监控 → 关库 → 收起托盘 → 退出。"""
+        self._ui_watchdog_stop = True  # 收尾阶段的 join 不算卡顿，别误报
         self._join_background()
         self.dashboard.wait_for_idle()
         self.panel.wait_for_idle()
@@ -610,6 +629,67 @@ class DiskWatchApp:
                 refresh()
             except Exception as exc:
                 errorlog.log_exception(f"scan-refresh-{name}", exc)
+
+    # ---------- 主线程卡顿诊断 ----------
+
+    def _beat(self) -> None:
+        """UI 线程心跳：主线程只要在跑事件循环就会定期执行。"""
+        self._ui_heartbeat += 1
+
+    def _watch_ui(self) -> None:
+        """后台看门狗：主线程停跳超过阈值就把现场写进日志。
+
+        桌面应用“点什么都不回应”通常是主线程被阻塞（数据库忙、死锁、
+        隐藏的模态框）。这段诊断会把主线程的 Python 调用栈和当前的可见
+        顶层窗口一并落盘，用于事后定位，不影响正常使用。
+        """
+        last_seen = -1
+        stuck_since: float | None = None
+        reported_at = 0.0
+        while not self._ui_watchdog_stop:
+            time.sleep(UI_WATCHDOG_POLL)
+            beat = self._ui_heartbeat
+            now = time.monotonic()
+            if beat != last_seen:
+                last_seen = beat
+                stuck_since = None
+                reported_at = 0.0
+                continue
+            if stuck_since is None:
+                stuck_since = now
+                continue
+            stuck = now - stuck_since
+            if stuck >= UI_HANG_THRESHOLD and now - reported_at >= UI_HANG_REPORT_INTERVAL:
+                reported_at = now
+                try:
+                    errorlog.log(logging.WARNING, self._hang_report(stuck))
+                except Exception:
+                    pass
+
+    def _hang_report(self, stuck: float) -> str:
+        parts = [f"主线程已卡住 {stuck:.0f} 秒"]
+        try:
+            app = QApplication.instance()
+            if app is not None:
+                visible = []
+                for widget in app.topLevelWidgets():
+                    if widget.isVisible():
+                        flag = "（模态）" if widget.isModal() else ""
+                        visible.append(f"{type(widget).__name__}{flag}")
+                parts.append("可见顶层窗口：" + ("、".join(visible) if visible else "无"))
+        except Exception:
+            pass
+        parts.append("主线程调用栈：\n" + self._main_stack())
+        return "\n".join(parts)
+
+    @staticmethod
+    def _main_stack() -> str:
+        ident = threading.main_thread().ident
+        frames = sys._current_frames()
+        frame = frames.get(ident) if ident is not None else None
+        if frame is None:
+            return "（拿不到主线程调用栈）"
+        return "".join(traceback.format_stack(frame))
 
     def _update_tooltip(self) -> None:
         count, size = self.storage.day_stats(today_str())
