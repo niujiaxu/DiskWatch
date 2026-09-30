@@ -1,4 +1,4 @@
-"""存储层补充测试：删除标记、清理、聚合查询。"""
+﻿"""存储层补充测试：删除标记、清理、聚合查询。"""
 
 from __future__ import annotations
 
@@ -385,4 +385,35 @@ def test_backfill_records_times_out_when_write_lock_busy() -> None:
         assert s.backfill_records([make_record(r"C:\a\ok.txt", 1)], timeout=1.0) == 1
     finally:
         release.set()
+        s.close()
+
+def test_compact_reclaims_space_after_clear() -> None:
+    """清空数据后必须能真正回收文件空间（VACUUM + checkpoint）。
+
+    两个回归点：
+    1) SQLite 的 DELETE 只把页挂回空闲列表，不 VACUUM 的话库文件纹丝不动；
+    2) WAL 模式下 VACUUM 的结果先落在 WAL，必须在 VACUUM 之后再
+       checkpoint(TRUNCATE) 一次主库文件才会真正缩小。
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="dw_compact_"))
+    s = _storage(tmp)
+    try:
+        s.add_files(
+            [make_record(rf"C:\a\f{i:05d}.bin", 1000 + i) for i in range(20000)]
+        )
+        before = s.database_size()
+        assert before > 1_000_000, before
+        s.clear_all()
+        assert s.space_event_count() == 0
+
+        after = s.compact()
+        assert after < 1_000_000, after
+        # 主库文件本身也要变小（清空后应只剩 schema 的几十 KB）
+        assert s.path.stat().st_size < 1_000_000, s.path.stat().st_size
+        conn = sqlite3.connect(str(s.path))
+        try:
+            assert conn.execute("PRAGMA freelist_count").fetchone()[0] == 0
+        finally:
+            conn.close()
+    finally:
         s.close()

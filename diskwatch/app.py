@@ -47,6 +47,7 @@ UI_HEARTBEAT_MS = 500  # 主线程心跳间隔
 UI_WATCHDOG_POLL = 2.0  # 看门狗轮询间隔
 UI_HANG_THRESHOLD = 5.0  # 停跳超过这个秒数判定为卡顿
 UI_HANG_REPORT_INTERVAL = 30.0  # 同一段卡顿最多每 30 秒报告一次
+COMPACT_MIN_PURGED_ROWS = 2000  # 过期清理删掉这么多行后才 VACUUM 回收空间
 
 
 class DiskWatchApp:
@@ -463,7 +464,16 @@ class DiskWatchApp:
 
             def _run() -> None:
                 try:
-                    storage.purge_older_than(days)
+                    removed = storage.purge_older_than(days)
+                    if removed >= COMPACT_MIN_PURGED_ROWS:
+                        # 删掉几千行以上才回收一次空间：DELETE 只是把页还给
+                        # 空闲列表，不 VACUUM 的话库文件不会变小
+                        size = storage.compact()
+                        errorlog.log(
+                            logging.INFO,
+                            f"清理 {removed} 条过期记录后压缩数据库，"
+                            f"当前 {size / 1048576:.1f} MB",
+                        )
                 except Exception as exc:
                     errorlog.log_exception("purge", exc)
 

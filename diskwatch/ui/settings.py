@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
@@ -30,7 +32,7 @@ from ..autostart import is_enabled as autostart_enabled
 from ..autostart import set_enabled as set_autostart
 from ..config import Config, default_home, paths
 from ..i18n import SUPPORTED_LOCALES, tr
-from ..storage import Storage
+from ..storage import Storage, human_size
 from ..watcher import list_drives
 from .picker import DayPicker
 from .style import (
@@ -45,6 +47,7 @@ class SettingsDialog(QDialog):
     save_requested = Signal()
     cancel_requested = Signal()
     activity_requested = Signal()
+    compact_done = Signal(int)  # 后台 VACUUM 结束：压缩后的库大小（-1=失败）
 
     def __init__(
         self,
@@ -64,6 +67,8 @@ class SettingsDialog(QDialog):
         self.paths_changed = False
         self._pending_config_path = ""
         self._pending_db_path = ""
+        self._compacting = False
+        self.compact_done.connect(self._on_compact_done)
         self.setWindowTitle(tr("设置"))
         # 只关帮助按钮。切勿写 `& ~Qt.WindowContextHelpButtonHint`：
         # PySide6 里对 WindowType 做 ~ 得到的是残缺掩码（约 0x1feffff），
@@ -677,12 +682,49 @@ class SettingsDialog(QDialog):
         if ok == QMessageBox.Yes:
             self._storage.clear_all()
             self.lbl_total.setText(tr("当前已记录 {count} 条文件记录", count=0))
+            # DELETE 不会让库文件变小，必须 VACUUM 才回收空间
+            self._compact_async()
 
     def _purge_expired(self) -> None:
         removed = self._storage.purge_older_than(self.spin_retention.value())
         self.lbl_total.setText(
             tr("已清理 {count} 条过期记录", count=f"{removed:,}")
         )
+        if removed:
+            self._compact_async()
+
+    def _compact_async(self) -> None:
+        """后台 VACUUM 回收空间，完成后刷新体积显示。
+
+        VACUUM 要重写整个库并在期间持有写锁，几十万行可能几秒到几十秒；
+        放 UI 线程会把界面卡住，所以丢到后台线程并禁用按钮防重复点击。
+        """
+        if getattr(self, "_compacting", False):
+            return
+        self._compacting = True
+        self.lbl_total.setText(tr("正在压缩数据库（回收已删除数据占用的空间）…"))
+
+        def work() -> None:
+            try:
+                size = self._storage.compact()
+            except Exception:
+                size = -1
+            self.compact_done.emit(size)
+
+        self._worker = threading.Thread(target=work, name="dw-compact", daemon=True)
+        self._worker.start()
+
+    def _on_compact_done(self, size: int) -> None:
+        self._compacting = False
+        if size >= 0:
+            self.lbl_total.setText(
+                tr("数据库已压缩，当前大小 {size}", size=human_size(size))
+            )
+        else:
+            self.lbl_total.setText(
+                tr("压缩失败（可能磁盘空间不足或库被占用），详见日志")
+            )
+        self._refresh_diagnostics()
 
     def _refresh_diagnostics(self) -> None:
         if self._monitor is None:

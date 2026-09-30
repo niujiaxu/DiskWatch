@@ -1149,7 +1149,38 @@ class Storage:
             self._write.execute("DELETE FROM disk_samples")
             self._write.execute("DELETE FROM space_hourly")
             self._write.execute("DELETE FROM space_daily")
-            # 不做 VACUUM：会长时间锁库，点「清空」时容易把界面卡死
+            # 这里不做 VACUUM：DELETE 只把页还给空闲列表，文件不会立刻变小；
+            # 而 VACUUM 要重写整个库并在此期间持有写锁，不能放在 UI 线程。
+            # 调用方（设置页「清空所有记录」）会在后台线程里再调 compact()。
+
+    def compact(self) -> int:
+        """VACUUM 回收已删除数据占用的空间，返回压缩后的库文件总字节数。
+
+        SQLite 的 DELETE 不会让文件变小（页只是挂回空闲列表），这就是
+        「清空所有记录」后体积纹丝不动的原因。VACUUM 会重写整个库，需要
+        约等量临时空间、几十万行通常几秒，期间持有写锁；因此只在明确的
+        回收动作（清空数据、手动清理过期记录）里由后台线程调用。
+        """
+        with self._write_lock:
+            # VACUUM 不能在事务里执行：先结束可能存在的隐式事务
+            self._write.commit()
+            self._write.execute("VACUUM")
+            # 关键顺序：WAL 模式下 VACUUM 的结果先落在 WAL，主库文件不会
+            # 自己变小；必须在 VACUUM 之后再 checkpoint(TRUNCATE) 一次，
+            # 空间才真正还给文件系统（实测 40MB 的空库能降到几十 KB）。
+            self._write.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self._write.commit()
+        return self.database_size()
+
+    def database_size(self) -> int:
+        """库文件 + WAL + SHM 的总字节数（与设置页显示口径一致）。"""
+        total = 0
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                total += Path(str(self.path) + suffix).stat().st_size
+            except OSError:
+                pass
+        return total
 
     # ---------- 读（UI 主线程，不抢 write 锁）----------
 
@@ -1315,12 +1346,7 @@ class Storage:
 
     def database_metrics(self) -> dict[str, int | float]:
         """返回设置页需要的体积、写入速率与每日增长估算。"""
-        total_bytes = 0
-        for suffix in ("", "-wal", "-shm"):
-            try:
-                total_bytes += Path(str(self.path) + suffix).stat().st_size
-            except OSError:
-                pass
+        total_bytes = self.database_size()
         total_events = self.space_event_count()
         now = time.time()
         events_24h = self.space_event_count(since=now - 86400)
