@@ -261,6 +261,9 @@ class DiskWatchApp:
 
     def expand(self) -> None:
         self.config.set("collapsed", False)
+        if self.ball.isVisible():
+            # 从迷你球展开：卡片出现在球旁边，而不是停留在上一次卡片的位置
+            self.widget.place_near(self.ball.frameGeometry())
         self._show_surface()
 
     def _toggle_widget(self, checked: bool) -> None:

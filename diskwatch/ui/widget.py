@@ -381,6 +381,20 @@ class FloatingWidget(QWidget):
         self._signature = None
         self.refresh()
 
+    def place_near(self, rect) -> None:
+        """从迷你球展开时，让卡片右缘与球右缘对齐、顶边齐平，视觉上有连续感。"""
+        self.adjustSize()
+        screen = QApplication.screenAt(rect.center()) or QApplication.primaryScreen()
+        area = screen.availableGeometry() if screen is not None else None
+        x = rect.right() - self.width()
+        y = rect.top()
+        if area is not None:
+            x = max(area.left() + 8, min(x, area.right() - self.width() - 8))
+            y = max(area.top() + 8, min(y, area.bottom() - self.height() - 8))
+        self.move(int(x), int(y))
+        self._config.set("widget_pos", [self.x(), self.y()])
+        self._config.save_soon()
+
     def _restore_geometry(self) -> None:
         self.apply_appearance()
         pos = self._config.get("widget_pos")

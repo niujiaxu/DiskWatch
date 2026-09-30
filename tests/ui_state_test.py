@@ -167,6 +167,28 @@ def test_expand_from_ball(dw_app, qapp) -> None:
     assert dw_app.config.get("collapsed") is False
 
 
+def test_expand_from_ball_places_card_at_ball(dw_app, qapp) -> None:
+    """迷你球展开时卡片跟随球的位置（右缘对齐），不再停在旧位置。"""
+    app = dw_app
+    app.collapse()
+    qapp.processEvents()
+    ball = app.ball
+    screen = ball.screen() or qapp.primaryScreen()
+    area = screen.availableGeometry()
+    ball.move(area.left() + 200, area.top() + 60)
+    qapp.processEvents()
+
+    ball.expand_requested.emit()
+    qapp.processEvents()
+
+    widget = app.widget
+    assert widget.isVisible() and not ball.isVisible()
+    assert abs(widget.y() - (area.top() + 60)) <= 2, (widget.y(), area)
+    assert (
+        abs(widget.frameGeometry().right() - ball.frameGeometry().right()) <= 2
+    ), (widget.frameGeometry(), ball.frameGeometry())
+
+
 def test_hide_and_restore_via_tray(dw_app, qapp) -> None:
     dw_app.collapse()
     qapp.processEvents()

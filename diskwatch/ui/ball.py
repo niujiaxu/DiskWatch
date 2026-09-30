@@ -223,9 +223,12 @@ class MiniBall(QWidget):
 
     def place_near(self, rect) -> None:
         """从卡片收起时，让球出现在卡片右上角附近，视觉上有连续感。"""
-        screen = QApplication.primaryScreen().availableGeometry()
-        x = min(rect.right() - self.WIDTH, screen.right() - self.WIDTH - 8)
-        y = max(rect.top(), screen.top() + 8)
+        screen = QApplication.screenAt(rect.center()) or QApplication.primaryScreen()
+        area = screen.availableGeometry() if screen is not None else None
+        if area is None:
+            return
+        x = min(rect.right() - self.WIDTH, area.right() - self.WIDTH - 8)
+        y = max(rect.top(), area.top() + 8)
         self.move(int(x), int(y))
         self._save_pos()
 
