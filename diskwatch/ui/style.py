@@ -19,7 +19,13 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
 )
-from PySide6.QtWidgets import QApplication, QProxyStyle, QStyle, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QProxyStyle,
+    QStyle,
+    QStyledItemDelegate,
+    QWidget,
+)
 
 
 @dataclass(frozen=True)
@@ -303,6 +309,18 @@ class _CheckStyle(QProxyStyle):
         if metric in (QStyle.PM_IndicatorWidth, QStyle.PM_IndicatorHeight):
             return 16
         return super().pixelMetric(metric, option, widget)
+
+
+class NoFocusDelegate(QStyledItemDelegate):
+    """去掉当前单元格的黑色虚线焦点框。
+
+    Qt 默认会给"当前单元格"画一圈焦点虚线，视觉上像多了个奇怪边框；
+    整行选中高亮已足够指示位置，这里把焦点状态在绘制前清掉。
+    """
+
+    def paint(self, painter, option, index) -> None:
+        option.state &= ~QStyle.State_HasFocus
+        super().paint(painter, option, index)
 
 
 class ThemeController(QObject):

@@ -314,6 +314,45 @@ def test_activity_detail_card_scales_with_width(qapp, tmp_path) -> None:
         storage.close()
 
 
+def test_table_cells_have_no_focus_rect(qapp, tmp_path) -> None:
+    """当前单元格不再画黑色虚线焦点框（整行高亮保留）。"""
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QPainter, QPixmap, QStandardItem, QStandardItemModel
+    from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
+
+    from diskwatch.ui.style import NoFocusDelegate
+
+    storage = Storage(tmp_path / "no-focus.db")
+    try:
+        storage.add_files([make_record(r"C:\data\a.bin", 10)])
+        panel = ActivityPanel(storage)
+        _settle(qapp, panel)
+        assert isinstance(panel.table.itemDelegate(), NoFocusDelegate)
+
+        seen: dict[str, bool] = {}
+
+        class Spy(NoFocusDelegate):
+            def paint(self, painter, option, index):
+                super().paint(painter, option, index)
+                seen["focus"] = bool(option.state & QStyle.State_HasFocus)
+
+        model = QStandardItemModel()
+        model.appendRow(QStandardItem("x"))
+        pixmap = QPixmap(60, 24)
+        painter = QPainter(pixmap)
+        option = QStyleOptionViewItem()
+        option.state |= QStyle.State_HasFocus
+        option.rect = QRect(0, 0, 60, 24)
+        try:
+            Spy().paint(painter, option, model.index(0, 0))
+        finally:
+            painter.end()
+        assert seen["focus"] is False
+        panel.close()
+    finally:
+        storage.close()
+
+
 def test_activity_sorts_columns_except_folder(qapp, tmp_path) -> None:
     """时间/文件名/活动类型/分类可升降序切换；「所在目录」列不参与排序。"""
     storage = Storage(tmp_path / "sortable.db")

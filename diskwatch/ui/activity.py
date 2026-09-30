@@ -33,7 +33,7 @@ from ..i18n import tr
 from ..storage import SpaceEvent, Storage, human_size
 from ..watcher import open_in_explorer
 from .picker import DayPicker
-from .style import panel_qss, theme_tokens
+from .style import NoFocusDelegate, panel_qss, theme_tokens
 
 PAGE_SIZE = 200
 SEARCH_DEBOUNCE_MS = 260
@@ -198,6 +198,8 @@ class ActivityPanel(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
+        # 去掉当前单元格的黑色虚线焦点框（整行高亮已足够指示选中位置）
+        self.table.setItemDelegate(NoFocusDelegate(self.table))
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
         # ResizeToContents 会在可见表格逐项 setItem() 时反复测量整列，
