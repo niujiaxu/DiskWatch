@@ -466,6 +466,9 @@ class MainWindow(QMainWindow):
         self._show_front()
 
     def _show_front(self) -> None:
+        if not self.isVisible() and not self.isMaximized():
+            # 从隐藏状态打开：放到屏幕中心，避免系统默认落在左上角
+            self._center_on_screen()
         # 已最大化的窗口保持最大化，只在最小化时恢复。无条件
         # showNormal() 会让页面切换与窗口尺寸变化在同一时刻竞争布局。
         if self.isMinimized():
@@ -474,6 +477,16 @@ class MainWindow(QMainWindow):
             self.show()
         self.raise_()
         self.activateWindow()
+
+    def _center_on_screen(self) -> None:
+        """把窗口移到当前屏幕可用区中心（桌面中心）。"""
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        frame = self.frameGeometry()
+        frame.moveCenter(area.center())
+        self.move(frame.topLeft())
 
     def toggle_maximized(self) -> None:
         if self.isMaximized():

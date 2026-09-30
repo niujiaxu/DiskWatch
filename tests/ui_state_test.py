@@ -117,6 +117,29 @@ def test_settings_is_embedded_third_main_page(dw_app, qapp) -> None:
     assert dw_app.main_window.pages.currentWidget() is dw_app.dashboard
 
 
+def test_main_window_opens_centered(dw_app, qapp) -> None:
+    """详情/设置窗口从隐藏状态打开时定位到屏幕中心，而不是左上角。"""
+    win = dw_app.main_window
+    screen = win.screen() or qapp.primaryScreen()
+    area = screen.availableGeometry()
+
+    dw_app.show_panel()
+    qapp.processEvents()
+    center = win.frameGeometry().center()
+    assert abs(center.x() - area.center().x()) <= 2, (center, area)
+    assert abs(center.y() - area.center().y()) <= 2, (center, area)
+
+    # 挪到左上角再隐藏，重新打开时仍会回到屏幕中心
+    win.move(area.left(), area.top())
+    win.hide()
+    qapp.processEvents()
+    dw_app.show_settings()
+    qapp.processEvents()
+    center = win.frameGeometry().center()
+    assert abs(center.x() - area.center().x()) <= 2, (center, area)
+    assert abs(center.y() - area.center().y()) <= 2, (center, area)
+
+
 def test_collapse_to_ball(dw_app, qapp) -> None:
     dw_app.collapse()
     qapp.processEvents()
