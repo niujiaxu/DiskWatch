@@ -146,23 +146,32 @@ def test_mtime_pruning_still_descends_nested() -> None:
     storage.close()
 
 
-def test_full_capture_scan_keeps_previously_filtered_files() -> None:
+def test_scan_applies_exclusions_in_full_capture() -> None:
+    """补扫在全量采集下也要应用排除项。
+
+    回归：以前全量模式忽略排除规则，VM 镜像（.vhdx）、下载中间态（.part）、
+    点目录缓存都会被补进账本，把真正有意义的变化淹没。
+    """
     tmp = Path(tempfile.mkdtemp(prefix="dw_scan_all_"))
     config = _config(tmp)
     config.set("capture_mode", "all")
+    config.set("exclude_exts", [".tmp", ".part"])
     storage = Storage(tmp / "t.db")
     try:
+        normal = tmp / "note.txt"
         temp_file = tmp / "download.part"
         hidden_file = tmp / ".tool" / "cache.bin"
+        normal.write_text("hello")
         temp_file.write_text("partial")
         hidden_file.parent.mkdir()
         hidden_file.write_text("cache")
 
         scan_and_backfill(config, storage, [str(tmp)], lookback_days=3)
 
-        assert _row(storage, temp_file) is not None
-        assert _row(storage, hidden_file) is not None
-        assert _row(storage, tmp / "t.db") is None
+        assert _row(storage, normal) is not None  # 普通文件照常补
+        assert _row(storage, temp_file) is None  # 排除扩展名
+        assert _row(storage, hidden_file) is None  # 点目录
+        assert _row(storage, tmp / "t.db") is None  # 自身数据库
     finally:
         storage.close()
 

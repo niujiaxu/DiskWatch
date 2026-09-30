@@ -97,18 +97,28 @@ def test_min_size_property() -> None:
     assert f.min_size == 2 * 1024
 
 
-def test_full_capture_keeps_temp_and_focus_mode_filters_it(tmp_path) -> None:
+def test_exclusions_apply_in_both_capture_modes(tmp_path) -> None:
+    """排除项在两种采集模式下都生效。
+
+    回归：以前全量模式直接放行，设置里的排除项形同虚设——VM 磁盘镜像
+    （swap.vhdx / ext4.vhdx）、缓存、临时文件这类高频读写会把账本刷满，
+    真正有意义的变化反而看不见。
+    """
     config, _ = _filter()
     db = tmp_path / "diskwatch.db"
-    config.set("capture_mode", "all")
-    full = CapturePolicy(config, storage_path=db)
-    assert full.accepts_path(str(tmp_path / "cache.tmp"))
-    assert not full.accepts_path(str(db))
-    assert not full.accepts_path(str(db) + "-wal")
 
-    config.set("capture_mode", "focus")
-    focus = CapturePolicy(config, storage_path=db)
-    assert not focus.accepts_path(r"C:\x\cache.tmp")
+    for mode in ("all", "focus"):
+        config.set("capture_mode", mode)
+        policy = CapturePolicy(config, storage_path=db)
+        # 命中排除规则的（扩展名 / 目录片段 / 点目录）一律不记录
+        assert not policy.accepts_path(str(tmp_path / "cache.tmp")), mode
+        assert not policy.accepts_path(r"C:\x\node_modules\a.js"), mode
+        assert not policy.accepts_path(r"C:\x\.git\objects\a.bin"), mode
+        # 普通文件照常记录
+        assert policy.accepts_path(str(tmp_path / "report.docx")), mode
+        # 自身数据库及其旁路文件永远排除
+        assert not policy.accepts_path(str(db)), mode
+        assert not policy.accepts_path(str(db) + "-wal"), mode
 
 
 def test_file_classifier() -> None:

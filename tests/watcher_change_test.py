@@ -18,6 +18,13 @@ def test_repeated_modify_events_coalesce_to_final_size(monkeypatch) -> None:
     config.set("watch_mode", "folders")
     config.set("watch_folders", [str(root)])
     config.set("capture_mode", "all")
+    # 测试目录在 %TEMP% 下，而默认排除项包含 \temp\：这里清空排除层，
+    # 只验证"修改事件合并到最终大小"这一件事（过滤规则另有专门测试）。
+    config.set("exclude_dirs", [])
+    config.set("exclude_exts", [])
+    config.set("exclude_names", [])
+    config.set("ignore_hidden", False)
+    config.set("ignore_dot_dirs", False)
     storage = Storage(root / "diskwatch.db")
     monitor = FileMonitor(config, storage)
     monkeypatch.setattr(watchermod, "MODIFY_SETTLE_DELAY", 0.15)

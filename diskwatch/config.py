@@ -180,7 +180,7 @@ def reset_paths_to_default(*, migrate: bool = True) -> tuple[Path, Path]:
 
 
 # 过滤规则的版本号。升级默认规则时 +1，老配置会被自动刷新一次。
-FILTER_VERSION = 4
+FILTER_VERSION = 5
 
 # 关注模式的默认路径规则（小写子串匹配）。全量采集不据此丢弃事件，
 # 这些规则只在用户主动切换到 focus 时决定关注视图的采集范围。
@@ -225,9 +225,14 @@ DEFAULT_EXCLUDE_DIRS = [
     "\\target\\classes\\",
     "\\build\\intermediates\\",
     "\\dist\\assets\\",
+    # 虚拟化 / 容器的磁盘镜像目录（镜像本体另有扩展名规则兜底）
+    "\\docker\\wsl\\",
+    "\\wsl\\",
+    "\\hyper-v\\",
+    "\\virtualbox vms\\",
 ]
 
-# 默认排除的扩展名（临时文件、下载中间态、数据库副本）
+# 默认排除的扩展名（临时文件、下载中间态、数据库副本、虚拟磁盘镜像）
 DEFAULT_EXCLUDE_EXTS = [
     ".tmp",
     ".temp",
@@ -246,6 +251,14 @@ DEFAULT_EXCLUDE_EXTS = [
     ".db-journal",
     ".db-wal",
     ".db-shm",
+    # 虚拟磁盘镜像：VM / WSL / Docker / Hyper-V 会以 GB 级反复增删，
+    # 计入账本只会淹没真正有意义的变化
+    ".vhd",
+    ".vhdx",
+    ".vmdk",
+    ".vdi",
+    ".qcow",
+    ".qcow2",
 ]
 
 # 默认排除的文件名模式（前缀 / 后缀匹配用通配符）
@@ -255,6 +268,10 @@ DEFAULT_EXCLUDE_NAMES = [
     "thumbs.db",
     "desktop.ini",
     "*.tmp.*",
+    # 系统分页 / 休眠文件：大小随内存使用反复变动，不是用户行为
+    "pagefile.sys",
+    "hiberfil.sys",
+    "swapfile.sys",
 ]
 
 
@@ -333,9 +350,25 @@ class Config:
         except (TypeError, ValueError):
             ver = 0  # 配置损坏（非整数版本）时按旧版本处理
         if ver < FILTER_VERSION:
-            self.reset_filters()
+            # 并集合并而不是整体重置：老版本升上来时把新增的默认排除项
+            # 补进去，同时保留用户自己加过的条目（以前会一并清掉）。
+            self._merge_filter_defaults()
             self._data["filter_version"] = FILTER_VERSION
             self.save()
+
+    def _merge_filter_defaults(self) -> None:
+        """把新增的默认过滤项并入现有列表，保留用户自定义条目。"""
+        for key in ("exclude_dirs", "exclude_exts", "exclude_names"):
+            defaults = DEFAULTS[key]
+            existing = self._data.get(key)
+            if not isinstance(existing, list):
+                self._data[key] = copy.deepcopy(defaults)
+                continue
+            merged = list(existing)
+            for item in defaults:
+                if item not in merged:
+                    merged.append(item)
+            self._data[key] = merged
 
     def save(self) -> None:
         """立刻落盘（设置保存 / 退出时用）。"""

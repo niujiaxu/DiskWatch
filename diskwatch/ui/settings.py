@@ -158,13 +158,6 @@ class SettingsDialog(QDialog):
         lay.setSpacing(10)
 
         mode_form = QFormLayout()
-        self.cmb_capture = DayPicker()
-        self.cmb_capture.addItem(tr("全量采集"), "all")
-        self.cmb_capture.addItem(tr("关注模式"), "focus")
-        self.cmb_capture.setToolTip(
-            tr("全量采集会记录普通文件并分类；关注模式才应用高级过滤规则")
-        )
-        mode_form.addRow(tr("采集模式"), self.cmb_capture)
         self.cmb_recovery = DayPicker()
         self.cmb_recovery.addItem(tr("USN 增量恢复（推荐）"), "usn")
         self.cmb_recovery.addItem(tr("目录补扫"), "scan")
@@ -222,7 +215,11 @@ class SettingsDialog(QDialog):
         lay.setSpacing(8)
 
         note = QLabel(
-            tr("全量采集模式下，下列规则只用于分类和关注视图；自身数据库与设备文件仍会安全排除。"),
+            tr(
+                "下列排除项在全量采集和关注模式下都生效：命中即不计入账本。"
+                "VM 磁盘镜像、浏览器缓存、临时文件这类高频读写建议保持排除，"
+                "否则会把真正有意义的变化淹没。自身数据库与设备文件始终安全排除。"
+            ),
             objectName="banner",
         )
         note.setWordWrap(True)
@@ -440,8 +437,6 @@ class SettingsDialog(QDialog):
         self.folder_list.clear()
         self.folder_list.addItems(cfg.get("watch_folders", []))
         self.chk_folders_only.setChecked(cfg.get("watch_mode") == "folders")
-        capture_idx = self.cmb_capture.findData(cfg.get("capture_mode", "all"))
-        self.cmb_capture.setCurrentIndex(max(capture_idx, 0))
         recovery_idx = self.cmb_recovery.findData(cfg.get("startup_recovery", "usn"))
         self.cmb_recovery.setCurrentIndex(max(recovery_idx, 0))
 
@@ -524,7 +519,6 @@ class SettingsDialog(QDialog):
             "include_removable": self.chk_removable.isChecked(),
             "watch_folders": folders,
             "watch_mode": "folders" if self.chk_folders_only.isChecked() else "drives",
-            "capture_mode": self.cmb_capture.currentData(),
             "startup_recovery": self.cmb_recovery.currentData(),
             "exclude_dirs": _lines(self.txt_dirs.toPlainText()),
             "exclude_exts": _lines(self.txt_exts.toPlainText()),

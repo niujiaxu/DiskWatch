@@ -71,6 +71,7 @@ Unattributed         0.5 GB   ← the OS's own doing, nothing to worry about
 ## 🔥 Highlights
 
 - 🗂 **Capture everything, classify automatically** — user files / downloads / system & updates / software installs / app caches / temp files / dev artifacts / VM & containers / unclassified
+- 🚫 **Noise excluded by default** — VM disk images (`.vhdx` …), paging files, Temp/cache dirs, `node_modules` and dot-directories (`.git`/`.venv`) are **never recorded**; their GB-scale churn would drown out meaningful changes. Want them too? Just delete the matching line in *Settings → Advanced*
 - 🛡 **Safe boundaries** — its own database, logs, device paths and non-regular files are always excluded; it never monitors itself
 - ⚡ **Fast startup recovery** — NTFS uses the USN Change Journal; the fallback directory scan runs on **6 parallel workers**: 290k directories in **30s** (down from 187s)
 - 🧾 **Space ledger** — old size → new size → delta bytes → category, drive and timestamp, all preserved
@@ -203,7 +204,7 @@ start.bat
 
 **Does scanning harm my drive?** Live monitoring is event-driven and never walks the whole disk; only startup recovery reads metadata (USN first) and can be cancelled anytime. See [Performance and disk impact](docs/performance.md).
 
-**Why aren't system directories recorded by default?** They churn constantly and would drown out meaningful entries; adjust this in *Settings → Monitoring / Advanced*.
+**Why are some files "not counted"?** VM disk images (`.vhdx`), paging files, Temp/cache dirs, `node_modules` and dot-directories churn at GB scale; recording them would drown out meaningful changes. They are excluded by default, and **exclusions always apply**. Want them too? Delete the matching line in *Settings → Advanced*.
 
 ## 📄 License
 
