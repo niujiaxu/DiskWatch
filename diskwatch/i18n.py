@@ -91,7 +91,6 @@ _TRANSLATIONS: dict[str, str] = {
     "全部分类": "All Categories",
     "不分组": "No Grouping",
     "按分类分组": "Group by Category",
-    "按目录分组": "Group by Folder",
     "{marker} {label} · {count} 条": "{marker} {label} · {count} items",
     "共 {count} 条 · 第 {page}/{pages} 页": "{count} items · Page {page}/{pages}",
     "每页最多 {count} 条": "Up to {count} per page",

@@ -164,7 +164,6 @@ class ActivityPanel(QWidget):
         self.group_picker.addItem(tr("不分组"), None)
         self.group_picker.addItem(tr("按应用分组"), "app")
         self.group_picker.addItem(tr("按分类分组"), "category")
-        self.group_picker.addItem(tr("按目录分组"), "folder")
         for picker in (
             self.range_picker,
             self.view_picker,
@@ -497,8 +496,8 @@ class ActivityPanel(QWidget):
             else:
                 grouped: dict[str, list[int]] = {}
                 for index, event in enumerate(self._events):
-                    key = event.category if group_mode == "category" else event.folder
-                    grouped.setdefault(key or tr("未分类"), []).append(index)
+                    key = event.category or tr("未分类")
+                    grouped.setdefault(key, []).append(index)
                 rows = []
                 for key, indexes in grouped.items():
                     group_counts[key] = len(indexes)
@@ -511,10 +510,7 @@ class ActivityPanel(QWidget):
                 if event_index is None:
                     assert group_key is not None
                     marker = "▸" if group_key in self._collapsed_groups else "▾"
-                    if group_mode == "category":
-                        label = tr(CATEGORY_LABELS.get(group_key, "未分类"))
-                    else:
-                        label = group_key
+                    label = tr(CATEGORY_LABELS.get(group_key, "未分类"))
                     count = group_counts.get(group_key, 0)
                     item = QTableWidgetItem(
                         tr(
@@ -999,7 +995,6 @@ class ActivityPanel(QWidget):
         self.group_picker.setItemText(0, tr("不分组"))
         self.group_picker.setItemText(1, tr("按应用分组"))
         self.group_picker.setItemText(2, tr("按分类分组"))
-        self.group_picker.setItemText(3, tr("按目录分组"))
         self._set_header_labels(self._header_mode())
         self.reload_filters()
         self.reload(keep_day=True)
