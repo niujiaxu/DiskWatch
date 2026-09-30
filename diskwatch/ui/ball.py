@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QWidget
 from ..i18n import tr
 from ..storage import Storage, human_size, today_str
 from ..watcher import FileMonitor
-from .style import theme_tokens
+from .style import menu_icon, polish_menu, theme_tokens
 
 REFRESH_MS = 2000
 DRAG_SLOP = 4  # 位移小于这个值算点击，不算拖动
@@ -200,13 +200,14 @@ class MiniBall(QWidget):
 
     def contextMenuEvent(self, event) -> None:
         menu = QMenu(self)
-        menu.addAction(tr("展开卡片"), self.expand_requested.emit)
-        menu.addAction(tr("详情面板…"), self.open_panel.emit)
-        menu.addAction(tr("概览…"), self.open_dashboard.emit)
-        menu.addAction(tr("设置…"), self.open_settings.emit)
+        polish_menu(menu)
+        menu.addAction(menu_icon("window"), tr("展开卡片"), self.expand_requested.emit)
+        menu.addAction(menu_icon("list"), tr("详情面板…"), self.open_panel.emit)
+        menu.addAction(menu_icon("chart"), tr("概览…"), self.open_dashboard.emit)
+        menu.addAction(menu_icon("sliders"), tr("设置…"), self.open_settings.emit)
         menu.addSeparator()
-        menu.addAction(tr("隐藏（保留托盘图标）"), self._hide_self)
-        menu.addAction(tr("退出"), self.request_quit.emit)
+        menu.addAction(menu_icon("hide"), tr("隐藏（保留托盘图标）"), self._hide_self)
+        menu.addAction(menu_icon("power"), tr("退出"), self.request_quit.emit)
         menu.exec(event.globalPos())
 
     def _hide_self(self) -> None:

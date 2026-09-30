@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import math
 import sys
 from dataclasses import dataclass
 
@@ -195,6 +196,29 @@ QPushButton#rangeBtn:checked {{ background: {t.accent}; color: #ffffff; }}
 """
 
 
+def menu_qss(tokens: ThemeTokens | None = None) -> str:
+    """右键菜单：圆角卡片、宽松行距、悬停圆角高亮（仿现代托盘菜单）。"""
+    t = tokens or theme_tokens()
+    return f"""
+QMenu {{ background: {t.surface}; color: {t.text}; border: 1px solid {t.border};
+ border-radius: 12px; padding: 6px; }}
+QMenu::item {{ padding: 7px 18px 7px 10px; border-radius: 8px; min-width: 148px; }}
+QMenu::item:selected {{ background: {t.button_hover}; color: {t.text}; }}
+QMenu::item:disabled {{ color: {t.text_muted}; }}
+QMenu::separator {{ height: 1px; background: {t.border}; margin: 6px 10px; }}
+QMenu::icon {{ padding-left: 8px; }}
+"""
+
+
+def polish_menu(menu) -> None:
+    """统一右键菜单外观：圆角、悬停高亮、无系统矩形投影。"""
+    menu.setAttribute(Qt.WA_TranslucentBackground)
+    menu.setWindowFlags(
+        menu.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
+    )
+    menu.setStyleSheet(menu_qss())
+
+
 # 兼容外部脚本；应用内部使用动态函数。
 WIDGET_QSS = widget_qss(DARK_TOKENS)
 PANEL_QSS = panel_qss(DARK_TOKENS)
@@ -272,14 +296,25 @@ def prefer_ui_font(app) -> None:
 
 class _CheckStyle(QProxyStyle):
     def drawPrimitive(self, element, option, painter, widget=None) -> None:
-        if element != QStyle.PE_IndicatorCheckBox:
-            super().drawPrimitive(element, option, painter, widget)
+        if element in (QStyle.PE_IndicatorCheckBox, QStyle.PE_IndicatorMenuCheckMark):
+            # 菜单勾选也画成"填充主题色 + 白勾"，与复选框保持同一语言
+            self._draw_check_box(option, painter)
             return
+        super().drawPrimitive(element, option, painter, widget)
+
+    def _draw_check_box(self, option, painter) -> None:
         t = theme_tokens()
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
         r = option.rect
-        box = QRectF(r.x() + 0.5, r.y() + 0.5, r.width() - 1, r.height() - 1)
+        # 菜单勾选列是"整行高"的矩形，取居中的 16px 方块；复选框本身就是 16px
+        side = min(16.0, float(r.width()), float(r.height()))
+        box = QRectF(
+            r.x() + (r.width() - side) / 2 + 0.5,
+            r.y() + (r.height() - side) / 2 + 0.5,
+            side - 1,
+            side - 1,
+        )
         hovered = bool(option.state & QStyle.State_MouseOver)
         checked = bool(option.state & QStyle.State_On)
         if checked:
@@ -293,7 +328,7 @@ class _CheckStyle(QProxyStyle):
             pen.setJoinStyle(Qt.RoundJoin)
             painter.setPen(pen)
             path = QPainterPath()
-            x, y, w, h = r.x(), r.y(), r.width(), r.height()
+            x, y, w, h = box.x(), box.y(), box.width(), box.height()
             path.moveTo(x + w * 0.24, y + h * 0.54)
             path.lineTo(x + w * 0.44, y + h * 0.72)
             path.lineTo(x + w * 0.78, y + h * 0.32)
@@ -465,3 +500,116 @@ def app_icon(size: int = 64) -> QIcon:
 
 def apply_window_icon(widget: QWidget) -> None:
     widget.setWindowIcon(app_icon())
+
+
+# ---------- 菜单线性图标 ----------
+
+_MENU_ICON_CACHE: dict[tuple[str, bool], QIcon] = {}
+
+
+def menu_icon(kind: str) -> QIcon:
+    """16px 线性菜单图标；颜色跟随主题，按 深/浅 缓存。"""
+    t = theme_tokens()
+    key = (kind, t.dark)
+    icon = _MENU_ICON_CACHE.get(key)
+    if icon is None:
+        icon = QIcon()
+        icon.addPixmap(_paint_menu_pixmap(kind, t, 16, 1))
+        icon.addPixmap(_paint_menu_pixmap(kind, t, 16, 2))
+        _MENU_ICON_CACHE[key] = icon
+    return icon
+
+
+def _paint_menu_pixmap(
+    kind: str, t: ThemeTokens, logical: int = 16, scale: int = 2
+) -> QPixmap:
+    """在 32 单位设计网格上画极简线性图标，圆头笔画。
+
+    画布按 scale 倍率绘制（DPR=scale），所以 QPainter 的逻辑坐标
+    空间就是 logical×logical；u 把 32 网格映射到该空间。
+    """
+    pm = QPixmap(logical * scale, logical * scale)
+    pm.setDevicePixelRatio(float(scale))
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    u = logical / 32.0
+    color = t.color("text")
+    pen = QPen(color, 2.6 * u)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(Qt.NoBrush)
+
+    def line(x1, y1, x2, y2):
+        p.drawLine(QPointF(x1 * u, y1 * u), QPointF(x2 * u, y2 * u))
+
+    def circle(cx, cy, r, filled=False):
+        if filled:
+            p.setBrush(color)
+        p.drawEllipse(QPointF(cx * u, cy * u), r * u, r * u)
+        p.setBrush(Qt.NoBrush)
+
+    def arc(x, y, w, h, start, span):
+        p.drawArc(QRectF(x * u, y * u, w * u, h * u), int(start * 16), int(span * 16))
+
+    def arrow_at(cx, cy, r, deg, length=5.2):
+        """在圆周 deg 处沿切线画一个箭头（两翼向后张开）。"""
+        rad = math.radians(deg)
+        ex = cx + r * math.cos(rad)
+        ey = cy - r * math.sin(rad)
+        tx, ty = -math.sin(rad), -math.cos(rad)  # 逆时针切线
+        px, py = -ty, tx  # 法线
+        for sign in (1, -1):
+            line(
+                ex,
+                ey,
+                ex - tx * length * 0.95 + px * length * 0.7 * sign,
+                ey - ty * length * 0.95 + py * length * 0.7 * sign,
+            )
+
+    if kind == "window":
+        p.drawRoundedRect(QRectF(5 * u, 7 * u, 22 * u, 18 * u), 4.5 * u, 4.5 * u)
+        line(10, 12.5, 22, 12.5)
+    elif kind == "ball":
+        circle(16, 16, 8.5)
+        circle(16, 16, 2.6, filled=True)
+    elif kind == "list":
+        line(7, 10, 25, 10)
+        line(7, 16, 25, 16)
+        line(7, 22, 18, 22)
+    elif kind == "chart":
+        line(8, 24, 8, 15)
+        line(16, 24, 16, 8)
+        line(24, 24, 24, 18)
+    elif kind == "alert":
+        circle(16, 16, 8.5)
+        line(16, 11.5, 16, 17)
+        circle(16, 20.8, 1.15, filled=True)
+    elif kind == "sliders":
+        line(7, 10, 25, 10)
+        circle(12.5, 10, 2.5, filled=True)
+        line(7, 16, 25, 16)
+        circle(19.5, 16, 2.5, filled=True)
+        line(7, 22, 25, 22)
+        circle(10, 22, 2.5, filled=True)
+    elif kind == "refresh":
+        arc(7, 7, 18, 18, 60, 280)
+        arrow_at(16, 16, 9, 60)
+    elif kind == "restart":
+        arc(7, 7, 18, 18, 60, 280)
+        arrow_at(16, 16, 9, 60)
+        circle(16, 16, 2.2, filled=True)
+    elif kind == "info":
+        circle(16, 16, 8.5)
+        circle(16, 11.3, 1.15, filled=True)
+        line(16, 15, 16, 21)
+    elif kind == "power":
+        arc(7, 7, 18, 18, 130, 280)
+        line(16, 6.2, 16, 15)
+    elif kind == "hide":
+        p.drawEllipse(QRectF(5 * u, 11.5 * u, 22 * u, 9 * u))
+        circle(16, 16, 2.4, filled=True)
+        line(7.5, 7.5, 24.5, 24.5)
+    p.end()
+    return pm

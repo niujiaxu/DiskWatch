@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from ..i18n import tr
 from ..storage import Storage, human_size, today_str
 from ..watcher import FileMonitor, open_in_explorer
-from .style import theme_tokens, widget_qss
+from .style import menu_icon, polish_menu, theme_tokens, widget_qss
 
 REFRESH_MS = 2000
 # 视口大约显示这么多行；超出用滚轮 / 细滚动条浏览
@@ -337,12 +337,13 @@ class FloatingWidget(QWidget):
         from PySide6.QtWidgets import QMenu
 
         menu = QMenu(self)
-        menu.addAction(tr("打开详情面板"), self.open_panel.emit)
-        menu.addAction(tr("设置"), self.open_settings.emit)
+        polish_menu(menu)
+        menu.addAction(menu_icon("list"), tr("打开详情面板"), self.open_panel.emit)
+        menu.addAction(menu_icon("sliders"), tr("设置"), self.open_settings.emit)
         menu.addSeparator()
-        menu.addAction(tr("收成迷你球"), self.collapse_requested.emit)
-        menu.addAction(tr("隐藏组件"), self._hide_self)
-        menu.addAction(tr("退出"), self.request_quit.emit)
+        menu.addAction(menu_icon("ball"), tr("收成迷你球"), self.collapse_requested.emit)
+        menu.addAction(menu_icon("hide"), tr("隐藏组件"), self._hide_self)
+        menu.addAction(menu_icon("power"), tr("退出"), self.request_quit.emit)
         menu.exec(event.globalPos())
 
     def _hide_self(self) -> None:

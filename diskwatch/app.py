@@ -28,7 +28,14 @@ from .ui.ball import MiniBall
 from .ui.dashboard import DashboardPanel
 from .ui.main_window import MainWindow
 from .ui.settings import SettingsDialog
-from .ui.style import app_icon, install_theme, set_app_user_model_id
+from .ui.style import (
+    app_icon,
+    install_theme,
+    menu_icon,
+    menu_qss,
+    polish_menu,
+    set_app_user_model_id,
+)
 from .ui.widget import FloatingWidget
 from .usn import recover_from_usn
 from .watcher import FileMonitor
@@ -48,6 +55,33 @@ UI_WATCHDOG_POLL = 2.0  # 看门狗轮询间隔
 UI_HANG_THRESHOLD = 5.0  # 停跳超过这个秒数判定为卡顿
 UI_HANG_REPORT_INTERVAL = 30.0  # 同一段卡顿最多每 30 秒报告一次
 COMPACT_MIN_PURGED_ROWS = 2000  # 过期清理删掉这么多行后才 VACUUM 回收空间
+
+
+class _TrayMenu(QMenu):
+    """托盘菜单：主题切换时由 ThemeController 自动回调 apply_theme 重刷。
+
+    不用信号连接磁盘的 App 对象（那会把测试里每个旧 App 强引用钉住，
+    顶层窗口越积越多、主题应用越来越慢）；顶层 QMenu 本来就会被
+    ThemeController 遍历到，直接提供 apply_theme 钩子即可。
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        polish_menu(self)
+        self._icon_actions: list[tuple] = []
+
+    def add_icon(self, kind: str, text: str):
+        action = self.addAction(text)
+        action.setIcon(menu_icon(kind))
+        self._icon_actions.append((action, kind))
+        return action
+
+    def apply_theme(self) -> None:
+        # 只刷新样式与图标颜色；窗口标志（原生窗口）不动，避免主题应用
+        # 期间反复重建原生窗口触发系统主题通知、造成重复重入
+        self.setStyleSheet(menu_qss())
+        for action, kind in self._icon_actions:
+            action.setIcon(menu_icon(kind))
 
 
 class DiskWatchApp:
@@ -159,8 +193,6 @@ class DiskWatchApp:
             self._ipc.newConnection.connect(self._on_ipc_connection)
 
     def _build_tray(self) -> None:
-        menu = QMenu()
-        self.tray.setContextMenu(menu)
         self._rebuild_tray_menu()
         # 错误信号 → 实时更新菜单文案（ERROR/WARNING 时显示数字），只连一次
         errorlog.bus.error_recorded.connect(self._refresh_errors_action)
@@ -171,7 +203,8 @@ class DiskWatchApp:
 
     def _rebuild_tray_menu(self) -> None:
         """（重新）构建托盘菜单文案。语言热切换后调用以刷新全部菜单项。"""
-        menu = QMenu()
+        menu = _TrayMenu()
+        # 勾选项不配图标：Qt 对"有图标的勾选项"不画勾选框，状态会看不见
         self.act_widget = menu.addAction(tr("显示悬浮组件"))
         self.act_widget.setCheckable(True)
         self.act_widget.triggered.connect(self._toggle_widget)
@@ -180,20 +213,22 @@ class DiskWatchApp:
         self.act_ball.triggered.connect(
             lambda checked: self.collapse() if checked else self.expand()
         )
-        menu.addAction(tr("详情面板…"), self.show_panel)
-        menu.addAction(tr("概览…"), self.show_dashboard)
+        menu.add_icon("list", tr("详情面板…")).triggered.connect(self.show_panel)
+        menu.add_icon("chart", tr("概览…")).triggered.connect(self.show_dashboard)
         menu.addSeparator()
-        self.act_errors = menu.addAction(tr("最近错误"))
+        self.act_errors = menu.add_icon("alert", tr("最近错误"))
         self.act_errors.triggered.connect(self._show_errors)
         menu.addSeparator()
-        menu.addAction(tr("设置…"), self.show_settings)
-        menu.addAction(tr("重新开始监控"), self._restart_monitor)
-        menu.addAction(tr("重启"), self._restart_app)
-        menu.addSeparator()
-        menu.addAction(
-            tr("关于 {name} {version}", name=APP_NAME, version=VERSION), self._about
+        menu.add_icon("sliders", tr("设置…")).triggered.connect(self.show_settings)
+        menu.add_icon("refresh", tr("重新开始监控")).triggered.connect(
+            self._restart_monitor
         )
-        menu.addAction(tr("退出"), self.quit)
+        menu.add_icon("restart", tr("重启")).triggered.connect(self._restart_app)
+        menu.addSeparator()
+        menu.add_icon(
+            "info", tr("关于 {name} {version}", name=APP_NAME, version=VERSION)
+        ).triggered.connect(self._about)
+        menu.add_icon("power", tr("退出")).triggered.connect(self.quit)
         self.tray.setContextMenu(menu)
         self._refresh_errors_action()
         self._sync_tray_actions()

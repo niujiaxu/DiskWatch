@@ -209,6 +209,36 @@ def test_tray_switch_back_to_card(dw_app, qapp) -> None:
     assert dw_app.widget.isVisible() and not dw_app.ball.isVisible(), state(dw_app)
 
 
+def test_tray_menu_styled_with_icons(dw_app, qapp) -> None:
+    """托盘菜单：圆角卡片样式；开关项保留勾选框（不配图标），其余项带图标。"""
+    menu = dw_app.tray.contextMenu()
+    assert menu is not None
+    assert menu.styleSheet(), "菜单应套用圆角样式"
+    toggles = (dw_app.act_widget, dw_app.act_ball)
+    for action in toggles:
+        assert action.isCheckable()
+        # Qt 对"有图标的勾选项"不画勾选框，必须保持无图标才能看见选中态
+        assert action.icon().isNull()
+    icon_actions = [
+        a for a in menu.actions() if not a.isSeparator() and a not in toggles
+    ]
+    assert icon_actions, "菜单应有普通动作项"
+    assert all(not a.icon().isNull() for a in icon_actions)
+
+
+def test_menu_icons_render(qapp) -> None:
+    from diskwatch.ui.style import menu_icon
+
+    kinds = (
+        "window", "ball", "list", "chart", "alert", "sliders",
+        "refresh", "restart", "info", "power", "hide",
+    )
+    for kind in kinds:
+        icon = menu_icon(kind)
+        assert not icon.isNull(), kind
+        assert not icon.pixmap(16, 16).isNull(), kind
+
+
 def test_main_window_can_shrink_freely(dw_app, qapp) -> None:
     """主窗口最小尺寸要够小：无边框窗口靠拖边缘缩放，别被页面顶死。"""
     w = dw_app.main_window
