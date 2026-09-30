@@ -129,6 +129,8 @@ _TRANSLATIONS: dict[str, str] = {
     "共 {count} 个应用": "{count} apps",
     "点击分组查看明细": "Click a group to view its details",
     "点击查看该应用的活动明细": "Click to view this app's activity",
+    "{path}\n点击查看该应用的活动明细": "{path}\nClick to view this app's activity",
+    "完整路径：{path}\n归属应用：{app}": "Full path: {path}\nApp: {app}",
     "← 返回应用总览 · {label}": "← Back to app overview · {label}",
     "其它位置": "Other Locations",
     "零散文件": "Loose Files",

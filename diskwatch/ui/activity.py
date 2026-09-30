@@ -29,7 +29,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..apps import AppGroup, build_groups
+from ..apps import (
+    AppGroup,
+    build_groups,
+    label_for_key,
+    resolve_app,
+    resolve_dir_root,
+)
 from ..i18n import tr
 from ..storage import SpaceEvent, Storage, human_size
 from ..watcher import open_in_explorer
@@ -555,17 +561,22 @@ class ActivityPanel(QWidget):
         event = self._events[event_index]
         self._row_events[row] = event_index
         path = Path(event.path)
+        app_label = tr(label_for_key(resolve_app(event.path)[0]))
+        tooltip = tr(
+            "完整路径：{path}\n归属应用：{app}", path=event.path, app=app_label
+        )
         values = (
             datetime.fromtimestamp(event.occurred_at).strftime("%m-%d %H:%M:%S"),
             path.name,
             _event_label(event),
             _signed_size(event.delta_bytes),
             tr(CATEGORY_LABELS.get(event.category, "未分类")),
-            str(path.parent),
+            _short_path(str(path.parent)),
         )
         for col, value in enumerate(values):
             item = QTableWidgetItem(value)
             item.setData(Qt.UserRole, event_index)
+            item.setToolTip(tooltip)
             if col == 3:
                 role = "warning" if event.delta_bytes > 0 else "success"
                 item.setForeground(t.color(role))
@@ -606,18 +617,25 @@ class ActivityPanel(QWidget):
             for row, group in enumerate(groups):
                 self._app_rows[row] = (group.key, group.sub, group.label)
                 share = f"{group.count / total * 100:.0f}%" if total else "0%"
+                # 展示"应用老家"（归属根）而不是事件最多的深层目录
+                folder_full = resolve_dir_root(group.shallow or group.folder)
+                if not folder_full:
+                    folder_full = group.shallow or group.folder
+                tooltip = tr(
+                    "{path}\n点击查看该应用的活动明细", path=folder_full
+                )
                 values = (
                     datetime.fromtimestamp(group.last_at).strftime("%m-%d %H:%M"),
                     tr(group.label),
                     f"{group.count:,}",
                     _signed_size(group.net),
                     share,
-                    group.folder,
+                    _short_path(folder_full),
                 )
                 for col, value in enumerate(values):
                     item = QTableWidgetItem(value)
                     item.setData(Qt.UserRole + 1, group.key)
-                    item.setToolTip(tr("点击查看该应用的活动明细"))
+                    item.setToolTip(tooltip)
                     if col in (2, 3):
                         item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     if col == 3:
@@ -1038,3 +1056,21 @@ def _signed_size(value: int) -> str:
     if value == 0:
         return "0 B"
     return ("+" if value > 0 else "−") + human_size(abs(value))
+
+
+def _short_path(path: str) -> str:
+    """路径缩写：C:\\Users\\<用户> → ~；C 盘去掉盘符；其他盘保留。"""
+    if not path:
+        return ""
+    normalized = path.replace("/", "\\")
+    low = normalized.lower()
+    if low.startswith("c:\\users\\"):
+        rest = normalized[len("c:\\users\\"):]
+        user, sep, tail = rest.partition("\\")
+        if user.lower() in ("public", "default"):
+            # 公共 / 默认用户目录不属于"我的主目录"，不做 ~ 缩写
+            return normalized[3:]
+        return "~\\" + tail if sep else "~"
+    if len(normalized) > 3 and normalized[1] == ":" and normalized[0].lower() == "c":
+        return normalized[3:]
+    return normalized

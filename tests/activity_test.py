@@ -321,7 +321,7 @@ def test_activity_detail_card_scales_with_width(qapp, tmp_path) -> None:
 
 
 def test_table_cells_have_no_focus_rect(qapp, tmp_path) -> None:
-    """当前单元格不再画黑色虚线焦点框（整行高亮保留）。"""
+    """当前单元格不再画黑色虚线焦点框；长文本用中间省略（保头保尾）。"""
     from PySide6.QtCore import QRect
     from PySide6.QtGui import QPainter, QPixmap, QStandardItem, QStandardItemModel
     from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
@@ -354,6 +354,46 @@ def test_table_cells_have_no_focus_rect(qapp, tmp_path) -> None:
         finally:
             painter.end()
         assert seen["focus"] is False
+
+        # 长文本用中间省略：路径尾部与文件扩展名要保留
+        elide = QStyleOptionViewItem()
+        panel.table.itemDelegate().initStyleOption(elide, model.index(0, 0))
+        assert elide.textElideMode == Qt.ElideMiddle
+        panel.close()
+    finally:
+        storage.close()
+
+
+def test_folder_column_shows_app_home_and_tooltips(qapp, tmp_path) -> None:
+    """总览显示归属根（缩写），平铺显示缩写父目录，tooltip 带完整路径与归属应用。"""
+    storage = Storage(tmp_path / "path-display.db")
+    try:
+        deep = (
+            r"C:\Users\me\Documents\Tencent Files\2991799732"
+            r"\nt_qq\nt_data\log\qq-log.qqxlog"
+        )
+        storage.add_files([make_record(deep, 100, time.time())])
+        panel = ActivityPanel(storage)
+        panel.resize(1100, 600)
+        panel.show()
+        _settle(qapp, panel)
+
+        # 总览「主要目录」：归属根 + ~ 缩写
+        assert panel.table.item(0, 5).text() == "~\\Documents\\Tencent Files"
+        assert (
+            "C:\\Users\\me\\Documents\\Tencent Files"
+            in panel.table.item(0, 5).toolTip()
+        )
+
+        # 下钻明细「所在目录」：缩写后的真实父目录；tooltip 带归属应用
+        panel._table_clicked(0, 0)
+        _settle(qapp, panel)
+        assert panel.table.item(1, 5).text() == (
+            "~\\Documents\\Tencent Files\\2991799732\\nt_qq\\nt_data\\log"
+        )
+        tooltip = panel.table.item(1, 1).toolTip()
+        assert "完整路径" in tooltip and deep in tooltip
+        assert "归属应用" in tooltip and "QQ" in tooltip
         panel.close()
     finally:
         storage.close()

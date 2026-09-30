@@ -347,11 +347,17 @@ class _CheckStyle(QProxyStyle):
 
 
 class NoFocusDelegate(QStyledItemDelegate):
-    """去掉当前单元格的黑色虚线焦点框。
+    """表格单元格绘制：去掉焦点虚线框 + 长文本中间省略（保头保尾）。
 
     Qt 默认会给"当前单元格"画一圈焦点虚线，视觉上像多了个奇怪边框；
     整行选中高亮已足够指示位置，这里把焦点状态在绘制前清掉。
+    文本超宽时用中间省略而不是右截断：路径的末尾目录、文件名的扩展名
+    才是最有辨识度的部分。
     """
+
+    def initStyleOption(self, option, index) -> None:
+        super().initStyleOption(option, index)
+        option.textElideMode = Qt.ElideMiddle
 
     def paint(self, painter, option, index) -> None:
         option.state &= ~QStyle.State_HasFocus

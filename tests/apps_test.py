@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from diskwatch.apps import OTHER_KEY, build_groups, label_for_key, resolve_app
+from diskwatch.apps import (
+    OTHER_KEY,
+    build_groups,
+    label_for_key,
+    resolve_app,
+    resolve_dir_root,
+    resolve_root,
+)
 
 
 def test_resolve_app_known_anchors() -> None:
@@ -31,6 +38,45 @@ def test_resolve_app_known_anchors() -> None:
     assert resolve_app(r"C:\Users\niu\AppData\Roaming\Oray\AweSun\log\x.log")[0] == "oray.awesun"
     assert resolve_app(r"D:\Games\SomeGame\data\cache\x.bin")[0] == "SomeGame"
     assert resolve_app(r"C:\file.txt")[0] == "special.loose"
+
+
+def test_resolve_root_exposes_app_home() -> None:
+    """归属根 = "应用老家"那一层，供界面显示（而不是深层子目录）。"""
+    assert (
+        resolve_root(
+            r"C:\Users\niu\Documents\Tencent Files\2991799732\nt_qq\nt_data\log\x.log"
+        )
+        == r"C:\Users\niu\Documents\Tencent Files"
+    )
+    assert (
+        resolve_root(
+            r"C:\Users\niu\Documents\xwechat_files\wxid_ab\db_storage\message\m.db"
+        )
+        == r"C:\Users\niu\Documents\xwechat_files"
+    )
+    assert (
+        resolve_root(r"C:\Program Files\Zotero\zotero.exe")
+        == r"C:\Program Files\Zotero"
+    )
+    assert (
+        resolve_root(r"C:\Users\niu\AppData\Local\Temp\abc\x.tmp")
+        == r"C:\Users\niu\AppData\Local\Temp"
+    )
+    assert resolve_root(r"C:\Users\niu\Downloads\a.zip") == r"C:\Users\niu\Downloads"
+    assert resolve_root(r"C:\Users\niu\notes.txt") == r"C:\Users\niu"
+    assert resolve_root(r"C:\Windows\System32\x.sys") == r"C:\Windows"
+
+
+def test_resolve_dir_root_treats_input_as_directory() -> None:
+    """目录路径专用：末段是目录本身（界面展示分组目录时用）。"""
+    assert resolve_dir_root(r"C:\Users\niu") == r"C:\Users\niu"
+    assert resolve_dir_root(r"C:\SoftWare\cursor") == r"C:\SoftWare\cursor"
+    assert (
+        resolve_dir_root(r"C:\Users\niu\Documents\Tencent Files\2991799732\nt_qq")
+        == r"C:\Users\niu\Documents\Tencent Files"
+    )
+    assert resolve_dir_root(r"C:\Users\niu\Downloads") == r"C:\Users\niu\Downloads"
+    assert resolve_dir_root("") == ""
 
 
 def test_resolve_app_sub_for_split() -> None:

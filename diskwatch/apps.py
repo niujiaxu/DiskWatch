@@ -226,22 +226,48 @@ def resolve_app(path: str) -> tuple[str, str]:
     app_sub 是归属根下一级目录（账号 / 子产品 / 版本目录），仅供超大组拆分；
     没有可用的下一级时为 ""。
     """
-    return _resolve_cached(path.replace("/", "\\"))
+    key, sub, _root = _resolve_cached(path.replace("/", "\\"))
+    return (key, sub)
+
+
+def resolve_root(path: str) -> str:
+    """文件路径 → 归属根目录（"应用老家"那一层），供界面展示。
+
+    例：...\\Documents\\Tencent Files\\2991799732\\nt_qq\\... 的归属根是
+    ...\\Documents\\Tencent Files；特殊位置（临时 / 下载 / 系统）返回对应目录。
+    """
+    return _resolve_cached(path.replace("/", "\\"))[2]
+
+
+def resolve_dir_root(folder: str) -> str:
+    """目录路径 → 归属根目录（末段是目录本身，不是文件名）。"""
+    cleaned = folder.rstrip("\\/").replace("/", "\\")
+    if not cleaned:
+        return ""
+    return _resolve_cached(cleaned + "\\~")[2]
 
 
 @lru_cache(maxsize=8192)
-def _resolve_cached(path: str) -> tuple[str, str]:
+def _resolve_cached(path: str) -> tuple[str, str, str]:
     parts = [p for p in path.split("\\") if p]
+    if not parts:
+        return ("special.loose", "", "")
+    drive_root = parts[0] + "\\"
     if len(parts) <= 1:
-        return ("special.loose", "")
+        return ("special.loose", "", drive_root)
     dirs = parts[1:-1]  # 去掉盘符与文件名
     if not dirs:
-        return ("special.loose", "")
+        return ("special.loose", "", drive_root)
     low = [d.lower() for d in dirs]
+
+    def root_at(index: int) -> str:
+        """盘符 + 到第 index 级目录为止的路径。"""
+        return "\\".join([parts[0], *dirs[: index + 1]])
 
     home = 2 if low[0] == "users" and len(dirs) >= 2 else 0
     if home and len(dirs) <= home:
-        return ("special.loose", "")  # 直接躺在 C:\Users\xxx\ 下
+        # 直接躺在 C:\Users\xxx\ 下
+        return ("special.loose", "", root_at(home - 1))
 
     # 标准临时目录：盘根 \Temp、Windows\Temp、AppData\Local[Low]\Temp
     for i, name in enumerate(low):
@@ -251,7 +277,7 @@ def _resolve_cached(path: str) -> tuple[str, str]:
         in_windows = low[0] == "windows"
         in_appdata = i >= 2 and low[i - 1] in ("local", "locallow") and low[i - 2] == "appdata"
         if at_root or in_windows or in_appdata:
-            return ("special.temp", "")
+            return ("special.temp", "", root_at(i))
 
     # 下载 / 桌面：盘根或用户主目录（含 OneDrive 下）的一级
     for i, name in enumerate(low):
@@ -262,12 +288,12 @@ def _resolve_cached(path: str) -> tuple[str, str]:
             if at_root or in_home or in_onedrive:
                 key = "special.downloads" if name in ("downloads", "下载") else "special.desktop"
                 sub = dirs[i + 1] if i + 1 < len(dirs) else ""
-                return (key, sub)
+                return (key, sub, root_at(i))
 
     if low[0] == "windows":
-        return ("special.system", dirs[1] if len(dirs) > 1 else "")
+        return ("special.system", dirs[1] if len(dirs) > 1 else "", root_at(0))
     if low[0] == "programdata":
-        return ("special.programdata", dirs[1] if len(dirs) > 1 else "")
+        return ("special.programdata", dirs[1] if len(dirs) > 1 else "", root_at(0))
 
     # AppData\Roaming|Local|LocalLow\<厂商>[\<产品>]
     for i in range(len(dirs) - 2):
@@ -277,26 +303,38 @@ def _resolve_cached(path: str) -> tuple[str, str]:
             sub = deeper[0] if deeper else ""
             if vendor.lower() == "packages" and deeper:
                 # UWP：Packages\<包名>_<发布者哈希>
-                return (_app_key_for(deeper[0].split("_")[0], deeper[1:])[0], sub)
-            return (_app_key_for(vendor, deeper)[0], sub)
+                return (
+                    _app_key_for(deeper[0].split("_")[0], deeper[1:])[0],
+                    sub,
+                    root_at(i + 3),
+                )
+            return (_app_key_for(vendor, deeper)[0], sub, root_at(i + 2))
 
     # Program Files[(x86)]\<厂商或产品>[\<版本>]
     for i, name in enumerate(low):
         if name in ("program files", "program files (x86)"):
             if i + 1 >= len(dirs):
-                return ("special.programs", "")
+                return ("special.programs", "", root_at(i))
             vendor = dirs[i + 1]
             if vendor.lower() == "common files":
-                return ("special.programs", "")
+                return ("special.programs", "", root_at(i + 1))
             deeper = dirs[i + 2:]
-            return (_app_key_for(vendor, deeper)[0], deeper[0] if deeper else "")
+            return (
+                _app_key_for(vendor, deeper)[0],
+                deeper[0] if deeper else "",
+                root_at(i + 1),
+            )
 
     # Documents\<厂商> Files\<账号>\...（腾讯文档目录这类）
     for i, name in enumerate(low):
         if name.endswith(" files") and name not in ("program files", "common files"):
             vendor = dirs[i][: -len(" files")]
             deeper = dirs[i + 1:]
-            return (_app_key_for(vendor, deeper)[0], deeper[0] if deeper else "")
+            return (
+                _app_key_for(vendor, deeper)[0],
+                deeper[0] if deeper else "",
+                root_at(i),
+            )
 
     # 用户主目录下的点目录（.codex / .cursor 这类）
     for i in range(home, len(dirs)):
@@ -305,7 +343,7 @@ def _resolve_cached(path: str) -> tuple[str, str]:
             if name.lower() in _GENERIC_DIRS:
                 continue
             deeper = dirs[i + 1:]
-            return (_app_key_for(name, deeper)[0], deeper[0] if deeper else "")
+            return (_app_key_for(name, deeper)[0], deeper[0] if deeper else "", root_at(i))
 
     # 路径里出现已知产品 / 厂商目录时优先认它：
     # xwechat_files\...\db_storage\contact 这类深层子目录不该盖过应用本身。
@@ -315,12 +353,12 @@ def _resolve_cached(path: str) -> tuple[str, str]:
         hit_product = _match_product(dirs[i])
         if hit_product is not None:
             deeper = dirs[i + 1:]
-            return (hit_product[0], deeper[0] if deeper else "")
+            return (hit_product[0], deeper[0] if deeper else "", root_at(i))
     for i in range(scan_start, len(dirs)):
         hit_vendor = _match_vendor(dirs[i])
         if hit_vendor is not None:
             deeper = dirs[i + 1:]
-            return (hit_vendor[0], deeper[0] if deeper else "")
+            return (hit_vendor[0], deeper[0] if deeper else "", root_at(i))
 
     # 兜底：从父目录向上跳过通用名，取第一层"像应用名"的目录
     for i in range(len(dirs) - 1, home - 1, -1):
@@ -328,8 +366,9 @@ def _resolve_cached(path: str) -> tuple[str, str]:
         if name.lower() in _GENERIC_DIRS or _is_noise(name):
             continue
         deeper = dirs[i + 1:]
-        return (_app_key_for(name, deeper)[0], deeper[0] if deeper else "")
-    return ("special.loose", "")
+        return (_app_key_for(name, deeper)[0], deeper[0] if deeper else "", root_at(i))
+    loose_root = root_at(home - 1) if home else drive_root
+    return ("special.loose", "", loose_root)
 
 
 @dataclass(frozen=True)
