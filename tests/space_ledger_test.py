@@ -185,7 +185,66 @@ def test_failed_migration_restores_original_database(monkeypatch, tmp_path) -> N
         assert "space_events" not in tables
     finally:
         restored.close()
-    assert list(tmp_path.glob("rollback.db.migration-v1-to-v4.bak"))
+    assert list(tmp_path.glob("rollback.db.migration-v1-to-v5.bak"))
+
+
+def test_events_store_app_key_and_drilldown_filter() -> None:
+    storage = _storage()
+    try:
+        storage.add_files(
+            [
+                make_record(
+                    r"C:\Users\me\AppData\Roaming\Tencent\QQ\a.dat", 10, 100.0
+                ),
+                make_record(r"C:\Program Files\Zotero\b.pdf", 20, 101.0),
+            ]
+        )
+        rows = storage.app_group_rows()
+        assert sorted((r[0], r[2]) for r in rows) == [
+            ("tencent.qq", 1),
+            ("zotero", 1),
+        ]
+        assert storage.space_event_count(app_key="tencent.qq") == 1
+        events = storage.space_events(app_key="tencent.qq")
+        assert [Path(e.path).name for e in events] == ["a.dat"]
+        folders = storage.app_group_folders()
+        assert (folders[0][0], folders[0][2]) in (
+            ("tencent.qq", r"C:\Users\me\AppData\Roaming\Tencent\QQ"),
+            ("zotero", r"C:\Program Files\Zotero"),
+        )
+    finally:
+        storage.close()
+
+
+def test_app_key_backfill_on_upgrade(tmp_path) -> None:
+    db = tmp_path / "backfill.db"
+    storage = Storage(db)
+    try:
+        storage.add_files(
+            [make_record(r"C:\Users\me\AppData\Roaming\Tencent\QQ\a.dat", 10)]
+        )
+    finally:
+        storage.close()
+
+    # 模拟 v4 旧库：抹掉归属键并回退版本号，重开时迁移回填
+    conn = sqlite3.connect(str(db))
+    try:
+        conn.execute("UPDATE space_events SET app_key = '', app_sub = ''")
+        conn.execute("UPDATE meta SET value = '4' WHERE key = 'schema_version'")
+        conn.commit()
+    finally:
+        conn.close()
+
+    storage = Storage(db)
+    try:
+        row = storage._read.execute(
+            "SELECT app_key, app_sub FROM space_events"
+        ).fetchone()
+        assert row is not None
+        assert row["app_key"] == "tencent.qq"
+        assert row["app_sub"] == "QQ"
+    finally:
+        storage.close()
 
 
 def test_zero_delta_events_are_not_recorded() -> None:

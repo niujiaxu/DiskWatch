@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..apps import AppGroup, build_groups
 from ..i18n import tr
 from ..storage import SpaceEvent, Storage, human_size
 from ..watcher import open_in_explorer
@@ -37,6 +38,9 @@ from .style import NoFocusDelegate, panel_qss, theme_tokens
 
 PAGE_SIZE = 200
 SEARCH_DEBOUNCE_MS = 260
+
+_HEADERS_EVENTS = ("时间", "文件名", "活动类型", "空间影响", "分类", "所在目录")
+_HEADERS_OVERVIEW = ("最近活动", "应用", "事件数", "净变化", "占比", "主要目录")
 
 CATEGORY_LABELS = {
     "user": "用户文件",
@@ -86,6 +90,7 @@ class ActivityPanel(QWidget):
     _export_done = Signal(object)
     _history_ready = Signal(int, str, object)
     _page_ready = Signal(int, object)
+    _app_ready = Signal(int, object)
 
     def __init__(self, storage: Storage, parent=None) -> None:
         super().__init__(parent, objectName="panelRoot")
@@ -97,6 +102,9 @@ class ActivityPanel(QWidget):
         self._collapsed_groups: set[str] = set()
         self._selected_day: str | None = None
         self._space_sort_order = "time_desc"
+        self._app_groups: list[AppGroup] = []
+        self._app_rows: dict[int, tuple[str, str, str]] = {}
+        self._app_drill: tuple[str, str, str] | None = None  # (key, sub, label)
         self._history_req = 0
         self._reload_req = 0
         self._building = True
@@ -115,6 +123,7 @@ class ActivityPanel(QWidget):
         self._export_done.connect(self._on_export_done)
         self._history_ready.connect(self._on_history_ready)
         self._page_ready.connect(self._on_page_ready)
+        self._app_ready.connect(self._on_app_ready)
         self.reload_filters()
         self.reload()
 
@@ -153,6 +162,7 @@ class ActivityPanel(QWidget):
             self.event_picker.addItem(tr(label), key)
         self.group_picker = DayPicker()
         self.group_picker.addItem(tr("不分组"), None)
+        self.group_picker.addItem(tr("按应用分组"), "app")
         self.group_picker.addItem(tr("按分类分组"), "category")
         self.group_picker.addItem(tr("按目录分组"), "folder")
         for picker in (
@@ -166,6 +176,8 @@ class ActivityPanel(QWidget):
             picker.setMinimumWidth(84)
             picker.currentIndexChanged.connect(self._filters_changed)
             selectors.addWidget(picker, 1)
+        # 默认落在「按应用分组」总览（信号会因 _building 提前返回，稍后统一 reload）
+        self.group_picker.setCurrentIndex(1)
         root.addLayout(selectors)
 
         actions = QHBoxLayout()
@@ -188,12 +200,7 @@ class ActivityPanel(QWidget):
         self.splitter.setChildrenCollapsible(False)
         self.splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(
-            [
-                tr("时间"), tr("文件名"), tr("活动类型"), tr("空间影响"),
-                tr("分类"), tr("所在目录"),
-            ]
-        )
+        self._set_header_labels("events")
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -338,13 +345,13 @@ class ActivityPanel(QWidget):
             return
         self._selected_day = None
         self._collapsed_groups.clear()
+        self._app_drill = None
         self._page = 0
         self.reload()
 
-    def reload(self, keep_day: bool = False) -> None:
-        """后台统计和分页查询；任何筛选条件都不能阻塞 Qt 主线程。"""
+    def _current_filters(self) -> dict:
         since, until = self._time_range()
-        filters = {
+        filters: dict = {
             "since": since,
             "until": until,
             "drive": self.drive_picker.currentData(),
@@ -353,6 +360,22 @@ class ActivityPanel(QWidget):
             "keyword": self.search.text().strip() or None,
             "focus_only": self.view_picker.currentData() == "focus",
         }
+        if self._app_drill is not None:
+            key, sub, _label = self._app_drill
+            filters["app_key"] = key
+            if sub:
+                filters["app_sub"] = sub
+        return filters
+
+    def reload(self, keep_day: bool = False) -> None:
+        """后台统计和分页查询；任何筛选条件都不能阻塞 Qt 主线程。"""
+        filters = self._current_filters()
+        if self.group_picker.currentData() == "app" and self._app_drill is None:
+            self._reload_app_overview(filters)
+            return
+        self._reload_event_page(filters)
+
+    def _reload_event_page(self, filters: dict) -> None:
         self._reload_req += 1
         req = self._reload_req
         requested_page = self._page
@@ -390,6 +413,36 @@ class ActivityPanel(QWidget):
             self._workers.append(worker)
         worker.start()
 
+    def _reload_app_overview(self, filters: dict) -> None:
+        """按应用总览：整个筛选结果聚合（跨页一致），不在分页内分组。"""
+        self._reload_req += 1
+        req = self._reload_req
+        storage = self._storage
+        self.summary.setText(tr("加载中…"))
+        self.btn_refresh.setEnabled(False)
+
+        def work() -> None:
+            try:
+                rows = storage.app_group_rows(**filters)
+                folder_rows = storage.app_group_folders(**filters)
+                result: object = build_groups(rows, folder_rows)
+            except Exception as exc:
+                result = exc
+            finally:
+                storage.release_reader()
+            try:
+                self._app_ready.emit(req, result)
+            finally:
+                current = threading.current_thread()
+                with self._workers_lock:
+                    if current in self._workers:
+                        self._workers.remove(current)
+
+        worker = threading.Thread(target=work, name="dw-activity-apps", daemon=True)
+        with self._workers_lock:
+            self._workers.append(worker)
+        worker.start()
+
     def _on_page_ready(self, req: int, result: object) -> None:
         if req != self._reload_req:
             return
@@ -407,7 +460,22 @@ class ActivityPanel(QWidget):
         self._events = [event for event in events if isinstance(event, SpaceEvent)]
         self._fill_table()
 
+    def _on_app_ready(self, req: int, result: object) -> None:
+        if req != self._reload_req:
+            return
+        self.btn_refresh.setEnabled(True)
+        if isinstance(result, Exception):
+            self.summary.setText(tr("加载失败：{err}", err=result))
+            return
+        if not isinstance(result, list):
+            return
+        self._app_groups = [g for g in result if isinstance(g, AppGroup)]
+        self._fill_table()
+
     def _fill_table(self) -> None:
+        if self.group_picker.currentData() == "app":
+            self._fill_app_table()
+            return
         # 可见 QTableWidget 逐格插入会同步触发布局、重绘和选择信号。
         # 整批更新期间全部关闭，完成后只刷新一次详情和 viewport。
         signal_blocker = QSignalBlocker(self.table)
@@ -418,6 +486,7 @@ class ActivityPanel(QWidget):
             self.table.clearSelection()
             self.table.setCurrentCell(-1, -1)
             self._row_events.clear()
+            self._set_header_labels("events")
             t = theme_tokens()
             group_mode = self.group_picker.currentData()
             group_counts: dict[str, int] = {}
@@ -463,26 +532,137 @@ class ActivityPanel(QWidget):
                     continue
 
                 event = self._events[event_index]
-                self._row_events[row] = event_index
-                path = Path(event.path)
+                self._put_event_row(row, event_index, t)
+            if self._row_events:
+                self.table.selectRow(min(self._row_events))
+        finally:
+            signal_blocker.unblock()
+            self.table.setUpdatesEnabled(True)
+        pages = max(1, math.ceil(self._total / PAGE_SIZE))
+        self.page_label.setText(
+            tr(
+                "共 {count} 条 · 第 {page}/{pages} 页",
+                count=f"{self._total:,}", page=self._page + 1, pages=pages,
+            )
+        )
+        self.summary.setText(tr("每页最多 {count} 条", count=PAGE_SIZE))
+        self.btn_prev.setEnabled(self._page > 0)
+        self.btn_next.setEnabled(self._page + 1 < pages)
+        self._sync_sort_indicator()
+        self.table.viewport().update()
+        if self._row_events:
+            self._show_selected()
+        else:
+            self._clear_detail()
+
+    def _put_event_row(self, row: int, event_index: int, t) -> None:
+        event = self._events[event_index]
+        self._row_events[row] = event_index
+        path = Path(event.path)
+        values = (
+            datetime.fromtimestamp(event.occurred_at).strftime("%m-%d %H:%M:%S"),
+            path.name,
+            _event_label(event),
+            _signed_size(event.delta_bytes),
+            tr(CATEGORY_LABELS.get(event.category, "未分类")),
+            str(path.parent),
+        )
+        for col, value in enumerate(values):
+            item = QTableWidgetItem(value)
+            item.setData(Qt.UserRole, event_index)
+            if col == 3:
+                role = "warning" if event.delta_bytes > 0 else "success"
+                item.setForeground(t.color(role))
+                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.table.setItem(row, col, item)
+
+    def _set_header_labels(self, mode: str) -> None:
+        labels = _HEADERS_OVERVIEW if mode == "overview" else _HEADERS_EVENTS
+        self.table.setHorizontalHeaderLabels([tr(label) for label in labels])
+
+    def _header_mode(self) -> str:
+        if self.group_picker.currentData() == "app" and self._app_drill is None:
+            return "overview"
+        return "events"
+
+    def _fill_app_table(self) -> None:
+        if self._app_drill is None:
+            self._fill_app_overview()
+        else:
+            self._fill_app_drill()
+
+    def _fill_app_overview(self) -> None:
+        """按应用总览：一行一个分组，点行下钻。"""
+        signal_blocker = QSignalBlocker(self.table)
+        self.table.setUpdatesEnabled(False)
+        try:
+            self.table.setSortingEnabled(False)
+            self.table.clearSpans()
+            self.table.clearSelection()
+            self.table.setCurrentCell(-1, -1)
+            self._row_events.clear()
+            self._app_rows.clear()
+            self._set_header_labels("overview")
+            t = theme_tokens()
+            groups = self._app_groups
+            total = sum(group.count for group in groups)
+            self.table.setRowCount(len(groups))
+            for row, group in enumerate(groups):
+                self._app_rows[row] = (group.key, group.sub, group.label)
+                share = f"{group.count / total * 100:.0f}%" if total else "0%"
                 values = (
-                    datetime.fromtimestamp(event.occurred_at).strftime(
-                        "%m-%d %H:%M:%S"
-                    ),
-                    path.name,
-                    _event_label(event),
-                    _signed_size(event.delta_bytes),
-                    tr(CATEGORY_LABELS.get(event.category, "未分类")),
-                    str(path.parent),
+                    datetime.fromtimestamp(group.last_at).strftime("%m-%d %H:%M"),
+                    tr(group.label),
+                    f"{group.count:,}",
+                    _signed_size(group.net),
+                    share,
+                    group.folder,
                 )
                 for col, value in enumerate(values):
                     item = QTableWidgetItem(value)
-                    item.setData(Qt.UserRole, event_index)
-                    if col == 3:
-                        role = "warning" if event.delta_bytes > 0 else "success"
-                        item.setForeground(t.color(role))
+                    item.setData(Qt.UserRole + 1, group.key)
+                    item.setToolTip(tr("点击查看该应用的活动明细"))
+                    if col in (2, 3):
                         item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    if col == 3:
+                        role = "warning" if group.net > 0 else "success"
+                        item.setForeground(t.color(role))
                     self.table.setItem(row, col, item)
+        finally:
+            signal_blocker.unblock()
+            self.table.setUpdatesEnabled(True)
+        self.page_label.setText(tr("共 {count} 个应用", count=len(self._app_groups)))
+        self.summary.setText(tr("点击分组查看明细"))
+        self.btn_prev.setEnabled(False)
+        self.btn_next.setEnabled(False)
+        self._sync_sort_indicator()
+        self.table.viewport().update()
+        self._clear_detail()
+
+    def _fill_app_drill(self) -> None:
+        """应用明细：首行是返回总览，下面是该应用的平铺事件（可分页/排序）。"""
+        assert self._app_drill is not None
+        _key, _sub, label = self._app_drill
+        signal_blocker = QSignalBlocker(self.table)
+        self.table.setUpdatesEnabled(False)
+        try:
+            self.table.setSortingEnabled(False)
+            self.table.clearSpans()
+            self.table.clearSelection()
+            self.table.setCurrentCell(-1, -1)
+            self._row_events.clear()
+            self._app_rows.clear()
+            self._set_header_labels("events")
+            t = theme_tokens()
+            self.table.setRowCount(1 + len(self._events))
+            back = QTableWidgetItem(tr("← 返回应用总览 · {label}", label=label))
+            back.setData(Qt.UserRole + 2, True)
+            back.setForeground(t.color("accent"))
+            back.setBackground(t.color("surface_raised"))
+            self.table.setItem(0, 0, back)
+            self.table.setSpan(0, 0, 1, 6)
+            for index in range(len(self._events)):
+                self._put_event_row(index + 1, index, t)
             if self._row_events:
                 self.table.selectRow(min(self._row_events))
         finally:
@@ -511,6 +691,19 @@ class ActivityPanel(QWidget):
         return self._events[index] if index is not None else None
 
     def _table_clicked(self, row: int, _column: int) -> None:
+        if self.group_picker.currentData() == "app":
+            if self._app_drill is None:
+                entry = self._app_rows.get(row)
+                if entry is None:
+                    return
+                self._app_drill = entry
+                self._page = 0
+                self.reload(keep_day=True)
+            elif row == 0:
+                self._app_drill = None
+                self._page = 0
+                self.reload(keep_day=True)
+            return
         item = self.table.item(row, 0)
         group_key = item.data(Qt.UserRole + 1) if item is not None else None
         if group_key is None:
@@ -634,8 +827,11 @@ class ActivityPanel(QWidget):
     def _sort_by_column(self, column: int) -> None:
         """点击表头切换升/降序（数据库级排序，跨分页顺序正确）。
 
-        「所在目录」列不参与排序：只把 Qt 可能挪过去的指示器还原。
+        「所在目录」列不参与排序；应用总览页不参与（点行是下钻）。
         """
+        if self.group_picker.currentData() == "app" and self._app_drill is None:
+            self._sync_sort_indicator()
+            return
         spec = _SORT_COLUMNS.get(column)
         if spec is None:
             self._sync_sort_indicator()
@@ -656,8 +852,11 @@ class ActivityPanel(QWidget):
         self._sync_sort_indicator()
 
     def _sync_sort_indicator(self) -> None:
-        """排序指示器只出现在真正生效的排序列上。"""
+        """排序指示器只出现在真正生效的排序列上；总览页不显示。"""
         header = self.table.horizontalHeader()
+        if self.group_picker.currentData() == "app" and self._app_drill is None:
+            header.setSortIndicatorShown(False)
+            return
         for column, (asc_key, desc_key, _default) in _SORT_COLUMNS.items():
             if self._space_sort_order in (asc_key, desc_key):
                 order = (
@@ -681,17 +880,8 @@ class ActivityPanel(QWidget):
             return
         if not path.lower().endswith(".csv"):
             path += ".csv"
-        since, until = self._time_range()
-        filters = {
-            "since": since,
-            "until": until,
-            "drive": self.drive_picker.currentData(),
-            "category": self.category_picker.currentData(),
-            "event_type": self.event_picker.currentData(),
-            "keyword": self.search.text().strip() or None,
-            "focus_only": self.view_picker.currentData() == "focus",
-            "sort_order": self._space_sort_order,
-        }
+        filters = self._current_filters()
+        filters["sort_order"] = self._space_sort_order
         self.btn_export.setEnabled(False)
         self.btn_export.setText(tr("正在导出…"))
         storage = self._storage
@@ -807,8 +997,10 @@ class ActivityPanel(QWidget):
         for index, label in enumerate(EVENT_LABELS.values(), start=1):
             self.event_picker.setItemText(index, tr(label))
         self.group_picker.setItemText(0, tr("不分组"))
-        self.group_picker.setItemText(1, tr("按分类分组"))
-        self.group_picker.setItemText(2, tr("按目录分组"))
+        self.group_picker.setItemText(1, tr("按应用分组"))
+        self.group_picker.setItemText(2, tr("按分类分组"))
+        self.group_picker.setItemText(3, tr("按目录分组"))
+        self._set_header_labels(self._header_mode())
         self.reload_filters()
         self.reload(keep_day=True)
 

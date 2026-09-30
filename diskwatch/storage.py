@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
+from .apps import resolve_app
 from .errorlog import errorlog
 from .i18n import tr
 
@@ -78,7 +79,9 @@ CREATE TABLE IF NOT EXISTS space_events (
     delta_bytes   INTEGER NOT NULL DEFAULT 0,
     occurred_at   REAL NOT NULL,
     day           TEXT NOT NULL,
-    merged_count  INTEGER NOT NULL DEFAULT 1
+    merged_count  INTEGER NOT NULL DEFAULT 1,
+    app_key       TEXT NOT NULL DEFAULT '',
+    app_sub       TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_space_events_time ON space_events(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_space_events_day_drive ON space_events(day, drive);
@@ -130,7 +133,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 """
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 # 动态降噪：同一路径在 FOLD_WINDOW 内的连续变化视为一"串"。一串里前
 # FOLD_AFTER 条照常记录明细，第 FOLD_AFTER+1 条起合并为一条
@@ -520,6 +523,40 @@ class Storage:
                 )
             except sqlite3.OperationalError:
                 pass  # 列已存在（可能旧 DB 碰巧有）
+        if ver < 5:
+            # 按应用分组：写入时算好的归属键；老库按路径批量回填一次。
+            for column in ("app_key", "app_sub"):
+                try:
+                    self._write.execute(
+                        f"ALTER TABLE space_events ADD COLUMN {column} "
+                        "TEXT NOT NULL DEFAULT ''"
+                    )
+                except sqlite3.OperationalError:
+                    pass
+            rows = self._write.execute(
+                "SELECT DISTINCT path FROM space_events WHERE app_key = ''"
+            ).fetchall()
+            batch: list[tuple[str, str, str]] = []
+            for row in rows:
+                key, sub = resolve_app(str(row["path"]))
+                batch.append((key, sub, str(row["path"])))
+                if len(batch) >= 5000:
+                    self._write.executemany(
+                        "UPDATE space_events SET app_key = ?, app_sub = ? "
+                        "WHERE path = ?",
+                        batch,
+                    )
+                    self._write.commit()
+                    batch = []
+            if batch:
+                self._write.executemany(
+                    "UPDATE space_events SET app_key = ?, app_sub = ? WHERE path = ?",
+                    batch,
+                )
+            self._write.execute(
+                "CREATE INDEX IF NOT EXISTS idx_space_events_app "
+                "ON space_events(app_key)"
+            )
         if ver < _SCHEMA_VERSION:
             self._write.execute(
                 "INSERT OR REPLACE INTO meta VALUES ('schema_version', ?)",
@@ -666,8 +703,9 @@ class Storage:
             """
             INSERT INTO space_events (
                 path, old_path, name, ext, drive, folder, category, event_type,
-                old_size, new_size, delta_bytes, occurred_at, day, merged_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                old_size, new_size, delta_bytes, occurred_at, day, merged_count,
+                app_key, app_sub
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.path,
@@ -684,6 +722,7 @@ class Storage:
                 occurred_at,
                 day,
                 merged_count,
+                *resolve_app(record.path),
             ),
         )
         if fold_state is not None:
@@ -1283,12 +1322,15 @@ class Storage:
         event_type: str | None = None,
         keyword: str | None = None,
         focus_only: bool = False,
+        app_key: str | None = None,
+        app_sub: str | None = None,
         sort_order: str = "time_desc",
         limit: int = 1000,
         offset: int = 0,
     ) -> list[SpaceEvent]:
         where, args = self._space_event_where(
-            since, until, drive, category, event_type, keyword, focus_only
+            since, until, drive, category, event_type, keyword, focus_only,
+            app_key, app_sub,
         )
         order_by = {
             "time_desc": "occurred_at DESC, id DESC",
@@ -1337,15 +1379,84 @@ class Storage:
         event_type: str | None = None,
         keyword: str | None = None,
         focus_only: bool = False,
+        app_key: str | None = None,
+        app_sub: str | None = None,
     ) -> int:
         where, args = self._space_event_where(
-            since, until, drive, category, event_type, keyword, focus_only
+            since, until, drive, category, event_type, keyword, focus_only,
+            app_key, app_sub,
         )
         row = self._read.execute(
             "SELECT COUNT(*) count FROM space_events WHERE " + " AND ".join(where),
             args,
         ).fetchone()
         return int(row["count"])
+
+    def app_group_rows(
+        self,
+        *,
+        since: float | None = None,
+        until: float | None = None,
+        drive: str | None = None,
+        category: str | None = None,
+        event_type: str | None = None,
+        keyword: str | None = None,
+        focus_only: bool = False,
+    ) -> list[tuple[str, str, int, int, int, float]]:
+        """按 (app_key, app_sub) 聚合整个筛选结果。
+
+        返回 [(key, sub, 条数, 净变化, 毛变化, 最近时间)]，供按应用分组
+        在 Python 侧做产品级合并与均衡拆分（跨页一致，不受分页影响）。
+        """
+        where, args = self._space_event_where(
+            since, until, drive, category, event_type, keyword, focus_only
+        )
+        rows = self._read.execute(
+            "SELECT app_key, app_sub, COUNT(*) AS c, "
+            "COALESCE(SUM(delta_bytes), 0) AS net, "
+            "COALESCE(SUM(ABS(delta_bytes)), 0) AS gross, "
+            "COALESCE(MAX(occurred_at), 0) AS last_at "
+            "FROM space_events WHERE " + " AND ".join(where)
+            + " GROUP BY app_key, app_sub",
+            args,
+        ).fetchall()
+        return [
+            (
+                str(r["app_key"]),
+                str(r["app_sub"]),
+                int(r["c"]),
+                int(r["net"]),
+                int(r["gross"]),
+                float(r["last_at"]),
+            )
+            for r in rows
+        ]
+
+    def app_group_folders(
+        self,
+        *,
+        since: float | None = None,
+        until: float | None = None,
+        drive: str | None = None,
+        category: str | None = None,
+        event_type: str | None = None,
+        keyword: str | None = None,
+        focus_only: bool = False,
+    ) -> list[tuple[str, str, str, int]]:
+        """按 (app_key, app_sub, folder) 聚合，给分组挑"主要目录"。"""
+        where, args = self._space_event_where(
+            since, until, drive, category, event_type, keyword, focus_only
+        )
+        rows = self._read.execute(
+            "SELECT app_key, app_sub, folder, COUNT(*) AS c "
+            "FROM space_events WHERE " + " AND ".join(where)
+            + " GROUP BY app_key, app_sub, folder",
+            args,
+        ).fetchall()
+        return [
+            (str(r["app_key"]), str(r["app_sub"]), str(r["folder"] or ""), int(r["c"]))
+            for r in rows
+        ]
 
     def file_event_history(self, path: str, *, limit: int = 100) -> list[SpaceEvent]:
         """返回一个文件跨重命名路径的大小变化历史，最新事件在前。"""
@@ -1405,6 +1516,8 @@ class Storage:
         event_type: str | None,
         keyword: str | None,
         focus_only: bool = False,
+        app_key: str | None = None,
+        app_sub: str | None = None,
     ) -> tuple[list[str], list[object]]:
         where = ["1 = 1"]
         args: list[object] = []
@@ -1426,6 +1539,12 @@ class Storage:
             args.append("%" + _like_escape(keyword) + "%")
         if focus_only:
             where.append("category IN ('user', 'download')")
+        if app_key:
+            where.append("app_key = ?")
+            args.append(app_key)
+            if app_sub:
+                where.append("app_sub = ?")
+                args.append(app_sub)
         return where, args
 
     def space_event_filter_values(self) -> tuple[list[str], list[str]]:

@@ -40,6 +40,8 @@ def test_activity_panel_pages_and_filters(qapp, tmp_path) -> None:
         ]
         storage.add_files(records)
         panel = ActivityPanel(storage)
+        # 默认是按应用总览；本测试验证平铺分页/筛选
+        panel.group_picker.setCurrentIndex(0)
         _settle(qapp, panel)
         assert panel._total == PAGE_SIZE + 5
         assert panel.table.rowCount() == PAGE_SIZE
@@ -145,6 +147,7 @@ def test_activity_splitter_fills_width_with_long_detail_text(qapp, tmp_path) -> 
         panel = ActivityPanel(storage)
         panel.resize(1800, 900)
         panel.show()
+        panel.group_picker.setCurrentIndex(0)
         _settle(qapp, panel)
         panel.table.selectRow(0)
         _settle(qapp, panel)
@@ -204,6 +207,7 @@ def test_detail_history_never_blocks_ui_thread(qapp, tmp_path, monkeypatch) -> N
     try:
         storage.add_files([make_record(r"C:\data\large-history.bin", 10)])
         panel = ActivityPanel(storage)
+        panel.group_picker.setCurrentIndex(0)
         _settle(qapp, panel)
 
         def blocked_history(_path: str, *, limit: int = 100):
@@ -232,6 +236,7 @@ def test_page_reload_never_blocks_ui_thread(qapp, tmp_path, monkeypatch) -> None
     try:
         storage.add_files([make_record(r"C:\data\row.bin", 10)])
         panel = ActivityPanel(storage)
+        panel.group_picker.setCurrentIndex(0)
         _settle(qapp, panel)
         original_count = storage.space_event_count
 
@@ -280,6 +285,7 @@ def test_table_fill_loads_selected_history_once(qapp, tmp_path, monkeypatch) -> 
     try:
         storage.add_files([make_record(r"C:\data\row.bin", 10)])
         panel = ActivityPanel(storage)
+        panel.group_picker.setCurrentIndex(0)
         _settle(qapp, panel)
         requested: list[str] = []
         monkeypatch.setattr(panel, "_load_history_async", requested.append)
@@ -368,6 +374,7 @@ def test_activity_sorts_columns_except_folder(qapp, tmp_path) -> None:
         panel = ActivityPanel(storage)
         panel.resize(1200, 500)
         panel.show()
+        panel.group_picker.setCurrentIndex(0)  # 平铺模式验证列排序
         _settle(qapp, panel)
         header = panel.table.horizontalHeader()
 
@@ -424,6 +431,64 @@ def test_activity_sorts_columns_except_folder(qapp, tmp_path) -> None:
         qapp.processEvents()
         assert panel._space_sort_order == "category_asc"
         assert header.sortIndicatorSection() == 4
+        panel.close()
+    finally:
+        storage.close()
+
+
+def test_app_overview_groups_and_drilldown(qapp, tmp_path) -> None:
+    """默认按应用总览：一行一组；点行下钻；点返回行回到总览。"""
+    storage = Storage(tmp_path / "app-view.db")
+    now = time.time()
+    try:
+        storage.add_files(
+            [
+                make_record(
+                    r"C:\Users\me\AppData\Roaming\Tencent\QQ\a.dat", 100, now - 3
+                ),
+                make_record(
+                    r"C:\Users\me\AppData\Roaming\Tencent\QQ\b.dat", 200, now - 2
+                ),
+                make_record(r"C:\Program Files\Zotero\c.pdf", 300, now - 1),
+            ]
+        )
+        panel = ActivityPanel(storage)
+        panel.resize(1100, 600)
+        panel.show()
+        _settle(qapp, panel)
+
+        # 总览：QQ 和 Zotero 两组，净变化同分时按条数降序
+        assert len(panel._app_groups) == 2
+        assert panel.table.rowCount() == 2
+        labels = [panel.table.item(row, 1).text() for row in range(2)]
+        assert labels == ["QQ", "Zotero"], labels
+        assert panel.table.horizontalHeaderItem(0).text() == "最近活动"
+
+        # 下钻到 QQ：首行是返回行，下面是该应用的事件
+        qq_row = next(
+            row for row in range(2) if panel.table.item(row, 1).text() == "QQ"
+        )
+        panel._table_clicked(qq_row, 0)
+        _settle(qapp, panel)
+        assert panel._app_drill is not None
+        assert panel._total == 2
+        assert panel.table.item(0, 0).text().startswith("←")
+        assert panel.table.item(1, 1).text() in ("a.dat", "b.dat")
+        assert panel.table.horizontalHeaderItem(0).text() == "时间"
+
+        # 点返回行回到总览
+        panel._table_clicked(0, 0)
+        _settle(qapp, panel)
+        assert panel._app_drill is None
+        assert panel.table.rowCount() == 2
+
+        # 切换筛选条件会重置下钻状态
+        panel._table_clicked(1, 0)
+        _settle(qapp, panel)
+        assert panel._app_drill is not None
+        panel._filters_changed()
+        _settle(qapp, panel)
+        assert panel._app_drill is None
         panel.close()
     finally:
         storage.close()

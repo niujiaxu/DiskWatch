@@ -72,6 +72,7 @@ Unattributed         0.5 GB   ← the OS's own doing, nothing to worry about
 
 - 🗂 **Capture everything, classify automatically** — user files / downloads / system & updates / software installs / app caches / temp files / dev artifacts / VM & containers / unclassified
 - 🚫 **Noise excluded — and auto-folded** — VM disk images (`.vhdx` …), paging files, Temp/cache dirs, `node_modules` and dot-directories (`.git`/`.venv`) are **never recorded**; anything that still churns (the same file changing repeatedly within 10 minutes) is folded into one **"High-churn ×N"** row — net bytes preserved, the list stays readable. Want them too? Just delete the matching line in *Settings → Advanced*
+- 📱 **Group by app (default view)** — the activity page infers each app's home (AppData / Program Files / "X Files" / dot-dirs / Temp…), so QQ, WeChat and every installer get their own group; oversized groups split by account, tiny leftovers collapse into "Other Locations", and one click drills into that app's full details (consistent across pages)
 - 🛡 **Safe boundaries** — its own database, logs, device paths and non-regular files are always excluded; it never monitors itself
 - ⚡ **Fast startup recovery** — NTFS uses the USN Change Journal; the fallback directory scan runs on **6 parallel workers**: 290k directories in **30s** (down from 187s)
 - 🧾 **Space ledger** — old size → new size → delta bytes → category, drive and timestamp, all preserved
@@ -111,6 +112,7 @@ Unattributed         0.5 GB   ← the OS's own doing, nothing to worry about
 |---|---|
 | `__init__.py` | App name and version (`VERSION`) |
 | `app.py` | Wiring: single instance, tray, floating surfaces, main window; startup recovery, periodic purge, shutdown |
+| `apps.py` | App grouping: owner-root inference from paths, product-level merging (QQ/WeChat/…), balanced clustering (split big groups, long tail → "Other") |
 | `config.py` | JSON config with defaults, filter version, database/config path migration |
 | `storage.py` | SQLite persistence: space ledger, hourly/daily rollups, disk samples, tiered purge; split read/write connections (WAL) |
 | `watcher.py` | Live monitoring: watchdog events → queue → batched writes; coalescing, size back-fill, disk sampling |
@@ -150,6 +152,7 @@ Unattributed         0.5 GB   ← the OS's own doing, nothing to worry about
 | `config_test.py` | Config round-trips, corrupted-value defence, path migration |
 | `dashboard_test.py` | Dashboard aggregates, chart behaviour, scaling with the window |
 | `disk_space_test.py` | Disk sampling and retention purge |
+| `apps_test.py` | App grouping: owner-root resolution, product merge, split/long-tail rules |
 | `filters_test.py` | Filter rules (extensions / paths / sizes / system dirs) |
 | `i18n_test.py` | Translation completeness (scans all sources) and language hot-swap |
 | `move_regression_test.py` | Rename/move regression (same-drive moves are not "new files") |
