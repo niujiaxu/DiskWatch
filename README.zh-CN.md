@@ -40,7 +40,7 @@ C: 可用空间减少    8.4 GB
 
 ## 🚀 三步上手（真的只有三步）
 
-1. 去 [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest) 下载 `DiskWatch-2.0.7-win64.zip`
+1. 去 [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest) 下载 `DiskWatch-2.0.8-win64-portable.zip`
 2. 解压到任意目录，双击 **`start.bat`**（首次运行会自动建虚拟环境、装依赖）
 3. 桌面出现**悬浮卡片** → 点「详情」看明细、「看板」看趋势
 
@@ -56,7 +56,12 @@ C: 可用空间减少    8.4 GB
 <p align="center">
   <img src="docs/main-light-preview.png" alt="浅色主窗口" width="760" />
 </p>
-<p align="center"><sub>浅色主题：文件活动（分页 200 条 / 搜索 / 筛选 / 分组 / 导出 CSV）</sub></p>
+<p align="center"><sub>浅色主题：文件活动 · 按应用分组总览（下载 / 微信 / QQ / 各软件各归一组，跨页一致）</sub></p>
+
+<p align="center">
+  <img src="docs/activity-drill-preview.png" alt="下钻明细" width="760" />
+</p>
+<p align="center"><sub>点一行下钻到该应用明细：目录列显示"应用老家"并智能缩写，悬停看完整路径与归属应用</sub></p>
 
 <p align="center">
   <img src="docs/settings-preview.png" alt="设置页" width="760" />
@@ -66,7 +71,17 @@ C: 可用空间减少    8.4 GB
 <p align="center">
   <img src="docs/widget-preview.png" alt="悬浮卡片" width="272" />
 </p>
-<p align="center"><sub>悬浮卡片：今日净变化、归因率、最近记录（可拖动 + 迷你球收起）</sub></p>
+<p align="center"><sub>悬浮卡片：今日净变化、归因率、最近记录（可拖动）</sub></p>
+
+<p align="center">
+  <img src="docs/ball-preview.png" alt="迷你球" width="180" />
+</p>
+<p align="center"><sub>迷你球：收起态小胶囊，点一下在球的位置展开卡片</sub></p>
+
+<p align="center">
+  <img src="docs/menu-preview.png" alt="右键菜单" width="240" />
+</p>
+<p align="center"><sub>右键菜单：圆角卡片 + 线性图标，跟随深浅主题（托盘 / 卡片 / 迷你球统一）</sub></p>
 
 ## 🔥 亮点（硬核，但说人话）
 
@@ -77,7 +92,8 @@ C: 可用空间减少    8.4 GB
 - ⚡ **启动恢复够快**：NTFS 优先走 USN 变更日志；退回目录补扫时**6 线程并行**，29 万目录实测 **30 秒**（优化前 187 秒）
 - 🧾 **空间账本**：旧大小 → 新大小 → 字节差 → 分类 / 磁盘 / 时间，全留着、可回溯
 - ✍️ **写入合并**：同一文件连续写入只在"停笔"约 6 秒后记一次，事件洪峰也不刷屏
-- 📄 **分页活动表**：每页 200 条，搜索 / 磁盘 / 分类 / 事件类型 / 分组 / 排序 / CSV 导出，几十万条也不卡
+- 📄 **分页活动表**：每页 200 条，5 列可排序、搜索 / 筛选 / 分组 / CSV 导出；目录列显示"应用老家"并智能缩写（`~\Documents\Tencent Files`），悬停看完整路径 + 归属应用
+- 🖱 **现代右键菜单**：托盘 / 悬浮卡片 / 迷你球统一圆角卡片样式 + 16px 线性图标，跟随深浅主题即时重绘
 - 🧹 **分层保留**：原始事件 30 天 → 小时汇总 1 年 → 每日汇总长期保留（自动清理，不涨库）
 - 🎨 **中英双语 + 深色 / 浅色 / 跟随系统**，运行时即时切换
 - 🖥 **单实例防重复启动 + 开机自启 + 数据库位置可迁移**
@@ -179,10 +195,13 @@ C: 可用空间减少    8.4 GB
 | `scripts/build_portable.ps1` | PyInstaller 打包便携版（onedir）+ 打包后导入自检 |
 | `scripts/make_release.ps1` | 生成源码 zip（剔除 .venv 与缓存） |
 | `docs/performance.md` | 性能与磁盘影响说明（含 10 万事件基准、适用边界） |
-| `docs/main-dark-preview.png` | 深色主题主窗口截图 |
-| `docs/main-light-preview.png` | 浅色主题主窗口截图 |
+| `docs/main-dark-preview.png` | 深色主题主窗口截图（概览） |
+| `docs/main-light-preview.png` | 浅色主题主窗口截图（按应用分组总览） |
+| `docs/activity-drill-preview.png` | 应用下钻明细截图（目录列缩写 + tooltip） |
 | `docs/settings-preview.png` | 设置页截图 |
 | `docs/widget-preview.png` | 悬浮卡片截图 |
+| `docs/ball-preview.png` | 迷你球截图 |
+| `docs/menu-preview.png` | 右键菜单截图（圆角卡片 + 线性图标） |
 
 </details>
 

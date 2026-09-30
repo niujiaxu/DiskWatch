@@ -40,7 +40,7 @@ Unattributed         0.5 GB   ← the OS's own doing, nothing to worry about
 
 ## 🚀 Get started in three steps
 
-1. Grab `DiskWatch-2.0.7-win64.zip` from [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest)
+1. Grab `DiskWatch-2.0.8-win64-portable.zip` from [Releases](https://github.com/niujiaxu/DiskWatch/releases/latest)
 2. Unzip anywhere and double-click **`start.bat`** (it bootstraps a venv on first run)
 3. Use the **floating card** → open *Details* for the ledger, *Dashboard* for trends
 
@@ -56,7 +56,12 @@ Unattributed         0.5 GB   ← the OS's own doing, nothing to worry about
 <p align="center">
   <img src="docs/main-light-preview.png" alt="Light main window" width="760" />
 </p>
-<p align="center"><sub>Light theme: file activity (200 per page, search / filters / grouping / CSV export)</sub></p>
+<p align="center"><sub>Light theme: file activity — app-grouped overview (Downloads / WeChat / QQ / each app in its own group, consistent across pages)</sub></p>
+
+<p align="center">
+  <img src="docs/activity-drill-preview.png" alt="Drill-down" width="760" />
+</p>
+<p align="center"><sub>Click a row to drill into that app: the folder column shows the app's home with smart abbreviation; hover for the full path and owning app</sub></p>
 
 <p align="center">
   <img src="docs/settings-preview.png" alt="Settings" width="760" />
@@ -68,6 +73,16 @@ Unattributed         0.5 GB   ← the OS's own doing, nothing to worry about
 </p>
 <p align="center"><sub>Floating card: today's net change, attribution rate, recent files (draggable)</sub></p>
 
+<p align="center">
+  <img src="docs/ball-preview.png" alt="Mini ball" width="180" />
+</p>
+<p align="center"><sub>Mini ball: the collapsed capsule; click to expand the card right where the ball is</sub></p>
+
+<p align="center">
+  <img src="docs/menu-preview.png" alt="Context menu" width="240" />
+</p>
+<p align="center"><sub>Context menu: rounded card + line icons, follows light/dark (tray, card and ball alike)</sub></p>
+
 ## 🔥 Highlights
 
 - 🗂 **Capture everything, classify automatically** — user files / downloads / system & updates / software installs / app caches / temp files / dev artifacts / VM & containers / unclassified
@@ -77,7 +92,8 @@ Unattributed         0.5 GB   ← the OS's own doing, nothing to worry about
 - ⚡ **Fast startup recovery** — NTFS uses the USN Change Journal; the fallback directory scan runs on **6 parallel workers**: 290k directories in **30s** (down from 187s)
 - 🧾 **Space ledger** — old size → new size → delta bytes → category, drive and timestamp, all preserved
 - ✍️ **Write coalescing** — a file being written is recorded once, ~6s after it settles
-- 📄 **Paged activity table** — 200 rows per page with search, filters, grouping, sorting and CSV export; hundreds of thousands of events stay responsive
+- 📄 **Paged activity table** — 200 rows per page, five sortable columns, search / filters / grouping / CSV export; folder columns show the app's home with smart abbreviation (`~\Documents\Tencent Files`) and hover reveals the full path + owning app
+- 🖱 **Modern context menus** — tray, floating card and mini ball share one rounded-card style with 16px line icons that follow the light/dark theme
 - 🧹 **Tiered retention** — raw events 30 days → hourly rollups 1 year → daily rollups kept long-term
 - 🎨 **English / 中文 with dark / light / system themes**, hot-swapped at runtime
 - 🖥 **Single instance, autostart, relocatable database**
@@ -178,10 +194,13 @@ Unattributed         0.5 GB   ← the OS's own doing, nothing to worry about
 | `scripts/build_portable.ps1` | Builds the portable PyInstaller bundle (onedir) plus a packaged import self-test |
 | `scripts/make_release.ps1` | Builds the source zip (excludes `.venv` and caches) |
 | `docs/performance.md` | Performance and disk-impact notes (100k-event benchmark, limits) |
-| `docs/main-dark-preview.png` | Dark-theme main window screenshot |
-| `docs/main-light-preview.png` | Light-theme main window screenshot |
+| `docs/main-dark-preview.png` | Dark-theme main window screenshot (overview) |
+| `docs/main-light-preview.png` | Light-theme main window screenshot (app-grouped overview) |
+| `docs/activity-drill-preview.png` | App drill-down screenshot (abbreviated folder column + tooltips) |
 | `docs/settings-preview.png` | Settings page screenshot |
 | `docs/widget-preview.png` | Floating card screenshot |
+| `docs/ball-preview.png` | Mini ball screenshot |
+| `docs/menu-preview.png` | Context menu screenshot (rounded card + line icons) |
 
 </details>
 
