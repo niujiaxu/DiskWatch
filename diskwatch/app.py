@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import traceback
+from ctypes import wintypes
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSharedMemory, QTimer, Signal
@@ -54,6 +55,9 @@ UI_HEARTBEAT_MS = 500  # 主线程心跳间隔
 UI_WATCHDOG_POLL = 2.0  # 看门狗轮询间隔
 UI_HANG_THRESHOLD = 5.0  # 停跳超过这个秒数判定为卡顿
 UI_HANG_REPORT_INTERVAL = 30.0  # 同一段卡顿最多每 30 秒报告一次
+UI_UNRESPONSIVE_THRESHOLD = 3.0  # 窗口消息无响应超过这个秒数判定为界面卡死
+_WM_NULL = 0x0000
+_SMTO_ABORTIFHUNG = 0x0002
 COMPACT_MIN_PURGED_ROWS = 2000  # 过期清理删掉这么多行后才 VACUUM 回收空间
 
 
@@ -136,11 +140,16 @@ class DiskWatchApp:
         self._update_tooltip()
 
         # 主线程心跳 + 卡顿看门狗：桌面应用“点什么都不回应”通常是主线程被
-        # 某个阻塞调用卡住（DB 忙、死锁、隐藏的模态框）。这里让 UI 定时器
-        # 打心跳，后台线程发现停跳超过阈值就把主线程调用栈和可见模态窗口
-        # 写进日志，下次再卡就能直接定位。
+        # 某个阻塞调用卡住（DB 忙、死锁、隐藏的模态框），也可能是主线程仍在跑
+        # 但窗口不再处理消息（原生模态循环、消息层异常）。前者的心跳会停跳，
+        # 后者不会——两种都记进日志，并附主线程调用栈与可见窗口，方便事后定位。
         self._ui_heartbeat = 0
         self._ui_watchdog_stop = False
+        # 供看门狗线程读取的界面状态快照（纯数据，后台线程绝不碰 Qt）
+        self._ui_hwnd = 0
+        self._ui_windows = ""
+        self._ui_minimized = False
+        self._ui_maximized = False
         self._ui_beat_timer = QTimer(qt_app)
         self._ui_beat_timer.timeout.connect(self._beat)
         self._ui_beat_timer.start(UI_HEARTBEAT_MS)
@@ -682,17 +691,44 @@ class DiskWatchApp:
     def _beat(self) -> None:
         """UI 线程心跳：主线程只要在跑事件循环就会定期执行。"""
         self._ui_heartbeat += 1
+        # 每 10 秒刷新一次给看门狗的快照（低频，避免 winId/topLevelWidgets 开销）
+        if self._ui_heartbeat % 20 == 0:
+            self._snapshot_ui_state()
+
+    def _snapshot_ui_state(self) -> None:
+        """把主窗口句柄与窗口状态缓存成纯数据，供看门狗线程安全读取。"""
+        try:
+            self._ui_hwnd = int(self.main_window.winId())
+        except (RuntimeError, TypeError, ValueError):
+            self._ui_hwnd = 0
+        try:
+            self._ui_minimized = bool(self.main_window.isMinimized())
+            self._ui_maximized = bool(self.main_window.isMaximized())
+            app = QApplication.instance()
+            windows = []
+            if app is not None:
+                for widget in app.topLevelWidgets():
+                    if widget.isVisible():
+                        flag = "（模态）" if widget.isModal() else ""
+                        windows.append(f"{type(widget).__name__}{flag}")
+            self._ui_windows = "、".join(windows)
+        except (RuntimeError, TypeError, ValueError):
+            self._ui_windows = ""
 
     def _watch_ui(self) -> None:
-        """后台看门狗：主线程停跳超过阈值就把现场写进日志。
+        """后台看门狗：主线程卡住 / 窗口不响应消息时把现场写进日志。
 
-        桌面应用“点什么都不回应”通常是主线程被阻塞（数据库忙、死锁、
-        隐藏的模态框）。这段诊断会把主线程的 Python 调用栈和当前的可见
-        顶层窗口一并落盘，用于事后定位，不影响正常使用。
+        两类卡死都要抓：
+        - 主线程停跳（阻塞型：DB 忙、死锁、隐藏模态框）；
+        - 心跳正常但主窗口不再处理消息（界面画得出来却点不动：原生模态
+          循环、消息层异常）——只测心跳会漏掉这一种。
+        诊断只读主线程缓存的快照 + Win32 探测，不影响正常使用。
         """
         last_seen = -1
         stuck_since: float | None = None
         reported_at = 0.0
+        frozen_since: float | None = None
+        frozen_reported_at = 0.0
         while not self._ui_watchdog_stop:
             time.sleep(UI_WATCHDOG_POLL)
             beat = self._ui_heartbeat
@@ -701,31 +737,79 @@ class DiskWatchApp:
                 last_seen = beat
                 stuck_since = None
                 reported_at = 0.0
-                continue
-            if stuck_since is None:
+            elif stuck_since is None:
                 stuck_since = now
-                continue
-            stuck = now - stuck_since
-            if stuck >= UI_HANG_THRESHOLD and now - reported_at >= UI_HANG_REPORT_INTERVAL:
-                reported_at = now
-                try:
-                    errorlog.log(logging.WARNING, self._hang_report(stuck))
-                except Exception:
-                    pass
+            else:
+                stuck = now - stuck_since
+                if stuck >= UI_HANG_THRESHOLD and now - reported_at >= UI_HANG_REPORT_INTERVAL:
+                    reported_at = now
+                    try:
+                        errorlog.log(logging.WARNING, self._hang_report(stuck))
+                    except Exception:
+                        pass
+
+            if self._window_responsive():
+                frozen_since = None
+            elif frozen_since is None:
+                frozen_since = now
+            else:
+                frozen = now - frozen_since
+                if (
+                    frozen >= UI_UNRESPONSIVE_THRESHOLD
+                    and now - frozen_reported_at >= UI_HANG_REPORT_INTERVAL
+                ):
+                    frozen_reported_at = now
+                    try:
+                        errorlog.log(logging.WARNING, self._unresponsive_report(frozen))
+                    except Exception:
+                        pass
+
+    def _window_responsive(self) -> bool:
+        """窗口是否还在处理消息（后台线程安全：只读快照 + Win32 探测）。
+
+        先用 IsWindow 排除「句柄无效」的情形（窗口已销毁，或 offscreen 等
+        没有真实原生窗口的环境），避免把无效句柄误判成卡死；随后发一条
+        WM_NULL：窗口挂起时 SMTO_ABORTIFHUNG 让它立刻返回失败，正常窗口
+        则马上返回成功（实测挂起窗口返回 0 且 last error 为 0，不能靠
+        错误码区分，只能看返回值本身）。
+        """
+        hwnd = self._ui_hwnd
+        if not hwnd or sys.platform != "win32":
+            return True
+        try:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            handle = wintypes.HWND(hwnd)
+            if not user32.IsWindow(handle):
+                return True  # 句柄无效 → 无法判定，不报
+            result = ctypes.c_size_t(0)
+            ok = user32.SendMessageTimeoutW(
+                handle,
+                _WM_NULL,
+                0,
+                0,
+                _SMTO_ABORTIFHUNG,
+                1500,
+                ctypes.byref(result),
+            )
+            return bool(ok)
+        except (AttributeError, OSError, TypeError, ValueError):
+            return True
+
+    def _unresponsive_report(self, frozen: float) -> str:
+        parts = [
+            f"主窗口消息无响应已 {frozen:.0f} 秒（主线程心跳正常，属“界面点不动”型卡死）",
+            f"窗口状态：最小化={self._ui_minimized} 最大化={self._ui_maximized}",
+            "可见顶层窗口：" + (self._ui_windows or "无"),
+            "主线程调用栈：\n" + self._main_stack(),
+        ]
+        return "\n".join(parts)
 
     def _hang_report(self, stuck: float) -> str:
+        # 注意：本方法跑在看门狗线程，绝不能触碰 Qt 对象（跨线程访问会崩），
+        # 窗口列表一律用主线程心跳缓存的快照。
         parts = [f"主线程已卡住 {stuck:.0f} 秒"]
-        try:
-            app = QApplication.instance()
-            if app is not None:
-                visible = []
-                for widget in app.topLevelWidgets():
-                    if widget.isVisible():
-                        flag = "（模态）" if widget.isModal() else ""
-                        visible.append(f"{type(widget).__name__}{flag}")
-                parts.append("可见顶层窗口：" + ("、".join(visible) if visible else "无"))
-        except Exception:
-            pass
+        parts.append(f"窗口状态：最小化={self._ui_minimized} 最大化={self._ui_maximized}")
+        parts.append("可见顶层窗口：" + (self._ui_windows or "无"))
         parts.append("主线程调用栈：\n" + self._main_stack())
         return "\n".join(parts)
 

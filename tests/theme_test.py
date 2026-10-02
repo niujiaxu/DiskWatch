@@ -179,6 +179,54 @@ def test_main_window_native_resize_is_safe_to_call(qapp) -> None:
         window.close()
 
 
+def test_show_front_keeps_maximized(qapp) -> None:
+    """从最小化恢复时保留最大化状态（showNormal 会把最大化窗口降级成普通窗口）。"""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QWidget
+
+    from diskwatch.ui.main_window import MainWindow
+
+    window = MainWindow(QWidget(), QWidget())
+    window.showMaximized()
+    qapp.processEvents()
+    if not window.isMaximized():
+        window.close()
+        return  # 该平台不模拟最大化状态，跳过
+    try:
+        window.setWindowState(window.windowState() | Qt.WindowMinimized)
+        qapp.processEvents()
+        window._show_front()
+        qapp.processEvents()
+        assert not window.isMinimized(), "最小化位应被清除"
+        assert window.isMaximized(), "从最小化恢复后应保持最大化"
+    finally:
+        window.close()
+
+
+def test_self_heal_styles_skips_when_minimized(qapp, monkeypatch) -> None:
+    """样式兜底巡检在隐藏/最小化时应跳过，避免不可见状态下触发窗口框架重算。"""
+    from PySide6.QtWidgets import QWidget
+
+    from diskwatch.ui.main_window import MainWindow
+
+    window = MainWindow(QWidget(), QWidget())
+    window.show()
+    qapp.processEvents()
+    calls: list[int] = []
+    monkeypatch.setattr(window, "_enable_native_resize", lambda: calls.append(1))
+    try:
+        window.showMinimized()
+        qapp.processEvents()
+        window._self_heal_styles()
+        assert not calls, "最小化时不应做样式巡检"
+        window.showNormal()
+        qapp.processEvents()
+        window._self_heal_styles()
+        assert calls, "可见时仍应做样式巡检"
+    finally:
+        window.close()
+
+
 def test_checked_checkbox_is_filled_with_accent(qapp) -> None:
     """选中态要画出填充色方块 + 对勾。
 

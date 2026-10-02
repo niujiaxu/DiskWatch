@@ -5,6 +5,13 @@ All notable changes to DiskWatch are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- 卡死诊断补上盲区：原看门狗只检测「主线程停跳」，而“界面画得出来却点不动”这类卡死主线程心跳照常（日志里毫无痕迹）。现在看门狗同时用 `IsWindow` + `SendMessageTimeout(WM_NULL, SMTO_ABORTIFHUNG)` 探测**主窗口是否还在处理消息**，连续无响应超过 3 秒即把窗口状态与主线程调用栈写入日志（实测在系统 `IsHungAppWindow` 判定之前就能抓到挂起窗口；无效句柄不误报）
+- 看门狗线程不再触碰 Qt 对象：原先在后台线程遍历 `topLevelWidgets()` 并读 `isVisible()/isModal()`（跨线程访问 Qt 有崩溃风险），改为读取主线程心跳缓存的窗口快照
+- 最小化/隐藏时不再做窗口样式巡检：`_style_timer` 每 2 秒的 `SetWindowLongPtr + SetWindowPos(SWP_FRAMECHANGED)` 会触发一整套窗口框架重算（WM_NCCALCSIZE 等），最小化状态下既无缩放区需求又容易与恢复时的布局竞争，现在不可见即跳过
+- 修复从最小化恢复时丢失最大化状态：`showNormal()` 会把「最小化中的最大化窗口」降级成普通窗口，改为只清除最小化状态位
+- 边缘缩放的系统缩放循环加入防重入标志，避免在模态缩放循环里再次触发缩放
+
+### Fixed
 - 修复多显示器环境下悬浮卡片 / 迷你球的位置校验只看主屏的问题：现在会校验所有屏幕，副屏上保存的位置不会再被重置回主屏
 - 修复下拉选择控件（日期 / 分类 / 语言等）的外部 tooltip 在切换选项时被清空的问题（内部未使用的提示表会覆盖外部设置的 tooltip）
 

@@ -78,6 +78,9 @@ class _EdgePressFilter(QObject):
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window)
         self._window = window
+        # 系统缩放循环进行中：期间收到的按下事件不再触发新的缩放，
+        # 避免在模态缩放循环里重入（历史上这是“点一下就没反应”的成因之一）
+        self._resize_loop = False
 
     @classmethod
     def edges_for(cls, pos: QPoint, width: int, height: int) -> Qt.Edge:
@@ -94,6 +97,8 @@ class _EdgePressFilter(QObject):
         return edges
 
     def eventFilter(self, obj, event):
+        if self._resize_loop:
+            return False
         if event.type() != QEvent.MouseButtonPress:
             return False
         if event.button() != Qt.LeftButton:
@@ -110,10 +115,13 @@ class _EdgePressFilter(QObject):
         edges = self.edges_for(pos, self._window.width(), self._window.height())
         if not edges:
             return False
+        self._resize_loop = True
         try:
             started = handle.startSystemResize(edges)
         except (RuntimeError, TypeError, ValueError):
             return False
+        finally:
+            self._resize_loop = False
         return bool(started)
 
 
@@ -457,9 +465,12 @@ class MainWindow(QMainWindow):
             # 从隐藏状态打开：放到屏幕中心，避免系统默认落在左上角
             self._center_on_screen()
         # 已最大化的窗口保持最大化，只在最小化时恢复。无条件
-        # showNormal() 会让页面切换与窗口尺寸变化在同一时刻竞争布局。
+        # showNormal() 会让页面切换与窗口尺寸变化在同一时刻竞争布局，
+        # 而且会把「最小化中的最大化窗口」降级成普通窗口——只清最小化位。
         if self.isMinimized():
-            self.showNormal()
+            self.setWindowState(
+                (self.windowState() & ~Qt.WindowMinimized) | Qt.WindowActive
+            )
         else:
             self.show()
         self.raise_()
@@ -634,8 +645,19 @@ class MainWindow(QMainWindow):
             # 兜底自愈：个别路径下 Qt 会重置窗口样式（丢掉 WS_THICKFRAME），
             # 那时边缘就没有缩放命中区。低频检查并补回。
             self._style_timer = QTimer(self)
-            self._style_timer.timeout.connect(self._enable_native_resize)
+            self._style_timer.timeout.connect(self._self_heal_styles)
             self._style_timer.start(2000)
+
+    def _self_heal_styles(self) -> None:
+        """样式兜底巡检：隐藏/最小化时跳过。
+
+        最小化（或已隐藏）状态下既不需要边缘缩放命中区，也应避免在不可见
+        状态调用 SetWindowLongPtr + SetWindowPos(SWP_FRAMECHANGED)：那会触发
+        窗口框架重算（WM_NCCALCSIZE 等）一串原生消息，恢复时容易与布局竞争。
+        """
+        if not self.isVisible() or self.isMinimized():
+            return
+        self._enable_native_resize()
 
     def apply_theme(self) -> None:
         t = theme_tokens()

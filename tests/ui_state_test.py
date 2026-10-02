@@ -102,10 +102,28 @@ def test_scan_finish_resets_strip_even_when_window_hidden(dw_app, qapp) -> None:
     assert "正在补扫" not in label, label
 
 
+def test_watchdog_snapshot_and_window_probe(dw_app, qapp) -> None:
+    """看门狗快照：主窗口句柄/窗口列表由主线程缓存，后台线程据此判断窗口无响应。
+
+    回归背景：原看门狗只检测“主线程停跳”，漏掉了“心跳正常但窗口不再处理
+    消息”的卡死形态——那类现场在日志里毫无痕迹，无法定位。
+    """
+    app = dw_app
+    app.show_panel()
+    qapp.processEvents()
+    app._snapshot_ui_state()
+    assert app._ui_hwnd != 0, "应缓存主窗口原生句柄"
+    assert "MainWindow" in app._ui_windows, app._ui_windows
+    assert app._window_responsive() is True, "正常窗口应判定为响应"
+    hang = app._hang_report(6.0)
+    assert "主线程已卡住" in hang and "窗口状态" in hang
+    frozen = app._unresponsive_report(4.0)
+    assert "无响应" in frozen and "窗口状态" in frozen
+
+
 def test_initial_card_state(dw_app, qapp) -> None:
     assert dw_app.widget.isVisible(), state(dw_app)
     assert not dw_app.ball.isVisible()
-
 
 def test_settings_is_embedded_third_main_page(dw_app, qapp) -> None:
     dw_app.show_settings()
