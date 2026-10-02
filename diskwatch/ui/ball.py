@@ -239,19 +239,23 @@ class MiniBall(QWidget):
             Qt.WindowStaysOnTopHint, bool(self._config.get("always_on_top", True))
         )
         pos = self._config.get("ball_pos")
-        screen = QApplication.primaryScreen()
-        area = screen.availableGeometry() if screen is not None else None
-        if (
-            isinstance(pos, list)
+        saved_center = (
+            QPoint(int(pos[0]) + self.WIDTH // 2, int(pos[1]) + self.HEIGHT // 2)
+            if isinstance(pos, list)
             and len(pos) == 2
             and all(isinstance(v, (int, float)) for v in pos)
-            and area is not None
-            and area.contains(QPoint(int(pos[0]) + self.WIDTH // 2, int(pos[1]) + self.HEIGHT // 2))
+            else None
+        )
+        if saved_center is not None and any(
+            screen.availableGeometry().contains(saved_center)
+            for screen in QApplication.screens()
         ):
             self.move(int(pos[0]), int(pos[1]))
             return
-        if area is None:
+        screen = QApplication.primaryScreen()
+        if screen is None:
             return
+        area = screen.availableGeometry()
         self.move(area.right() - self.WIDTH - 28, area.top() + 60)
 
     def apply_appearance(self) -> None:

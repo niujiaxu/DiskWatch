@@ -352,12 +352,6 @@ class FloatingWidget(QWidget):
         self._config.save_soon()
         self.hidden_by_user.emit()
 
-    def show_widget(self) -> None:
-        self.show()
-        self.raise_()
-        self._config.set("widget_visible", True)
-        self._config.save_soon()
-
     def apply_appearance(self) -> None:
         self.setWindowOpacity(float(self._config.get("widget_opacity", 0.95)))
         on_top = bool(self._config.get("always_on_top", True))
@@ -399,19 +393,23 @@ class FloatingWidget(QWidget):
     def _restore_geometry(self) -> None:
         self.apply_appearance()
         pos = self._config.get("widget_pos")
-        screen = QApplication.primaryScreen()
-        area = screen.availableGeometry() if screen is not None else None
-        if (
-            isinstance(pos, list)
+        saved_probe = (
+            QPoint(int(pos[0]) + 40, int(pos[1]) + 40)
+            if isinstance(pos, list)
             and len(pos) == 2
             and all(isinstance(v, (int, float)) for v in pos)
-            and area is not None
-            and area.contains(QPoint(int(pos[0]) + 40, int(pos[1]) + 40))
+            else None
+        )
+        if saved_probe is not None and any(
+            screen.availableGeometry().contains(saved_probe)
+            for screen in QApplication.screens()
         ):
             self.move(int(pos[0]), int(pos[1]))
             return
-        if area is None:
+        screen = QApplication.primaryScreen()
+        if screen is None:
             return
+        area = screen.availableGeometry()
         self.adjustSize()
         self.move(area.right() - self.width() - 28, area.top() + 60)
 

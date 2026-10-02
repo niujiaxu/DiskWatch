@@ -2,6 +2,12 @@
 
 All notable changes to DiskWatch are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- 修复多显示器环境下悬浮卡片 / 迷你球的位置校验只看主屏的问题：现在会校验所有屏幕，副屏上保存的位置不会再被重置回主屏
+- 修复下拉选择控件（日期 / 分类 / 语言等）的外部 tooltip 在切换选项时被清空的问题（内部未使用的提示表会覆盖外部设置的 tooltip）
+
 ## [2.0.8] - 2026-09-30
 
 ### Added

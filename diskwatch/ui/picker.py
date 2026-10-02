@@ -21,8 +21,7 @@ class DayPicker(QWidget):
     """选择控件：列表画在宿主窗内部，避免原生下拉弹层错位/残影。
 
     项目里所有下拉选择（日期 / 事件类型 / 语言 / 预设）都用它。
-    API 与 QComboBox 对齐：addItem(text, userData) 存值、currentData()
-    取值；setItemData 仅支持 Qt.ToolTipRole（悬浮提示），其余 role 忽略。
+    API 与 QComboBox 对齐：addItem(text, userData) 存值、currentData() 取值。
     """
 
     currentIndexChanged = Signal(int)
@@ -31,7 +30,6 @@ class DayPicker(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._items: list[tuple[str, object]] = []
-        self._tips: dict[int, str] = {}
         self._index = -1
 
         lay = QHBoxLayout(self)
@@ -54,7 +52,6 @@ class DayPicker(QWidget):
     def clear(self) -> None:
         self._close_popup()
         self._items.clear()
-        self._tips.clear()
         self._index = -1
         self._btn.setText("—")
         self._btn.setToolTip("")
@@ -67,22 +64,11 @@ class DayPicker(QWidget):
         if self._index < 0:
             self.setCurrentIndex(0)
 
-    def setItemData(self, index: int, value, role: int = Qt.UserRole) -> None:
-        if role == Qt.ToolTipRole and 0 <= index < len(self._items):
-            self._tips[index] = str(value)
-            if index == self._index:
-                self._btn.setToolTip(str(value))
-
     def setItemText(self, index: int, text: str) -> None:
         if 0 <= index < len(self._items):
             self._items[index] = (text, self._items[index][1])
             if index == self._index:
                 self._btn.setText(text)
-
-    def itemText(self, index: int) -> str:
-        if 0 <= index < len(self._items):
-            return self._items[index][0]
-        return ""
 
     def setFixedWidth(self, w: int) -> None:
         super().setFixedWidth(w)
@@ -99,9 +85,6 @@ class DayPicker(QWidget):
             return self._items[self._index][1]
         return None
 
-    def currentIndex(self) -> int:
-        return self._index
-
     def setCurrentIndex(self, index: int) -> None:
         if index < 0 or index >= len(self._items):
             return
@@ -109,7 +92,6 @@ class DayPicker(QWidget):
         self._index = index
         text, _data = self._items[index]
         self._btn.setText(text)
-        self._btn.setToolTip(self._tips.get(index, ""))
         if changed and not self.signalsBlocked():
             self.currentIndexChanged.emit(index)
 
@@ -137,12 +119,9 @@ class DayPicker(QWidget):
             if app is not None:
                 app.installEventFilter(self)
         self._popup.clear()
-        for i, (text, _data) in enumerate(self._items):
+        for text, _data in self._items:
             item = QListWidgetItem(text)
             item.setSizeHint(QSize(0, self.POPUP_ROW_HEIGHT))
-            tip = self._tips.get(i)
-            if tip:
-                item.setToolTip(tip)
             self._popup.addItem(item)
         if 0 <= self._index < self._popup.count():
             self._popup.setCurrentRow(self._index)
