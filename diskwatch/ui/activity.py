@@ -92,7 +92,6 @@ _SORT_COLUMNS: dict[int, tuple[str, str, bool]] = {
 class ActivityPanel(QWidget):
     """固定页大小，避免几十万条事件一次性进入 UI。"""
 
-    open_dashboard = Signal()
     _export_done = Signal(object)
     _history_ready = Signal(int, str, object)
     _page_ready = Signal(int, object)
@@ -380,6 +379,26 @@ class ActivityPanel(QWidget):
             return
         self._reload_event_page(filters)
 
+    def _start_worker(self, name: str, work) -> None:
+        """后台线程统一入口：线程登记在 _workers，结束后自动移除。
+
+        wait_for_idle / closeEvent 依赖登记表等待在跑的查询线程。
+        """
+
+        def runner() -> None:
+            try:
+                work()
+            finally:
+                current = threading.current_thread()
+                with self._workers_lock:
+                    if current in self._workers:
+                        self._workers.remove(current)
+
+        worker = threading.Thread(target=runner, name=name, daemon=True)
+        with self._workers_lock:
+            self._workers.append(worker)
+        worker.start()
+
     def _reload_event_page(self, filters: dict) -> None:
         self._reload_req += 1
         req = self._reload_req
@@ -405,18 +424,9 @@ class ActivityPanel(QWidget):
                 result = exc
             finally:
                 storage.release_reader()
-            try:
-                self._page_ready.emit(req, result)
-            finally:
-                current = threading.current_thread()
-                with self._workers_lock:
-                    if current in self._workers:
-                        self._workers.remove(current)
+            self._page_ready.emit(req, result)
 
-        worker = threading.Thread(target=work, name="dw-activity-page", daemon=True)
-        with self._workers_lock:
-            self._workers.append(worker)
-        worker.start()
+        self._start_worker("dw-activity-page", work)
 
     def _reload_app_overview(self, filters: dict) -> None:
         """按应用总览：整个筛选结果聚合（跨页一致），不在分页内分组。"""
@@ -435,18 +445,9 @@ class ActivityPanel(QWidget):
                 result = exc
             finally:
                 storage.release_reader()
-            try:
-                self._app_ready.emit(req, result)
-            finally:
-                current = threading.current_thread()
-                with self._workers_lock:
-                    if current in self._workers:
-                        self._workers.remove(current)
+            self._app_ready.emit(req, result)
 
-        worker = threading.Thread(target=work, name="dw-activity-apps", daemon=True)
-        with self._workers_lock:
-            self._workers.append(worker)
-        worker.start()
+        self._start_worker("dw-activity-apps", work)
 
     def _on_page_ready(self, req: int, result: object) -> None:
         if req != self._reload_req:
@@ -770,18 +771,9 @@ class ActivityPanel(QWidget):
                 result = exc
             finally:
                 storage.release_reader()
-            try:
-                self._history_ready.emit(req, path, result)
-            finally:
-                current = threading.current_thread()
-                with self._workers_lock:
-                    if current in self._workers:
-                        self._workers.remove(current)
+            self._history_ready.emit(req, path, result)
 
-        worker = threading.Thread(target=work, name="dw-file-history", daemon=True)
-        with self._workers_lock:
-            self._workers.append(worker)
-        worker.start()
+        self._start_worker("dw-file-history", work)
 
     def _on_history_ready(self, req: int, path: str, result: object) -> None:
         event = self._selected_event()
@@ -939,15 +931,8 @@ class ActivityPanel(QWidget):
                 self._export_done.emit(exc)
             finally:
                 storage.release_reader()
-                current = threading.current_thread()
-                with self._workers_lock:
-                    if current in self._workers:
-                        self._workers.remove(current)
 
-        worker = threading.Thread(target=work, name="dw-activity-export", daemon=True)
-        with self._workers_lock:
-            self._workers.append(worker)
-        worker.start()
+        self._start_worker("dw-activity-export", work)
 
     def _on_export_done(self, result: object) -> None:
         self.btn_export.setEnabled(True)

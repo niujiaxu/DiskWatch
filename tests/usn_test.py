@@ -67,7 +67,6 @@ def test_coalesce_usn_rename_and_repeated_modify() -> None:
 class _Config:
     def __init__(self, drive: str) -> None:
         self.data = {
-            "capture_mode": "all",
             "usn_cursors": {drive: {"journal_id": 7, "next_usn": 10}},
         }
         self.saved = False

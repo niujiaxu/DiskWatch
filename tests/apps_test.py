@@ -8,7 +8,6 @@ from diskwatch.apps import (
     label_for_key,
     resolve_app,
     resolve_dir_root,
-    resolve_root,
 )
 
 
@@ -40,33 +39,6 @@ def test_resolve_app_known_anchors() -> None:
     assert resolve_app(r"C:\file.txt")[0] == "special.loose"
 
 
-def test_resolve_root_exposes_app_home() -> None:
-    """归属根 = "应用老家"那一层，供界面显示（而不是深层子目录）。"""
-    assert (
-        resolve_root(
-            r"C:\Users\niu\Documents\Tencent Files\2991799732\nt_qq\nt_data\log\x.log"
-        )
-        == r"C:\Users\niu\Documents\Tencent Files"
-    )
-    assert (
-        resolve_root(
-            r"C:\Users\niu\Documents\xwechat_files\wxid_ab\db_storage\message\m.db"
-        )
-        == r"C:\Users\niu\Documents\xwechat_files"
-    )
-    assert (
-        resolve_root(r"C:\Program Files\Zotero\zotero.exe")
-        == r"C:\Program Files\Zotero"
-    )
-    assert (
-        resolve_root(r"C:\Users\niu\AppData\Local\Temp\abc\x.tmp")
-        == r"C:\Users\niu\AppData\Local\Temp"
-    )
-    assert resolve_root(r"C:\Users\niu\Downloads\a.zip") == r"C:\Users\niu\Downloads"
-    assert resolve_root(r"C:\Users\niu\notes.txt") == r"C:\Users\niu"
-    assert resolve_root(r"C:\Windows\System32\x.sys") == r"C:\Windows"
-
-
 def test_resolve_dir_root_treats_input_as_directory() -> None:
     """目录路径专用：末段是目录本身（界面展示分组目录时用）。"""
     assert resolve_dir_root(r"C:\Users\niu") == r"C:\Users\niu"
@@ -75,7 +47,20 @@ def test_resolve_dir_root_treats_input_as_directory() -> None:
         resolve_dir_root(r"C:\Users\niu\Documents\Tencent Files\2991799732\nt_qq")
         == r"C:\Users\niu\Documents\Tencent Files"
     )
+    assert (
+        resolve_dir_root(r"C:\Users\niu\Documents\xwechat_files\wxid_ab\db_storage")
+        == r"C:\Users\niu\Documents\xwechat_files"
+    )
+    assert (
+        resolve_dir_root(r"C:\Program Files\Zotero")
+        == r"C:\Program Files\Zotero"
+    )
+    assert (
+        resolve_dir_root(r"C:\Users\niu\AppData\Local\Temp\abc")
+        == r"C:\Users\niu\AppData\Local\Temp"
+    )
     assert resolve_dir_root(r"C:\Users\niu\Downloads") == r"C:\Users\niu\Downloads"
+    assert resolve_dir_root(r"C:\Windows\System32") == r"C:\Windows"
     assert resolve_dir_root("") == ""
 
 

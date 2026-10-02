@@ -178,19 +178,6 @@ class _EdgeCursorFilter(QAbstractNativeEventFilter):
             return 15  # HTBOTTOM
         return None
 
-    @staticmethod
-    def _ensure_thickframe(hwnd: int) -> None:
-        """边缘自愈：某些路径会让 Qt 丢掉 WS_THICKFRAME，丢了就拖不动。"""
-        user32 = ctypes.windll.user32
-        style = user32.GetWindowLongW(hwnd, _GWL_STYLE)
-        if style & _WS_THICKFRAME:
-            return
-        user32.SetWindowLongW(hwnd, _GWL_STYLE, style | _WS_THICKFRAME)
-        user32.SetWindowPos(
-            hwnd, 0, 0, 0, 0, 0,
-            _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER | _SWP_FRAMECHANGED,
-        )
-
     def nativeEventFilter(self, event_type, message):
         try:
             name = (

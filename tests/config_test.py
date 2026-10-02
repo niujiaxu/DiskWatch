@@ -42,7 +42,6 @@ def test_defaults_applied(monkeypatch, tmp_path) -> None:
     assert c.get("retention_days") == 30
     assert c.get("min_size_kb") == 0
     assert c.get("language") == "zh_CN"
-    assert c.get("capture_mode") == "all"
     assert c.get("scan_on_startup") is True
     assert c.get("scan_scope") == "user_dirs"
     assert c.get("startup_recovery") == "usn"
@@ -56,7 +55,6 @@ def test_old_scan_setting_migrates_to_safe_default(monkeypatch, tmp_path) -> Non
         json.dumps({"scan_on_startup": True}), encoding="utf-8"
     )
     config = cfgmod.Config()
-    assert config.get("capture_mode") == "all"
     assert config.get("scan_scope") == "user_dirs"
     assert config.get("scan_on_startup") is True
 
@@ -108,17 +106,6 @@ def test_corrupt_pos_values_do_not_crash_ui(qapp, monkeypatch, tmp_path) -> None
         assert b.isVisible() is not None
     finally:
         storage.close()
-
-
-def test_reset_filters(monkeypatch, tmp_path) -> None:
-    import diskwatch.config as cfg
-
-    _isolated(monkeypatch, tmp_path)
-    c = cfg.Config()
-    c.set("exclude_dirs", ["\\custom\\"])
-    c.reset_filters()
-    assert "\\custom\\" not in c.get("exclude_dirs")
-    assert c.get("exclude_dirs") == cfg.DEFAULTS["exclude_dirs"]
 
 
 def test_location_json_roundtrip(monkeypatch, tmp_path) -> None:

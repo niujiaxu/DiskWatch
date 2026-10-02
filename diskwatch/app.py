@@ -91,7 +91,7 @@ class DiskWatchApp:
         # logging 必须在最前：后面的 storage / monitor 一旦出错就靠它记录
         setup_logging()
         self.config = Config()
-        self.theme = install_theme(qt_app, self.config.get("theme_mode", "system"))
+        install_theme(qt_app, self.config.get("theme_mode", "system"))
         # 语言在创建任何 UI 前设置，所有 tr() 从此按此语言渲染（重启生效）
         set_language(self.config.get("language", "zh_CN"))
         self.storage = Storage(Path(str(DB_PATH)))
@@ -99,7 +99,7 @@ class DiskWatchApp:
 
         self.widget = FloatingWidget(self.storage, self.monitor, self.config)
         self.ball = MiniBall(self.storage, self.monitor, self.config)
-        self.panel = ActivityPanel(self.storage)
+        self.activity = ActivityPanel(self.storage)
         self.dashboard = DashboardPanel(self.storage)
         self.settings = SettingsDialog(
             self.config,
@@ -107,7 +107,7 @@ class DiskWatchApp:
             monitor=self.monitor,
             embedded=True,
         )
-        self.main_window = MainWindow(self.dashboard, self.panel, self.settings)
+        self.main_window = MainWindow(self.dashboard, self.activity, self.settings)
         self.tray = QSystemTrayIcon(app_icon(), qt_app)
 
         self._wire()
@@ -174,7 +174,6 @@ class DiskWatchApp:
             surface.open_settings.connect(self.show_settings)
             surface.request_quit.connect(self.quit)
         self.dashboard.day_selected.connect(self._dashboard_show_day)
-        self.panel.open_dashboard.connect(self.show_dashboard)
         self.main_window.settings_requested.connect(self.show_settings)
         self.settings.save_requested.connect(
             lambda: self._apply_settings(self.settings)
@@ -245,13 +244,13 @@ class DiskWatchApp:
         items = errorlog.recent(50)
         if not items:
             QMessageBox.information(
-                self.panel, tr("最近错误"),
+                self.activity, tr("最近错误"),
                 tr("暂无错误记录。\n日志文件：{path}", path=str(default_home() / "diskwatch.log")),
             )
             return
         body = "\n".join(f"[{lv}] {msg}" for lv, msg in items)
         QMessageBox.warning(
-            self.panel, tr("最近错误（最近 {n} 条）", n=len(items)), body
+            self.activity, tr("最近错误（最近 {n} 条）", n=len(items)), body
         )
 
     # ---------- 动作 ----------
@@ -324,7 +323,7 @@ class DiskWatchApp:
     def _dashboard_show_day(self, day: str) -> None:
         """看板点增长柱 → 打开详情面板并切到该天。"""
         self.show_panel()
-        self.panel.select_day(day)
+        self.activity.select_day(day)
 
     def activate_from_second_instance(self) -> None:
         """二次启动时唤起已有界面（显示悬浮组件并置前）。"""
@@ -369,13 +368,13 @@ class DiskWatchApp:
                 self.storage.close()
                 apply_paths(Path(cfg_path), Path(db_path), migrate=True)
                 QMessageBox.information(
-                    self.panel,
+                    self.activity,
                     tr("位置已更新"),
                     tr("配置：{config}\n数据库：{db}\n\n程序将重启以加载新位置。",
                        config=paths.config, db=paths.db),
                 )
             except OSError as exc:
-                QMessageBox.warning(self.panel, tr("更改位置失败"), str(exc))
+                QMessageBox.warning(self.activity, tr("更改位置失败"), str(exc))
                 # 尽力恢复：旧库已被 close，UI 组件还握着旧连接的引用，
                 # 必须全部换到新 storage，否则界面数据全部刷不出来
                 self.storage = Storage(Path(str(DB_PATH)))
@@ -383,7 +382,7 @@ class DiskWatchApp:
                 self.monitor.start()
                 self.widget.set_storage(self.storage)
                 self.ball.set_storage(self.storage)
-                self.panel.set_storage(self.storage)
+                self.activity.set_storage(self.storage)
                 self.dashboard.set_storage(self.storage)
                 self.settings.set_storage(self.storage)
                 self.widget.refresh()
@@ -397,12 +396,12 @@ class DiskWatchApp:
             set_language(new_lang)
             self.widget.retranslate()
             self.ball.retranslate()
-            self.panel.retranslate()
+            self.activity.retranslate()
             self.dashboard.retranslate()
             self.main_window.retranslate()
             self._replace_settings_panel()
-            if self.panel.isVisible():
-                self.panel.reload(keep_day=True)
+            if self.activity.isVisible():
+                self.activity.reload(keep_day=True)
             if self.dashboard.isVisible():
                 self.dashboard.reload()
             # 托盘菜单文案是构建时写死的，语言变了必须重建；tooltip 同理
@@ -415,8 +414,8 @@ class DiskWatchApp:
         self.widget.apply_appearance()
         self.ball.apply_appearance()
         self._restart_monitor()
-        if self.panel.isVisible():
-            self.panel.reload(keep_day=True)
+        if self.activity.isVisible():
+            self.activity.reload(keep_day=True)
         if self.dashboard.isVisible():
             self.dashboard.reload()
 
@@ -458,7 +457,7 @@ class DiskWatchApp:
             subprocess.Popen(args, cwd=cwd, creationflags=creation)
         except OSError as exc:
             QMessageBox.warning(
-                self.panel,
+                self.activity,
                 tr("自动重启失败"),
                 tr("请手动重新运行程序。\n{exc}", exc=exc),
             )
@@ -478,7 +477,7 @@ class DiskWatchApp:
         self._ui_watchdog_stop = True  # 收尾阶段的 join 不算卡顿，别误报
         self._join_background()
         self.dashboard.wait_for_idle()
-        self.panel.wait_for_idle()
+        self.activity.wait_for_idle()
         try:
             self.monitor.stop()
         except Exception as exc:
@@ -756,7 +755,7 @@ class DiskWatchApp:
 
     def _about(self) -> None:
         QMessageBox.information(
-            self.panel,
+            self.activity,
             tr("关于 {name}", name=APP_NAME),
             f"{tr('DiskWatch 磁盘空间监控')} v{VERSION}\n\n"
             + tr("实时记录硬盘上每天新增了哪些文件。")

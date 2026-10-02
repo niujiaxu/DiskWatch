@@ -221,7 +221,7 @@ class SettingsDialog(QDialog):
 
         note = QLabel(
             tr(
-                "下列排除项在全量采集和关注模式下都生效：命中即不计入账本。"
+                "下列排除项对所有监控都生效：命中即不计入账本。"
                 "VM 磁盘镜像、浏览器缓存、临时文件这类高频读写建议保持排除，"
                 "否则会把真正有意义的变化淹没。自身数据库与设备文件始终安全排除。"
             ),
@@ -711,8 +711,8 @@ class SettingsDialog(QDialog):
                 size = -1
             self.compact_done.emit(size)
 
-        self._worker = threading.Thread(target=work, name="dw-compact", daemon=True)
-        self._worker.start()
+        worker = threading.Thread(target=work, name="dw-compact", daemon=True)
+        worker.start()
 
     def _on_compact_done(self, size: int) -> None:
         self._compacting = False

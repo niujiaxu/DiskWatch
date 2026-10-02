@@ -1,7 +1,8 @@
-"""关注模式的路径过滤与通用普通文件安全判断。
+"""排除层：路径 / 扩展名 / 文件名 / 隐藏属性 / 体积下限的通用过滤。
 
-全量采集只复用 ``is_regular_file`` 安全边界，不通过这些偏好规则丢弃普通
-文件；用户主动选择关注模式时才应用目录、扩展名、文件名和体积过滤。
+实时监控与启动补扫共用同一套规则（CapturePolicy 在此之上补充安全边界）；
+命中的路径不计入账本。这里不做"关注模式"之类的白名单，全量采集与补扫
+的口径一致。
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ FILE_ATTRIBUTE_HIDDEN = 0x2
 FILE_ATTRIBUTE_SYSTEM = 0x4
 
 
-class PathFilter:
+class ExclusionFilter:
     def __init__(self, config: Config) -> None:
         self.reload(config)
 
@@ -104,10 +105,6 @@ class PathFilter:
 
     def meets_size(self, size: int) -> bool:
         return not self._min_size or size >= self._min_size
-
-    @property
-    def min_size(self) -> int:
-        return self._min_size
 
 
 def safe_stat(path: str) -> os.stat_result | None:

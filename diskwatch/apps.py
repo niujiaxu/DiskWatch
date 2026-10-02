@@ -230,17 +230,12 @@ def resolve_app(path: str) -> tuple[str, str]:
     return (key, sub)
 
 
-def resolve_root(path: str) -> str:
-    """文件路径 → 归属根目录（"应用老家"那一层），供界面展示。
+def resolve_dir_root(folder: str) -> str:
+    """目录路径 → 归属根目录（"应用老家"那一层），供界面展示。
 
-    例：...\\Documents\\Tencent Files\\2991799732\\nt_qq\\... 的归属根是
+    例：...\\Documents\\Tencent Files\\2991799732\\nt_qq 的归属根是
     ...\\Documents\\Tencent Files；特殊位置（临时 / 下载 / 系统）返回对应目录。
     """
-    return _resolve_cached(path.replace("/", "\\"))[2]
-
-
-def resolve_dir_root(folder: str) -> str:
-    """目录路径 → 归属根目录（末段是目录本身，不是文件名）。"""
     cleaned = folder.rstrip("\\/").replace("/", "\\")
     if not cleaned:
         return ""

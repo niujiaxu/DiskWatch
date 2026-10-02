@@ -14,6 +14,14 @@ def _storage(tmp: Path, name: str = "t.db") -> Storage:
     return Storage(tmp / name)
 
 
+def _paths(s: Storage, *, include_deleted: bool = False) -> list[str]:
+    """直接查 files 表拿路径（原 files_for_day 检查器已删除）。"""
+    rows = s._read.execute("SELECT path, deleted FROM files ORDER BY path").fetchall()
+    return [
+        str(r["path"]) for r in rows if include_deleted or not int(r["deleted"])
+    ]
+
+
 def test_add_files_dedup() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
     s = _storage(tmp)
@@ -38,35 +46,10 @@ def test_mark_deleted_drive_root_does_not_wipe_drive() -> None:
             ]
         )
         s.mark_deleted(["C:" + "\\"])  # 盘根（带尾分隔符）
-        remaining = [r for r in s.files_for_day(today_str()) if not r.deleted]
-        assert len(remaining) == 2, "盘根删除不得标记盘内文件"
+        assert len(_paths(s)) == 2, "盘根删除不得标记盘内文件"
         # 精确路径仍可删除
         s.mark_deleted([r"C:\a\x.txt"])
-        remaining = [r for r in s.files_for_day(today_str()) if not r.deleted]
-        assert [r.path for r in remaining] == [r"C:\b\y.txt"]
-    finally:
-        s.close()
-
-
-def test_fetch_day_view_limit_exact_boundary() -> None:
-    """limit 恰好等于记录数时不应误报截断、也不应丢记录。"""
-    tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
-    s = _storage(tmp)
-    day = today_str()
-    now = time.time()
-    try:
-        s.add_files(
-            [make_record(rf"C:\a\f{i}.txt", 10, added_at=now - i) for i in range(3)]
-        )
-        # 恰好 3 条、limit=3：不截断，返回全部 3 条
-        view = s.fetch_day_view(day, limit=3)
-        assert view["truncated"] is False
-        assert len(view["records"]) == 3
-        # 库中 4 条、limit=3：截断，保留前 3 条
-        s.add_files([make_record(r"C:\a\f3.txt", 10, added_at=now - 3)])
-        view = s.fetch_day_view(day, limit=3)
-        assert view["truncated"] is True
-        assert len(view["records"]) == 3
+        assert _paths(s) == [r"C:\b\y.txt"]
     finally:
         s.close()
 
@@ -101,12 +84,10 @@ def test_delete_subtree() -> None:
             ]
         )
         s.delete_subtree(r"C:\a" + "\\")
-        remaining = [r.path for r in s.files_for_day(today_str())]
-        assert remaining == [r"C:\b\keep.txt"], remaining
+        assert _paths(s) == [r"C:\b\keep.txt"]
         # 盘符根只精确匹配，不得误删盘内文件
         s.delete_subtree("C:" + "\\")
-        remaining = [r.path for r in s.files_for_day(today_str())]
-        assert remaining == [r"C:\b\keep.txt"], remaining
+        assert _paths(s) == [r"C:\b\keep.txt"]
     finally:
         s.close()
 
@@ -136,25 +117,6 @@ def test_delete_paths() -> None:
         s.add_files([make_record(r"C:\a\x.txt", 10)])
         s.delete_paths([r"C:\a\x.txt"])
         assert s.total_count() == 0
-    finally:
-        s.close()
-
-
-def test_files_for_day_keyword_and_limit() -> None:
-    tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
-    s = _storage(tmp)
-    day = today_str()
-    try:
-        s.add_files(
-            [
-                make_record(r"C:\a\report.pdf", 1),
-                make_record(r"C:\b\Report2.pdf", 1),
-                make_record(r"C:\c\photo.jpg", 1),
-            ]
-        )
-        assert len(s.files_for_day(day, "report")) == 2
-        assert len(s.files_for_day(day, "REPORT")) == 2  # 大小写不敏感
-        assert len(s.files_for_day(day, limit=2)) == 2
     finally:
         s.close()
 
@@ -223,30 +185,6 @@ def test_recent_files_order_and_limit() -> None:
         s.close()
 
 
-def test_fetch_day_view() -> None:
-    tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
-    s = _storage(tmp)
-    day = today_str()
-    now = time.time()
-    try:
-        s.add_files(
-            [
-                make_record(r"C:\a\1.txt", 10, added_at=now - 1),
-                make_record(r"C:\a\2.txt", 20, added_at=now),
-            ]
-        )
-        s.record_disk_space([(day, "C:", 7, 8)])
-        view = s.fetch_day_view(day)
-        assert view["count"] == 2
-        assert view["size"] == 30
-        assert len(view["records"]) == 2
-        assert view["records"][0].name == "2.txt"  # added_at 倒序
-        assert view["spaces"] == [("C:", 7, 8)]
-        assert view["folders"] and view["exts"]
-    finally:
-        s.close()
-
-
 def test_mark_deleted_records_timestamp() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
     s = _storage(tmp)
@@ -254,11 +192,14 @@ def test_mark_deleted_records_timestamp() -> None:
     try:
         s.add_files([make_record(r"C:\a\x.txt", 10, added_at=now - 10)])
         s.mark_deleted([r"C:\a\x.txt"])
-        records = s.files_for_day(today_str(), include_deleted=True)
-        assert len(records) == 1
-        assert records[0].deleted
-        assert records[0].deleted_at is not None
-        assert records[0].deleted_at >= now - 1  # 容差
+        row = s._read.execute(
+            "SELECT deleted, deleted_at FROM files WHERE path = ?",
+            (r"C:\a\x.txt",),
+        ).fetchone()
+        assert row is not None
+        assert int(row["deleted"]) == 1
+        assert row["deleted_at"] is not None
+        assert float(row["deleted_at"]) >= now - 1  # 容差
     finally:
         s.close()
 
@@ -272,32 +213,14 @@ def test_resurrect_clears_deleted_at() -> None:
         s.add_files([make_record(r"C:\a\x.txt", 10, added_at=now - 10)])
         s.mark_deleted([r"C:\a\x.txt"])
         s.add_files([make_record(r"C:\a\x.txt", 20, added_at=now)])
-        records = s.files_for_day(today_str(), include_deleted=True)
-        assert len(records) == 1
-        assert not records[0].deleted
-        assert records[0].deleted_at is None, records[0].deleted_at
-        assert records[0].size == 20
-    finally:
-        s.close()
-
-
-def test_fetch_day_view_deleted() -> None:
-    tmp = Path(tempfile.mkdtemp(prefix="dw_store_"))
-    s = _storage(tmp)
-    day = today_str()
-    now = time.time()
-    try:
-        s.add_files(
-            [
-                make_record(r"C:\a\keep.txt", 10, added_at=now),
-                make_record(r"C:\a\gone.txt", 20, added_at=now - 1),
-            ]
-        )
-        s.mark_deleted([r"C:\a\gone.txt"])
-        added = s.fetch_day_view(day)
-        assert added["count"] == 1, added
-        deleted = s.fetch_day_view(day, event_type="deleted")
-        assert deleted["count"] == 1, deleted
+        row = s._read.execute(
+            "SELECT deleted, deleted_at, size FROM files WHERE path = ?",
+            (r"C:\a\x.txt",),
+        ).fetchone()
+        assert row is not None
+        assert int(row["deleted"]) == 0
+        assert row["deleted_at"] is None, row["deleted_at"]
+        assert int(row["size"]) == 20
     finally:
         s.close()
 

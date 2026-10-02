@@ -200,11 +200,6 @@ class FileMonitor:
         with self._lock:
             return self._added_total, self._dropped, self._queue.qsize()
 
-    def event_counters(self) -> tuple[int, int]:
-        """(原始事件数, 通过过滤的数量)，用于评估监控开销。"""
-        with self._lock:
-            return self._seen, self._passed
-
     def diagnostics(self) -> dict[str, int | float | bool]:
         with self._lock:
             queued = self._queue.qsize()

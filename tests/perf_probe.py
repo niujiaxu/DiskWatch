@@ -34,7 +34,6 @@ class _ProbeConfig:
     """只提供监控器需要的配置键，避免 Config() 读取真实用户设置。"""
 
     _values: ClassVar[dict[str, object]] = {
-        "capture_mode": "all",
         "watch_mode": "folders",
         "watch_folders": [],
         "exclude_dirs": [],

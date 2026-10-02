@@ -10,16 +10,13 @@ import shutil
 import sqlite3
 import threading
 import time
-from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Protocol
 
 from .apps import resolve_app
 from .errorlog import errorlog
-from .i18n import tr
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -147,10 +144,6 @@ FOLD_MAX_PATHS = 20000   # 折叠状态字典上限，超出时清掉过期条�
 _FOLD_EVENTS = frozenset({"created", "modified", "deleted", "recreated"})
 
 
-class _SqlExecutor(Protocol):
-    def execute(self, sql: str, parameters=()) -> sqlite3.Cursor: ...
-
-
 @dataclass(frozen=True)
 class FileRecord:
     path: str
@@ -163,25 +156,6 @@ class FileRecord:
     category: str = "unclassified"
     deleted: bool = False
     deleted_at: float | None = None
-
-    @property
-    def added_dt(self) -> datetime:
-        return datetime.fromtimestamp(self.added_at)
-
-    @property
-    def deleted_dt(self) -> datetime | None:
-        if self.deleted_at is not None:
-            return datetime.fromtimestamp(self.deleted_at)
-        return None
-
-
-@dataclass(frozen=True)
-class DaySummary:
-    day: str
-    count: int
-    total_size: int
-    # 当天所有采样盘的剩余字节合计；None=当天无采样，0=磁盘已满
-    total_free: int | None = None
 
 
 @dataclass(frozen=True)
@@ -236,46 +210,6 @@ def _day_of(added_at: float) -> str:
 def _like_escape(s: str) -> str:
     """LIKE 模式的字面量转义：先转义反斜杠，再转义 % 和 _（顺序不可换）。"""
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
-def _event_where(event_type: str) -> str:
-    """事件类型 → 行过滤片段（与 day 条件 AND 拼接；"all" 用恒真式）。"""
-    if event_type == "deleted":
-        return "deleted = 1"
-    if event_type == "all":
-        return "1 = 1"
-    return "deleted = 0"
-
-
-def _query_day_summaries(conn: _SqlExecutor, limit: int) -> list[DaySummary]:
-    """按天聚合摘要（新增数/体积/剩余空间），主线程与后台线程共用同一查询。"""
-    cur = conn.execute(
-        """
-        WITH days AS (
-            SELECT DISTINCT day FROM files WHERE deleted = 0
-            UNION
-            SELECT DISTINCT day FROM disk_space
-        )
-        SELECT d.day,
-               COALESCE(f.c, 0) AS c,
-               COALESCE(f.s, 0) AS s,
-               ds.free AS free
-        FROM days d
-        LEFT JOIN (SELECT day, COUNT(*) c, COALESCE(SUM(size), 0) s
-                   FROM files WHERE deleted = 0 GROUP BY day) f ON f.day = d.day
-        LEFT JOIN (SELECT day, SUM(free_bytes) free
-                   FROM disk_space GROUP BY day) ds ON ds.day = d.day
-        ORDER BY d.day DESC LIMIT ?
-        """,
-        (limit,),
-    )
-    return [
-        DaySummary(
-            r["day"], int(r["c"]), int(r["s"]),
-            int(r["free"]) if r["free"] is not None else None,
-        )
-        for r in cur.fetchall()
-    ]
 
 
 def make_record(
@@ -379,8 +313,6 @@ class Storage:
             finally:
                 self._restore_migration_backup()
             raise
-        # 写入异常（被 SQLite 抛出的）会进这里，供 UI 展示与排错
-        self._write_errors: deque[tuple[float, str]] = deque(maxlen=20)
         # UI 与聚合后台线程各自使用读连接，避免跨线程复用造成原生崩溃。
         self._read = _ReadPool(self._connect)
         # 数据变更计数：每次写事务成功提交 +1，供 UI 判断"是否需要重载"
@@ -589,9 +521,6 @@ class Storage:
                 # 也会让连接停留在未提交事务，必须一并回滚。
                 self._write.rollback()
                 if isinstance(exc, sqlite3.Error):
-                    self._write_errors.append(
-                        (time.time(), f"{type(exc).__name__}: {exc}")
-                    )
                     errorlog.log_exception("storage", exc)
                 raise
             else:
@@ -602,10 +531,6 @@ class Storage:
                     self._change_seq += 1
         finally:
             self._write_lock.release()
-
-    def recent_errors(self) -> list[tuple[float, str]]:
-        """最近的写入错误，[(timestamp, message)]，新到旧。"""
-        return list(self._write_errors)[::-1]
 
     def _rollup_event_locked(
         self, drive: str, category: str, delta: int, occurred_at: float
@@ -1794,44 +1719,6 @@ class Storage:
         cur = self._read.execute(sql, args)
         return [_row_to_record(r) for r in cur.fetchall()]
 
-    def files_for_day(
-        self,
-        day: str,
-        keyword: str = "",
-        include_deleted: bool = False,
-        limit: int | None = None,
-    ) -> list[FileRecord]:
-        sql = "SELECT * FROM files WHERE day = ?"
-        args: list = [day]
-        if not include_deleted:
-            sql += " AND deleted = 0"
-        if keyword:
-            sql += " AND (LOWER(name) LIKE ? OR LOWER(folder) LIKE ?)"
-            like = f"%{keyword.lower()}%"
-            args += [like, like]
-        sql += " ORDER BY added_at DESC"
-        if limit is not None:
-            sql += " LIMIT ?"
-            args.append(limit)
-        cur = self._read.execute(sql, args)
-        return [_row_to_record(r) for r in cur.fetchall()]
-
-    def days_with_data(self, limit: int = 60) -> list[DaySummary]:
-        return _query_day_summaries(self._read, limit)
-
-    def max_day_count(self, days: int = 7) -> int:
-        """近 N 天里单日新增最多是多少，用于给悬浮球的进度环定标。"""
-        cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
-        cur = self._read.execute(
-            "SELECT MAX(c) m FROM ("
-            "  SELECT COUNT(*) c FROM files WHERE day >= ? AND deleted = 0"
-            "  GROUP BY day"
-            ")",
-            (cutoff,),
-        )
-        row = cur.fetchone()
-        return int(row["m"] or 0)
-
     def period_total_size(self, days: int = 7) -> int:
         """近 N 天（含今天）新增文件体积合计，用于迷你球进度环。"""
         cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
@@ -1842,146 +1729,9 @@ class Storage:
         )
         return int(cur.fetchone()["s"] or 0)
 
-    def max_day_size(self, days: int = 7) -> int:
-        """近 N 天里单日新增体积峰值（字节）。"""
-        cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
-        cur = self._read.execute(
-            "SELECT MAX(s) m FROM ("
-            "  SELECT COALESCE(SUM(size), 0) s FROM files"
-            "  WHERE day >= ? AND deleted = 0 GROUP BY day"
-            ")",
-            (cutoff,),
-        )
-        row = cur.fetchone()
-        return int(row["m"] or 0)
-
     def total_count(self) -> int:
         cur = self._read.execute("SELECT COUNT(*) c FROM files")
         return int(cur.fetchone()["c"])
-
-    def fetch_days_with_data(self, limit: int = 60) -> list[DaySummary]:
-        """后台线程可用：自建短连接，不碰 UI 的 _read。"""
-        conn = self._connect()
-        conn.execute("PRAGMA busy_timeout=5000")
-        try:
-            return _query_day_summaries(conn, limit)
-        finally:
-            conn.close()
-
-    def disk_space_trend(self, days: int) -> list[tuple[str, str, int]]:
-        """近 N 天每盘剩余空间采样序列 (day, drive, free_bytes)，后台线程可用。
-
-        disk_space 只保留每天每盘最新采样，天然是趋势序列；缺采样的天不出现。
-        """
-        cutoff = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
-        conn = self._connect()
-        conn.execute("PRAGMA busy_timeout=5000")
-        try:
-            cur = conn.execute(
-                "SELECT day, drive, free_bytes FROM disk_space "
-                "WHERE day >= ? ORDER BY day, drive",
-                (cutoff,),
-            )
-            return [
-                (r["day"], r["drive"], int(r["free_bytes"])) for r in cur.fetchall()
-            ]
-        finally:
-            conn.close()
-
-    def fetch_day_view(
-        self,
-        day: str,
-        keyword: str = "",
-        limit: int | None = None,
-        event_type: str = "added",
-    ) -> dict:
-        """后台线程打包一天详情所需的全部查询结果。
-
-        keyword 非空时，列表与顶部统计（数量/体积/目录/类型）都按同一条件筛选。
-        event_type: "added"（默认）/ "deleted" / "all"
-        limit 为 None 时返回全量（详情面板默认全量展示，排序/分组在后台线程完成）。
-        """
-        conn = self._connect()
-        conn.execute("PRAGMA busy_timeout=5000")
-        try:
-            where = f"day = ? AND {_event_where(event_type)}"
-            args: list = [day]
-            if keyword:
-                where += " AND (LOWER(name) LIKE ? OR LOWER(folder) LIKE ?)"
-                like = f"%{keyword.lower()}%"
-                args += [like, like]
-
-            sql = f"SELECT * FROM files WHERE {where} ORDER BY added_at DESC"
-            list_args = list(args)
-            if limit is not None:
-                # 多取一条用于探测截断：恰好 limit 条时不该误报、也不该丢记录
-                sql += " LIMIT ?"
-                list_args.append(limit + 1)
-            records = [
-                _row_to_record(r) for r in conn.execute(sql, list_args).fetchall()
-            ]
-            truncated = limit is not None and len(records) > limit
-            if truncated:
-                records = records[:limit]  # type: ignore[operator]
-
-            row = conn.execute(
-                f"SELECT COUNT(*) c, COALESCE(SUM(size), 0) s FROM files WHERE {where}",
-                args,
-            ).fetchone()
-            count, size = int(row["c"]), int(row["s"])
-
-            day_total = count
-            if keyword:
-                dt_where = f"day = ? AND {_event_where(event_type)}"
-                day_total = int(
-                    conn.execute(
-                        f"SELECT COUNT(*) c FROM files WHERE {dt_where}",
-                        (day,),
-                    ).fetchone()["c"]
-                )
-
-            folders = [
-                (r["folder"], int(r["c"]), int(r["s"]))
-                for r in conn.execute(
-                    f"SELECT folder, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
-                    f"WHERE {where} GROUP BY folder "
-                    f"ORDER BY c DESC, s DESC LIMIT 1",
-                    args,
-                ).fetchall()
-            ]
-            exts = [
-                (r["ext"] or tr("(无扩展名)"), int(r["c"]), int(r["s"]))
-                for r in conn.execute(
-                    f"SELECT ext, COUNT(*) c, COALESCE(SUM(size), 0) s FROM files "
-                    f"WHERE {where} GROUP BY ext "
-                    f"ORDER BY c DESC LIMIT 1",
-                    args,
-                ).fetchall()
-            ]
-            spaces = [
-                (r["drive"], int(r["free_bytes"]), int(r["total_bytes"]))
-                for r in conn.execute(
-                    "SELECT drive, free_bytes, total_bytes FROM disk_space "
-                    "WHERE day = ? ORDER BY drive",
-                    (day,),
-                ).fetchall()
-            ]
-            return {
-                "day": day,
-                "keyword": keyword,
-                "records": records,
-                "truncated": truncated,
-                "count": count,
-                "size": size,
-                "day_total": day_total,
-                "folders": folders,
-                "exts": exts,
-                "spaces": spaces,
-                "event_type": event_type,
-                "seq": self._change_seq,
-            }
-        finally:
-            conn.close()
 
 
 def _row_to_record(row: sqlite3.Row) -> FileRecord:

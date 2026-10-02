@@ -238,7 +238,7 @@ _TRANSLATIONS: dict[str, str] = {
     "补扫范围": "Scan Scope",
     "仅用户目录（推荐）": "User Folders Only (Recommended)",
     "全部监控根目录": "All Watched Roots",
-    "下列排除项在全量采集和关注模式下都生效：命中即不计入账本。VM 磁盘镜像、浏览器缓存、临时文件这类高频读写建议保持排除，否则会把真正有意义的变化淹没。自身数据库与设备文件始终安全排除。": "These exclusions apply in both full-capture and focus modes: matched files are never recorded. Keep high-churn items (VM disk images, browser caches, temp files) excluded, or they will drown out meaningful changes. DiskWatch's own data and device paths are always excluded.",
+    "下列排除项对所有监控都生效：命中即不计入账本。VM 磁盘镜像、浏览器缓存、临时文件这类高频读写建议保持排除，否则会把真正有意义的变化淹没。自身数据库与设备文件始终安全排除。": "These exclusions always apply: matched files are never recorded. Keep high-churn items (VM disk images, browser caches, temp files) excluded, or they will drown out meaningful changes. DiskWatch's own data and device paths are always excluded.",
     "立即清理过期记录": "Clean Expired Records Now",
     "打开文件活动并导出…": "Open File Activity to Export…",
     "数据库大小：{size} · 近 24 小时 {events} 条 · 写入 {rate}/秒 · 预计每日增长 {growth}": "Database size: {size} · {events} events in 24h · {rate}/s writes · estimated daily growth {growth}",
@@ -307,7 +307,6 @@ _TRANSLATIONS: dict[str, str] = {
     "选择要监控的文件夹": "Choose Folder to Watch",
     "默认目录：{home}": "Default: {home}",
     "中文": "中文",
-    "English": "English",
 
     # ---------- 分类标签 ----------
     "临时文件": "Temp Files",

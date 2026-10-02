@@ -86,11 +86,11 @@ def _non_overlapping_labels(
 
 
 class TrendChart(QWidget):
-    """近 N 天新增趋势图：渐变圆角柱，悬浮显示日期 / 体积 / 数量。
+    """近 N 天净变化柱状图：正柱向上、负柱向下，hover 显示日期 / 净变化 / 事件数。
 
-    数据来自 DaySummary（按天聚合）。默认对数刻度（log10），小值柱也
-    清晰可辨，可切换回线性刻度；右上角小按钮切换。柱顶标注体积/数量
-    简写，柱太矮或与按钮重叠时自动省略。单击柱体发出 day_selected。
+    数据来自空间账本日汇总（SpaceDaySummary）。默认对数刻度（log10），小值柱也
+    清晰可见；点右上角小按钮切换线性刻度；柱顶数值标签在放不下或与按钮重叠
+    时自动省略。单击柱体发出 day_selected。
     """
 
     day_selected = Signal(str)
@@ -101,7 +101,6 @@ class TrendChart(QWidget):
         self._hover: int = -1
         self._log_scale = True
         self._metric = "size"  # "size" 体积 / "count" 数量
-        self._signed = False
         self._btn: QPushButton | None = None  # 惰性创建（无 QApplication 的单元测试不建）
         self.setMinimumHeight(CHART_H)
         _expanding(self)
@@ -134,19 +133,6 @@ class TrendChart(QWidget):
 
     # ---------- 数据 ----------
 
-    def set_days(self, summaries, max_days: int = TREND_DAYS) -> None:
-        """接收 DaySummary 列表并绘制柱状图（按体积，旧→新左侧最早）。"""
-        self._data = [
-            (s.day, s.total_size, s.count)
-            for s in summaries[:max_days]
-            if s.total_size > 0
-        ]
-        self._signed = False
-        self._data.reverse()
-        self._hover = -1
-        self.setVisible(bool(self._data))
-        self.update()
-
     def set_space_days(self, summaries, max_days: int = TREND_DAYS) -> None:
         """接收空间账本日汇总，净占用为正、净释放为负。"""
         self._data = [
@@ -154,7 +140,6 @@ class TrendChart(QWidget):
             for s in summaries[:max_days]
             if s.net_bytes != 0 or s.event_count > 0
         ]
-        self._signed = True
         self._data.reverse()
         self._hover = -1
         self.setVisible(bool(self._data))
@@ -186,12 +171,7 @@ class TrendChart(QWidget):
 
     def _tip_text(self, i: int) -> str:
         day, size, count = self._data[i]
-        size_text = _signed_size(size) if self._signed else human_size(size)
-        count_text = (
-            tr("{count} 个空间事件", count=count)
-            if self._signed else tr("{count} 个文件", count=count)
-        )
-        return f"{day}  ·  {size_text}  ·  {count_text}"
+        return f"{day}  ·  {_signed_size(size)}  ·  {tr('{count} 个空间事件', count=count)}"
 
     # ---------- 几何 ----------
 
@@ -302,7 +282,7 @@ class TrendChart(QWidget):
             s if self._metric == "size" else c
             for _d, s, c in self._data
         ]
-        signed_view = self._signed and self._metric == "size"
+        signed_view = self._metric == "size"
         positive = [value for value in vals if value > 0]
         negative = [abs(value) for value in vals if value < 0]
         if signed_view and positive and negative:
@@ -380,9 +360,7 @@ class TrendChart(QWidget):
             # 柱顶数值简写标签：柱太矮或与切换按钮重叠时省略
             if bh >= 10:
                 text = (
-                    (("+" if size > 0 else "−") + _compact_size(abs(size)))
-                    if self._signed and self._metric == "size"
-                    else _compact_size(size)
+                    ("+" if size > 0 else "−") + _compact_size(abs(size))
                     if self._metric == "size"
                     else _compact_count(count)
                 )
@@ -463,33 +441,15 @@ def _label_left(center_x: float, label_w: float, widget_w: float) -> float:
 
 
 class CumulativeChart(QWidget):
-    """近 N 天累计新增体积面积图：折线 + 渐变填充，hover 显示截至日期累计值。"""
+    """近 N 天累计净变化面积图：折线 + 渐变填充，hover 显示截至日期累计值。"""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._data: list[tuple[str, int]] = []  # (day, cumulative) 旧→新
         self._hover: int = -1
-        self._signed = False
         self.setMinimumHeight(120)
         _expanding(self)
         self.setMouseTracking(True)
-
-    def set_days(self, summaries, max_days: int = 90) -> None:
-        """按 DaySummary 计算累计体积（旧→新，左侧最早）。
-
-        与 TrendChart 约定一致：summaries 按新→旧传入（fetch_days_with_data
-        原始顺序），内部反转后再累加。
-        """
-        total = 0
-        out: list[tuple[str, int]] = []
-        for s in reversed(summaries[:max_days]):
-            total += s.total_size
-            out.append((s.day, total))
-        self._data = out
-        self._signed = False
-        self._hover = -1
-        self.setVisible(bool(self._data))
-        self.update()
 
     def set_space_days(self, summaries, max_days: int = 90) -> None:
         """按空间账本净变化计算累计已归因变化。"""
@@ -499,7 +459,6 @@ class CumulativeChart(QWidget):
             total += summary.net_bytes
             out.append((summary.day, total))
         self._data = out
-        self._signed = True
         self._hover = -1
         self.setVisible(bool(self._data))
         self.update()
@@ -520,11 +479,7 @@ class CumulativeChart(QWidget):
 
     def _tip_text(self, i: int) -> str:
         day, cum = self._data[i]
-        return tr(
-            "截至 {day} · 累计 {size}",
-            day=day,
-            size=_signed_size(cum) if self._signed else human_size(cum),
-        )
+        return tr("截至 {day} · 累计 {size}", day=day, size=_signed_size(cum))
 
     def mouseMoveEvent(self, event) -> None:
         i = self._index_at(event.position().x())
@@ -569,9 +524,9 @@ class CumulativeChart(QWidget):
         baseline = _y(0)
         line_color = (
             theme_tokens().color("success")
-            if self._signed and self._data[-1][1] < 0
+            if self._data[-1][1] < 0
             else theme_tokens().color("warning")
-            if self._signed and self._data[-1][1] > 0
+            if self._data[-1][1] > 0
             else ACCENT
         )
 
@@ -613,10 +568,7 @@ class CumulativeChart(QWidget):
         font.setPointSizeF(max(7.0, font.pointSizeF() - 1.5))
         painter.setFont(font)
         painter.setPen(QColor(TEXT_DIM))
-        label = (
-            _signed_size(self._data[-1][1])
-            if self._signed else human_size(self._data[-1][1])
-        )
+        label = _signed_size(self._data[-1][1])
         painter.drawText(
             QRectF(min(lx + 6, w - 110), max(2.0, ly - 8), 104, 12),
             Qt.AlignLeft | Qt.AlignVCenter,

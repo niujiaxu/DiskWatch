@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QRectF
 
-from diskwatch.storage import DaySummary, SpaceDaySummary, Storage, make_record
+from diskwatch.storage import SpaceDaySummary, Storage, make_record
 from diskwatch.ui.charts import TrendChart, _non_overlapping_labels
 from diskwatch.ui.dashboard import (
     CumulativeChart,
@@ -63,20 +63,6 @@ def test_label_left_keeps_labels_inside_widget() -> None:
     assert _label_left(10.0, 400.0, 200.0) == 0.0    # 标签比控件还宽 → 从 0 开始
 
 
-def test_disk_space_trend(qapp, tmp_path) -> None:
-    s = _storage(tmp_path)
-    try:
-        _seed(s)
-        rows = s.disk_space_trend(3)
-        assert len(rows) == 6  # 3 天 × 2 盘
-        c_free = [free for day, drive, free in rows if drive == "C:"]
-        d_free = [free for day, drive, free in rows if drive == "D:"]
-        assert c_free == [100, 90, 80], c_free  # 按天升序
-        assert d_free == [50, 51, 52], d_free
-    finally:
-        s.close()
-
-
 def test_space_day_and_folder_summaries(qapp, tmp_path) -> None:
     s = _storage(tmp_path)
     try:
@@ -104,10 +90,10 @@ def test_trend_chart_log_scale(qapp) -> None:
     """对数刻度下小值柱清晰可见：3MB 与 30MB 高度接近，线性下 3MB 近乎消失。"""
     c = TrendChart()
     c.resize(320, 78)
-    c.set_days(
+    c.set_space_days(
         [
-            DaySummary("2026-01-01", 10, 3_000_000),
-            DaySummary("2026-01-02", 20, 30_000_000),
+            SpaceDaySummary("2026-01-01", 3_000_000, 0, 3_000_000, 10),
+            SpaceDaySummary("2026-01-02", 30_000_000, 0, 30_000_000, 20),
         ]
     )
     assert c._log_scale
@@ -126,10 +112,10 @@ def test_trend_chart_metric_count(qapp) -> None:
     """数量模式：柱高按文件数归一化。"""
     c = TrendChart()
     c.resize(320, 78)
-    c.set_days(
+    c.set_space_days(
         [
-            DaySummary("2026-01-01", 10, 50_000_000),
-            DaySummary("2026-01-02", 100, 1_000_000),
+            SpaceDaySummary("2026-01-01", 50_000_000, 0, 50_000_000, 10),
+            SpaceDaySummary("2026-01-02", 1_000_000, 0, 1_000_000, 100),
         ]
     )
     c.set_metric("count")
@@ -149,7 +135,6 @@ def test_trend_chart_signed_space_days(qapp) -> None:
             SpaceDaySummary("2026-01-01", 10, 0, 10, 1),
         ]
     )
-    assert c._signed
     assert c._data == [("2026-01-01", 10, 1), ("2026-01-02", -20, 2)]
     assert "−" in c._tip_text(1)
     c.grab()
@@ -158,8 +143,11 @@ def test_trend_chart_signed_space_days(qapp) -> None:
 def test_trend_chart_spreads_sparse_bars_and_removes_label_collisions(qapp) -> None:
     c = TrendChart()
     c.resize(620, 78)
-    c.set_days(
-        [DaySummary(f"2026-01-{day:02d}", day, day * 1_000_000) for day in range(1, 6)]
+    c.set_space_days(
+        [
+            SpaceDaySummary(f"2026-01-{day:02d}", day * 1_000_000, 0, day * 1_000_000, day)
+            for day in range(1, 6)
+        ]
     )
     _bw, gap, _x0, _height = c._geometry()
     assert gap >= 40
@@ -223,8 +211,11 @@ def test_trend_chart_keeps_all_labels_for_sparse_bars(qapp) -> None:
 
     c = TrendChart()
     c.resize(560, 78)
-    c.set_days(
-        [DaySummary(f"2026-01-{d:02d}", d, d * 1_000_000) for d in range(1, 7)]
+    c.set_space_days(
+        [
+            SpaceDaySummary(f"2026-01-{d:02d}", d * 1_000_000, 0, d * 1_000_000, d)
+            for d in range(1, 7)
+        ]
     )
     bw, gap, x0, _height = c._geometry()
     font = qapp.font()
@@ -245,11 +236,11 @@ def test_trend_chart_keeps_all_labels_for_sparse_bars(qapp) -> None:
 def test_cumulative_chart(qapp) -> None:
     c = CumulativeChart()
     c.resize(320, 120)
-    c.set_days(
+    c.set_space_days(
         [
-            DaySummary("2026-01-03", 3, 30),  # 新→旧（fetch_days_with_data 顺序）
-            DaySummary("2026-01-02", 2, 20),
-            DaySummary("2026-01-01", 1, 10),
+            SpaceDaySummary("2026-01-03", 30, 0, 30, 3),  # 新→旧（set_space_days 约定）
+            SpaceDaySummary("2026-01-02", 20, 0, 20, 2),
+            SpaceDaySummary("2026-01-01", 10, 0, 10, 1),
         ]
     )
     assert c._data == [("2026-01-01", 10), ("2026-01-02", 30), ("2026-01-03", 60)]

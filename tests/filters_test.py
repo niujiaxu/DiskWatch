@@ -8,10 +8,10 @@ from pathlib import Path
 
 from diskwatch.classification import CapturePolicy, FileClassifier
 from diskwatch.config import Config
-from diskwatch.filters import PathFilter
+from diskwatch.filters import ExclusionFilter
 
 
-def _filter() -> tuple[Config, PathFilter]:
+def _filter() -> tuple[Config, ExclusionFilter]:
     config = Config()
     config.set("exclude_dirs", ["\\appdata_like\\", "\\node_modules"])
     config.set("exclude_exts", [".tmp", ".part"])
@@ -20,7 +20,7 @@ def _filter() -> tuple[Config, PathFilter]:
     config.set("ignore_hidden", True)
     config.set("ignore_dot_dirs", True)
     config.set("excluded_drives", ["E:"])
-    return config, PathFilter(config)
+    return config, ExclusionFilter(config)
 
 
 def test_accepts_regular_file() -> None:
@@ -90,15 +90,16 @@ def test_meets_size() -> None:
     assert f.meets_size(4097)
 
 
-def test_min_size_property() -> None:
+def test_min_size_threshold(tmp_path) -> None:
     config, f = _filter()
     config.set("min_size_kb", 2)
     f.reload(config)
-    assert f.min_size == 2 * 1024
+    assert not f.meets_size(2 * 1024 - 1)
+    assert f.meets_size(2 * 1024)
 
 
-def test_exclusions_apply_in_both_capture_modes(tmp_path) -> None:
-    """排除项在两种采集模式下都生效。
+def test_exclusions_apply(tmp_path) -> None:
+    """排除项始终生效：命中即不计入账本。
 
     回归：以前全量模式直接放行，设置里的排除项形同虚设——VM 磁盘镜像
     （swap.vhdx / ext4.vhdx）、缓存、临时文件这类高频读写会把账本刷满，
@@ -107,18 +108,16 @@ def test_exclusions_apply_in_both_capture_modes(tmp_path) -> None:
     config, _ = _filter()
     db = tmp_path / "diskwatch.db"
 
-    for mode in ("all", "focus"):
-        config.set("capture_mode", mode)
-        policy = CapturePolicy(config, storage_path=db)
-        # 命中排除规则的（扩展名 / 目录片段 / 点目录）一律不记录
-        assert not policy.accepts_path(str(tmp_path / "cache.tmp")), mode
-        assert not policy.accepts_path(r"C:\x\node_modules\a.js"), mode
-        assert not policy.accepts_path(r"C:\x\.git\objects\a.bin"), mode
-        # 普通文件照常记录
-        assert policy.accepts_path(str(tmp_path / "report.docx")), mode
-        # 自身数据库及其旁路文件永远排除
-        assert not policy.accepts_path(str(db)), mode
-        assert not policy.accepts_path(str(db) + "-wal"), mode
+    policy = CapturePolicy(config, storage_path=db)
+    # 命中排除规则的（扩展名 / 目录片段 / 点目录）一律不记录
+    assert not policy.accepts_path(str(tmp_path / "cache.tmp"))
+    assert not policy.accepts_path(r"C:\x\node_modules\a.js")
+    assert not policy.accepts_path(r"C:\x\.git\objects\a.bin")
+    # 普通文件照常记录
+    assert policy.accepts_path(str(tmp_path / "report.docx"))
+    # 自身数据库及其旁路文件永远排除
+    assert not policy.accepts_path(str(db))
+    assert not policy.accepts_path(str(db) + "-wal")
 
 
 def test_file_classifier() -> None:

@@ -17,7 +17,6 @@ import traceback
 from collections import deque
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
-from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
 
@@ -63,21 +62,11 @@ class ErrorLog:
             self._memory.append((logging.getLevelName(level), msg))
         self._bus.error_recorded.emit(logging.getLevelName(level), msg)
 
-    def debug(self, msg: str) -> None:
-        self.log(logging.DEBUG, msg)
-
-    def info(self, msg: str) -> None:
-        self.log(logging.INFO, msg)
-
-    def warning(self, msg: str, exc: BaseException | None = None) -> None:
-        self.log(logging.WARNING, msg, exc)
-
-    def error(self, msg: str, exc: BaseException | None = None) -> None:
-        self.log(logging.ERROR, msg, exc)
-
     def log_exception(self, where: str, exc: BaseException) -> None:
         """统一接口：发生异常时调用，记录到日志 + 内存 + 信号。"""
-        self.error(f"{where}: {type(exc).__name__}: {exc}", exc)
+        self.log(
+            logging.ERROR, f"{where}: {type(exc).__name__}: {exc}", exc
+        )
 
     def recent(self, n: int = 50) -> list[tuple[str, str]]:
         """最近 n 条 (level, message)，新到旧。"""
@@ -92,7 +81,7 @@ class ErrorLog:
 errorlog = ErrorLog()
 
 
-def setup_logging(path: Optional[str] = None, *, level: int = logging.INFO) -> None:
+def setup_logging(path: str | None = None, *, level: int = logging.INFO) -> None:
     """挂 file handler + 控制台 handler。重复调用幂等。"""
     global _logger
     with _logger_lock:

@@ -81,14 +81,6 @@ class Paths:
         self.config = cfg
         self.db = db
 
-    @property
-    def using_custom_config(self) -> bool:
-        return self.config.resolve() != (default_home() / "config.json").resolve()
-
-    @property
-    def using_custom_db(self) -> bool:
-        return self.db.resolve() != (default_home() / "diskwatch.db").resolve()
-
 
 paths = Paths()
 
@@ -182,8 +174,8 @@ def reset_paths_to_default(*, migrate: bool = True) -> tuple[Path, Path]:
 # 过滤规则的版本号。升级默认规则时 +1，老配置会被自动刷新一次。
 FILTER_VERSION = 5
 
-# 关注模式的默认路径规则（小写子串匹配）。全量采集不据此丢弃事件，
-# 这些规则只在用户主动切换到 focus 时决定关注视图的采集范围。
+# 默认排除规则（小写子串匹配）。命中即不计入账本——这是用户配置的
+# 排除层，实时监控与启动补扫共用同一口径。
 # 注意：必须用普通字符串写 "\\"，raw 字符串结尾无法表示单个反斜杠。
 DEFAULT_EXCLUDE_DIRS = [
     # 系统与保留区
@@ -284,10 +276,7 @@ DEFAULTS: dict[str, Any] = {
     "include_removable": False,      # 是否监控 U 盘 / 移动硬盘
     "excluded_drives": [],           # 排除的盘符，如 ["D:"]
 
-    # 采集模式：all=全量记录后分类；focus=沿用旧过滤规则只记录关注项。
-    "capture_mode": "all",
-
-    # 关注模式高级过滤（全量模式不用于丢弃普通文件）
+    # 排除层（命中即不计入账本；实时监控与补扫共用）
     "exclude_dirs": DEFAULT_EXCLUDE_DIRS,
     "exclude_exts": DEFAULT_EXCLUDE_EXTS,
     "exclude_names": DEFAULT_EXCLUDE_NAMES,
@@ -340,8 +329,8 @@ class Config:
         if not isinstance(saved, dict):
             return
         self._data.update(saved)
-        # 旧版本只有“补扫开关”，升级到全量采集后不能沿用为全盘扫描。
-        # 缺少新范围字段说明尚未由用户明确选择，安全迁移为关闭。
+        # 旧版本只有"补扫开关"；升级为按范围补扫后，不能把旧开关直接
+        # 沿用为全盘扫描。缺少新范围字段说明用户尚未明确选择，安全迁移为关闭。
         if "scan_scope" not in saved:
             self._data["scan_scope"] = "user_dirs"
             self._data["scan_on_startup"] = True
@@ -420,10 +409,3 @@ class Config:
     def update(self, values: dict[str, Any]) -> None:
         with self._save_lock:
             self._data.update(values)
-
-    def reset_filters(self) -> None:
-        for key in ("exclude_dirs", "exclude_exts", "exclude_names"):
-            self._data[key] = copy.deepcopy(DEFAULTS[key])
-
-    def as_dict(self) -> dict[str, Any]:
-        return copy.deepcopy(self._data)

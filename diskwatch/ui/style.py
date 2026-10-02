@@ -219,29 +219,20 @@ def polish_menu(menu) -> None:
     menu.setStyleSheet(menu_qss())
 
 
-# 兼容外部脚本；应用内部使用动态函数。
-WIDGET_QSS = widget_qss(DARK_TOKENS)
-PANEL_QSS = panel_qss(DARK_TOKENS)
+# 图表模块使用的主题色（QColor 单例，随主题同步刷新）
 ACCENT = DARK_TOKENS.color("accent")
 ACCENT_2 = QColor("#79b4ff")
 TEXT = DARK_TOKENS.color("text")
 TEXT_DIM = DARK_TOKENS.color("text_dim")
 OK = DARK_TOKENS.color("success")
 WARN = DARK_TOKENS.color("warning")
-BG_TOP = DARK_TOKENS.color("floating_top")
-BG_BOTTOM = DARK_TOKENS.color("floating_bottom")
-BORDER = DARK_TOKENS.color("border")
-DIM_FG = DARK_TOKENS.color("text_muted")
-GROUP_FG = DARK_TOKENS.color("text")
 
 
 def _sync_compat_colors(t: ThemeTokens) -> None:
-    """让旧的 QColor 导入也能随主题变化，逐步淘汰后可删除。"""
+    """让图表导入的 QColor 单例随主题变化。"""
     mapping = (
         (ACCENT, "accent"), (ACCENT_2, "accent_hover"), (TEXT, "text"),
         (TEXT_DIM, "text_dim"), (OK, "success"), (WARN, "warning"),
-        (BG_TOP, "floating_top"), (BG_BOTTOM, "floating_bottom"),
-        (BORDER, "border"), (DIM_FG, "text_muted"), (GROUP_FG, "text"),
     )
     for color, role in mapping:
         color.setRgba(QColor(getattr(t, role)).rgba())

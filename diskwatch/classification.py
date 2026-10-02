@@ -1,10 +1,10 @@
 """文件分类与采集策略。
 
-全量模式会把普通文件全部记录并按类别归类（不做白名单筛选），但**用户
-配置的排除层两种模式都生效**：排除目录片段 / 扩展名 / 文件名 / 点目录 /
-隐藏与系统文件 / 体积下限。否则 VM 磁盘镜像、缓存、临时文件这类高频
-读写会把账本刷满，真正有意义的变化反而看不见。除此之外只有安全边界
-（程序自身文件、设备路径、非普通文件）会阻止采集。"""
+普通文件会全部记录并按类别归类（不做白名单筛选），但**排除层始终生效**：
+排除目录片段 / 扩展名 / 文件名 / 点目录 / 隐藏与系统文件 / 体积下限。
+否则 VM 磁盘镜像、缓存、临时文件这类高频读写会把账本刷满，真正有意义
+的变化反而看不见。除此之外只有安全边界（程序自身文件、设备路径、非普通
+文件）会阻止采集。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from .config import Config, default_home, paths
-from .filters import PathFilter
+from .filters import ExclusionFilter
 
 CATEGORY_USER = "user"
 CATEGORY_DOWNLOAD = "download"
@@ -134,16 +134,11 @@ class FileClassifier:
 
 
 class CapturePolicy:
-    """采集策略：安全边界 + 用户排除层（两种模式都生效）。
+    """采集策略：安全边界（程序自身 / 设备路径 / 非普通文件）+ 排除层。
 
-    全量采集（all）与关注模式（focus）的区别只在**分类**上是"全记录"：
-    - 两种模式都会应用用户配置的排除层（排除目录片段 / 扩展名 / 文件名 /
-      点目录 / 隐藏与系统文件 / 体积下限），因为用户把这些填进来就是为了
-      "这些不要计入"。以前全量模式直接放行，导致设置里的排除项形同虚设，
-      VM 磁盘镜像（swap.vhdx / ext4.vhdx）、缓存、临时文件这类高频读写会
-      把账本刷满，真正有意义的变化反而看不见。
-    - 关注模式在此基础上还保留旧的路径白名单语义（PathFilter.accepts_path
-      本身就是纯排除规则，所以两者共用同一实现）。
+    排除层（目录片段 / 扩展名 / 文件名 / 点目录 / 隐藏与系统文件 / 体积下限）
+    由 ExclusionFilter 实现，实时监控与补扫共用；用户填进设置就是为了
+    "这些不要计入"，命中即不计入账本。
     """
 
     def __init__(
@@ -152,13 +147,13 @@ class CapturePolicy:
         *,
         storage_path: Path | None = None,
     ) -> None:
-        self._legacy = PathFilter(config)
+        self._exclusions = ExclusionFilter(config)
         self._own_files: set[str] = set()
         self._own_dirs: set[str] = set()
         self.reload(config, storage_path=storage_path)
 
     def reload(self, config: Config, *, storage_path: Path | None = None) -> None:
-        self._legacy.reload(config)
+        self._exclusions.reload(config)
         db_path = Path(storage_path or paths.db)
         config_path = Path(paths.config)
         home = default_home()
@@ -187,18 +182,17 @@ class CapturePolicy:
             return False
         if self._is_own_path(path):
             return False
-        # 排除层两种模式都生效；全量采集的"全"指不做白名单筛选、全部归类记录
-        return self._legacy.accepts_path(path)
+        return self._exclusions.accepts_path(path)
 
     def excludes_dir(self, path: str) -> bool:
         normal = _normalise(path)
         if normal in self._own_dirs:
             return True
-        return self._legacy.excludes_dir(path)
+        return self._exclusions.excludes_dir(path)
 
     def is_candidate(self, st: os.stat_result | None) -> bool:
-        # 体积无关的磁盘侧判断（普通文件 + 隐藏/系统文件开关）两种模式一致
-        return self._legacy.is_candidate(st)
+        # 体积无关的磁盘侧判断（普通文件 + 隐藏/系统文件开关）
+        return self._exclusions.is_candidate(st)
 
     def meets_size(self, size: int) -> bool:
-        return self._legacy.meets_size(size)
+        return self._exclusions.meets_size(size)

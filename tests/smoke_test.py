@@ -21,7 +21,6 @@ def test_full_chain() -> None:
     config = Config()
     config.set("watch_mode", "folders")
     config.set("watch_folders", [str(tmp)])
-    config.set("capture_mode", "focus")
     config.set("min_size_kb", 0)
     config.set("exclude_dirs", [])
     config.set("exclude_exts", [".tmp"])
@@ -46,8 +45,7 @@ def test_full_chain() -> None:
         time.sleep(3.0)
 
         day = today_str()
-        records = storage.files_for_day(day)
-        names = sorted(r.name for r in records)
+        names = sorted(r.name for r in storage.recent_files(day, limit=100))
         assert "report.docx" in names, names
         assert "photo.png" in names, names
         assert "nested.csv" in names, names
@@ -55,7 +53,7 @@ def test_full_chain() -> None:
 
         (tmp / "photo.png").rename(tmp / "photo_final.png")
         time.sleep(3.0)
-        names2 = sorted(r.name for r in storage.files_for_day(day))
+        names2 = sorted(r.name for r in storage.recent_files(day, limit=100))
         assert "photo_final.png" in names2, names2
 
         pending = storage.pending_size_rows(time.time() + 1)
@@ -68,13 +66,11 @@ def test_full_chain() -> None:
         storage.update_sizes(sizes, missing)
         count, total = storage.day_stats(day)
         assert total > 0, f"{count} 个 · {human_size(total)}"
-
-        assert bool(storage.days_with_data())
-        assert len(storage.files_for_day(day, "nested")) == 1
+        assert count > 0
 
         (tmp / "report.docx").unlink()
         time.sleep(3.0)
-        remaining = [r.name for r in storage.files_for_day(day)]
+        remaining = [r.name for r in storage.recent_files(day, limit=100)]
         assert "report.docx" not in remaining, sorted(remaining)
     finally:
         monitor.stop()

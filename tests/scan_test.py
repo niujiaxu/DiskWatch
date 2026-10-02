@@ -29,7 +29,6 @@ def _config(tmp: Path) -> Config:
     config = Config()
     config.set("watch_mode", "folders")
     config.set("watch_folders", [str(tmp)])
-    config.set("capture_mode", "focus")
     config.set("min_size_kb", 0)
     config.set("exclude_dirs", ["\\appdata_like\\"])
     config.set("exclude_exts", [".tmp"])
@@ -146,15 +145,14 @@ def test_mtime_pruning_still_descends_nested() -> None:
     storage.close()
 
 
-def test_scan_applies_exclusions_in_full_capture() -> None:
-    """补扫在全量采集下也要应用排除项。
+def test_scan_applies_exclusions() -> None:
+    """补扫同样应用排除项（与实时监控同一口径）。
 
     回归：以前全量模式忽略排除规则，VM 镜像（.vhdx）、下载中间态（.part）、
     点目录缓存都会被补进账本，把真正有意义的变化淹没。
     """
     tmp = Path(tempfile.mkdtemp(prefix="dw_scan_all_"))
     config = _config(tmp)
-    config.set("capture_mode", "all")
     config.set("exclude_exts", [".tmp", ".part"])
     storage = Storage(tmp / "t.db")
     try:

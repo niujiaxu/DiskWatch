@@ -119,7 +119,6 @@ def test_watchdog_rename_and_dir_move() -> None:
     config = Config()
     config.set("watch_mode", "folders")
     config.set("watch_folders", [str(tmp)])
-    config.set("capture_mode", "focus")
     config.set("min_size_kb", 0)
     config.set("exclude_dirs", [])
 

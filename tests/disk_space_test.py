@@ -31,10 +31,6 @@ def test_record_and_query() -> None:
         assert len(rows2) == 2
         c_row = next(r for r in rows2 if r[0] == "C:")
         assert c_row[1] == 80000000000, c_row
-
-        view = storage.fetch_day_view(day)
-        assert "spaces" in view
-        assert len(view["spaces"]) == 2
     finally:
         storage.close()
 
