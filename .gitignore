@@ -19,6 +19,10 @@ docs/*-preview-*.png
 .pytest_cache/
 .ruff_cache/
 
+# 调试/分析用的本地工作目录（脚本与数据快照，不入库）
+.deepseek-work/
+tmp_*
+
 # Cursor IDE 本地规则
 .cursor/
 
